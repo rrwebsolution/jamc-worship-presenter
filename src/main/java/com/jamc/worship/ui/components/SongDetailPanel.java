@@ -32,7 +32,6 @@ public class SongDetailPanel extends JPanel {
     private final JPanel body = Ui.transparent(cards);
     private String infoText = "";
     private String themeName;
-    private Song song;
 
     public SongDetailPanel(Runnable onEdit, Runnable onAddToService) {
         super(new BorderLayout());
@@ -81,7 +80,6 @@ public class SongDetailPanel extends JPanel {
     }
 
     public void setSong(Song song) {
-        this.song = song;
         if (song == null) {
             cards.show(body, "empty");
             canvas.setContent(null, null);
