@@ -1,0 +1,13 @@
+# build output (GitHub Actions builds the installer from source)
+target/
+staging/
+runtime/
+dist/
+
+# local logs
+logs/
+*.log
+
+# editors
+.idea/
+*.iml

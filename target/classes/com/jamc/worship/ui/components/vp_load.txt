@@ -1,3 +1,0 @@
-            if (t == SourceType.VIDEO) {
-                loadVideoProps(g, s);
-            }

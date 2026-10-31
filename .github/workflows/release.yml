@@ -1,0 +1,87 @@
+# Builds the Windows installer (JAMC-Worship-Presenter-<version>.exe) and publishes it on the
+# GitHub Releases page. Runs when a version tag is pushed (git tag v0.1.1 && git push origin v0.1.1),
+# or by hand from the Actions tab ("Run workflow").
+name: Windows installer
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version (numbers only, e.g. 0.1.1)"
+        required: true
+        default: "0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Version
+        id: v
+        shell: pwsh
+        run: |
+          $v = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}".TrimStart("v") } else { "${{ inputs.version }}" }
+          if ($v -notmatch '^\d+\.\d+\.\d+$') { throw "Version must look like 1.2.3 (got '$v')" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build the app (with tests)
+        shell: pwsh
+        run: ./mvnw.cmd -B -ntp versions:set "-DnewVersion=${{ steps.v.outputs.version }}" -DgenerateBackupPoms=false; ./mvnw.cmd -B -ntp package
+
+      - name: Install WiX 3 (needed by jpackage for .exe)
+        shell: pwsh
+        run: |
+          choco install wixtoolset --no-progress -y
+          $bin = (Get-ChildItem "${env:ProgramFiles(x86)}" -Filter "WiX Toolset*" -Directory | Select-Object -First 1).FullName + "\bin"
+          $bin >> $env:GITHUB_PATH
+
+      - name: Make the installer
+        shell: pwsh
+        run: |
+          $v = "${{ steps.v.outputs.version }}"
+          New-Item -ItemType Directory -Force staging, dist | Out-Null
+          Copy-Item "target/jamc-worship-presenter-$v-all.jar" staging/
+          # a full Java runtime goes inside the app: the laptop needs no Java installed
+          jlink --add-modules ALL-MODULE-PATH --module-path "$env:JAVA_HOME/jmods" --strip-debug --no-header-files --no-man-pages --output runtime
+          jpackage --type exe --dest dist `
+            --name "JAMC Worship Presenter" --app-version $v --vendor "JAMC" `
+            --description "Worship presentation and live production" `
+            --input staging --main-jar "jamc-worship-presenter-$v-all.jar" --main-class com.jamc.worship.app.Main `
+            --runtime-image runtime `
+            --java-options "--enable-native-access=ALL-UNNAMED" --java-options "-Dfile.encoding=UTF-8" `
+            --win-menu --win-menu-group "JAMC" --win-shortcut --win-dir-chooser --win-per-user-install `
+            --win-upgrade-uuid 2c7919e6-0df8-4da3-97ba-26bfd85c0057
+          Get-ChildItem dist/*.exe | Rename-Item -NewName "JAMC-Worship-Presenter-$v.exe"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: JAMC-Worship-Presenter-${{ steps.v.outputs.version }}
+          path: dist/*.exe
+
+      - name: Publish on the Releases page
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: JAMC Worship Presenter ${{ steps.v.outputs.version }}
+          files: dist/*.exe
+          body: |
+            **Install:** download `JAMC-Worship-Presenter-${{ steps.v.outputs.version }}.exe` below and run it.
+            Windows may show "Windows protected your PC": click **More info → Run anyway** (the installer is not code-signed).
+
+            Also install on the laptop:
+            - **VLC media player (64-bit)** from videolan.org: videos, music, cameras
+            - **FFmpeg** for recording / livestream: open Command Prompt and run `winget install Gyan.FFmpeg`
+
+            YouTube playback downloads its player engine (Chromium) once, on first use, so keep the internet on the first time.
