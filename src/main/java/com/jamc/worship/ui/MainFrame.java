@@ -1,0 +1,2849 @@
+package com.jamc.worship.ui;
+
+import com.jamc.worship.app.AppContext;
+import com.jamc.worship.background.GlobalBackgroundManager;
+import com.jamc.worship.bible.BibleDisplay;
+import com.jamc.worship.bible.BiblePassage;
+import com.jamc.worship.ui.dialogs.BibleVersionsDialog;
+import com.jamc.worship.camera.CameraManager;
+import com.jamc.worship.config.AppConfig;
+import com.jamc.worship.media.MediaHub;
+import com.jamc.worship.model.BackgroundType;
+import com.jamc.worship.model.MediaCategory;
+import com.jamc.worship.model.MediaItem;
+import com.jamc.worship.model.MediaKind;
+import com.jamc.worship.model.Presentation;
+import com.jamc.worship.model.ContentKind;
+import com.jamc.worship.model.Scene;
+import com.jamc.worship.model.Service;
+import com.jamc.worship.model.ServiceItem;
+import com.jamc.worship.model.Slide;
+import com.jamc.worship.model.SlideStyle;
+import com.jamc.worship.model.Song;
+import com.jamc.worship.model.StyleOverrides;
+import com.jamc.worship.model.Theme;
+import com.jamc.worship.output.DisplayManager;
+import com.jamc.worship.output.LiveContent;
+import com.jamc.worship.output.ObsOutput;
+import com.jamc.worship.output.OutputService;
+import com.jamc.worship.output.ProgramOutput;
+import com.jamc.worship.output.Transition;
+import com.jamc.worship.render.Rendering;
+import com.jamc.worship.service.PresentationService;
+import com.jamc.worship.service.SlideGenerator;
+import com.jamc.worship.ui.components.ActionOrderPanel;
+import com.jamc.worship.ui.components.BibleDetailPanel;
+import com.jamc.worship.ui.components.BiblePanel;
+import com.jamc.worship.ui.components.GlobalBackgroundPanel;
+import com.jamc.worship.ui.components.LiveDock;
+import com.jamc.worship.ui.components.LowerThirdEditorPanel;
+import com.jamc.worship.ui.components.LowerThirdsPanel;
+import com.jamc.worship.ui.components.MediaOutputPanel;
+import com.jamc.worship.ui.components.MediaLibraryPanel;
+import com.jamc.worship.ui.components.OutputPanel;
+import com.jamc.worship.ui.components.PresentationDetailPanel;
+import com.jamc.worship.ui.components.PresentationLibraryPanel;
+import com.jamc.worship.ui.components.ScenesPanel;
+import com.jamc.worship.ui.components.ServiceSchedulePanel;
+import com.jamc.worship.ui.components.ServicesPanel;
+import com.jamc.worship.ui.components.SettingsPanel;
+import com.jamc.worship.ui.components.Sidebar;
+import com.jamc.worship.ui.components.SlideDeckLibraryPanel;
+import com.jamc.worship.ui.components.SlideEditorPanel;
+import com.jamc.worship.ui.components.SlideThumbnailStrip;
+import com.jamc.worship.ui.components.SongDetailPanel;
+import com.jamc.worship.ui.components.SongLibraryPanel;
+import com.jamc.worship.ui.components.StatusBar;
+import com.jamc.worship.ui.components.StyleForm;
+import com.jamc.worship.ui.components.ThemeDetailPanel;
+import com.jamc.worship.ui.components.ThemeLibraryPanel;
+import com.jamc.worship.ui.components.TopBar;
+import com.jamc.worship.ui.components.TransportControls;
+import com.jamc.worship.ui.theme.Icons;
+import com.jamc.worship.ui.theme.Palette;
+import com.jamc.worship.ui.theme.Themes;
+import com.jamc.worship.util.FileUtils;
+import com.jamc.worship.util.Json;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.swing.BorderFactory;
+import javax.swing.JButton;
+import javax.swing.JComponent;
+import javax.swing.JFrame;
+import javax.swing.JLabel;
+import javax.swing.JMenu;
+import javax.swing.JMenuBar;
+import javax.swing.JMenuItem;
+import javax.swing.JPanel;
+import javax.swing.JSplitPane;
+import javax.swing.KeyStroke;
+import javax.swing.SwingUtilities;
+import javax.swing.WindowConstants;
+import java.awt.BorderLayout;
+import java.awt.CardLayout;
+import java.awt.Component;
+import java.awt.Desktop;
+import java.awt.Dimension;
+import java.awt.GraphicsDevice;
+import java.awt.GraphicsEnvironment;
+import java.awt.Image;
+import java.awt.KeyboardFocusManager;
+import java.awt.Rectangle;
+import java.awt.event.KeyEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Predicate;
+
+/**
+ * Operator window. Layout:
+ * <pre>
+ *  ┌──────────────────────────── top bar ────────────────────────────┐
+ *  │ sidebar │ library list │   selected item + preview   │ schedule │
+ *  │         │              │                             │ audio    │
+ *  ├─────────┴──────────────┴──────────────┬──────────────┴──────────┤
+ *  │ slide thumbnails                      │ preview │TAKE│ program │ scenes │
+ *  └───────────────────────────── status bar ────────────────────────┘
+ * </pre>
+ * This class wires the panels together; the panels and services hold the behaviour.
+ */
+public class MainFrame extends JFrame {
+
+    private static final Logger log = LoggerFactory.getLogger(MainFrame.class);
+
+    private static final String PAGE_WORKSPACE = "workspace";
+    private static final String CENTER_SONG = "song";
+    private static final String CENTER_DECK = "deck";
+    private static final String CENTER_BIBLE = "bible";
+    private static final String CENTER_ITEM = "item";
+    private static final String CENTER_PRESENTATION = "presentation";
+    private static final String KEY_CURRENT_SERVICE = "service.current";
+    private static final String KEY_LIVE_SCENE = "live.scene";
+    /** Scene Program starts with (right-click a scene, Set as Default). */
+    /** One host for the scene cards on the SCENE page and in the Library. */
+    private final SceneHost sceneHost = new SceneHost();
+    private com.jamc.worship.ui.components.ScenesHomePanel scenesHome;
+    /** The Program scene whose video sources were last synced (see the Program listener). */
+    private Scene syncedProgramScene;
+    private Scene syncedPreviewScene;
+    /** The scenes' IMAGE SLIDESHOW sources, with separate Preview and Program positions. */
+    private final com.jamc.worship.output.Slideshows slideshows;
+    private final com.jamc.worship.media.MediaStates mediaStates;
+    private static final String KEY_DEFAULT_SCENE = "scenes.default";
+    /** Livestream mode: Preview keeps its own scene (e.g. Worship) while Program keeps another; TAKE moves content only. */
+    private static final String KEY_SEPARATE_LAYOUTS = "scenes.separatePreviewLayout";
+    private static final String KEY_PREVIEW_SCENE = "scenes.previewScene";
+    private static final String KEY_PREVIEW_FIRST = "live.previewFirst";
+    private static final String KEY_LYRICS_CLICK_LIVE_RESET = "live.songClickGoesLive.reset2";
+
+    /** What the bottom strip is showing. */
+    private enum StripSource { NONE, SONG, BIBLE, DECK, ITEM, PRESENTATION }
+
+    private final AppContext context;
+    private final Shortcuts shortcuts;
+    private final BrandingManager branding;
+    private final TopBar topBar;
+    private final Sidebar sidebar = new Sidebar();
+    private final SlideThumbnailStrip thumbnails = new SlideThumbnailStrip();
+    private final ProgramOutput program = new ProgramOutput();
+    /** What TAKE puts live next: its own state, composed like Program but never shown to the audience. */
+    private final ProgramOutput previewState = new ProgramOutput();
+    /** A scene chosen in the dock that waits in Preview until TAKE. */
+    private Scene pendingScene;
+    /** A scene card clicked (selected) since the last TAKE: the next TAKE puts it live. */
+    private Scene selectedScene;
+    private com.jamc.worship.ui.components.ScenesDock scenesDock;
+    private JSplitPane scenesSplit;
+    /** Preview · TAKE · Program: shown in the Library workspace, and under the scene on the SCENE page. */
+    private JPanel livePanel;
+    private Scene lastProgramScene;
+    private final DisplayManager displays = new DisplayManager();
+    private final CameraManager cameras = new CameraManager();
+    private final com.jamc.worship.stream.StreamManager streamManager;
+    private final com.jamc.worship.ui.components.StreamPanel streamPanel;
+    private final MediaHub hub;
+    /** The operator's global video background: lives for the whole session, independent of all content. */
+    private final GlobalBackgroundManager globalBackground;
+    private final com.jamc.worship.media.AudioRouting audioRouting;
+    private final com.jamc.worship.presentation.LibraryPresentations libraryPresentations;
+    private final GlobalBackgroundPanel backgroundPanel;
+    private final OutputService output;
+    private final ObsOutput obs;
+    private final LiveDock liveDock;
+    private final StatusBar statusBar = new StatusBar();
+
+    private final SongLibraryPanel songLibrary;
+    private final SongDetailPanel songDetail;
+    private final ThemeLibraryPanel themeLibrary;
+    private final ThemeDetailPanel themeDetail;
+    private final SlideDeckLibraryPanel deckLibrary;
+    private final SlideEditorPanel slideEditor;
+    private final BiblePanel biblePanel;
+    private final BibleDetailPanel bibleDetail;
+    private final BibleDetailPanel itemDetail;
+    private final MediaLibraryPanel mediaLibrary;
+    private final MediaLibraryPanel videoLibrary;
+    private final MediaLibraryPanel imageLibrary;
+    private final MediaLibraryPanel audioLibrary;
+    private final MediaLibraryPanel backgroundLibrary;
+    private final MediaOutputPanel mediaDetail;
+    private final com.jamc.worship.ui.components.CameraWorkspacePanel cameraWorkspace;
+    /** Which whole workspace (slides, media, camera…) is under the library list and the monitors. */
+    private final LibraryWorkspaceController workspaces = new LibraryWorkspaceController();
+    private final LowerThirdsPanel lowerThirds;
+    private final LowerThirdEditorPanel lowerThirdEditor;
+    private final PresentationLibraryPanel presentationLibrary;
+    private final PresentationDetailPanel presentationDetail;
+    private final ServiceSchedulePanel schedule;
+    private final ServicesPanel servicesPanel;
+    private final ScenesPanel scenesPanel;
+    private final SettingsPanel settingsPanel;
+    private final TransportControls audioControls = new TransportControls(true);
+    private final JLabel audioTitle = Ui.small("No audio loaded");
+    private final JPanel audioBar = Ui.transparent(new BorderLayout(0, 2));
+
+    private final CardLayout pageCards = new CardLayout();
+    private final JPanel pages = Ui.transparent(pageCards);
+    private final CardLayout libraryCards = new CardLayout();
+    private final JPanel libraryHolder = Ui.panel(libraryCards, Palette::panelBackground);
+    private final CardLayout centerCards = new CardLayout();
+    private final JPanel centerHolder = Ui.transparent(centerCards);
+
+    private Slide previewSlide;
+    private SlideStyle previewStyle;
+    private String previewTitle;
+    private String previewVideoPath;
+    private List<Slide> songSlides = List.of();
+    private SlideStyle songStyle;
+    private SlideStyle bibleStyle;
+    private BiblePassage biblePassage;
+    private SlideStyle itemStyle;
+    private ServiceItem currentTextItem;
+    private String itemTitle;
+    private StripSource stripSource = StripSource.SONG;
+    private boolean themesLoaded;
+    private boolean decksLoaded;
+    private boolean syncingPlaylist = true;
+    private List<Scene> scenes = List.of();
+    private String playingProgramVideo;
+    private Presentation currentPresentation;
+    private List<Slide> presentationSlides = List.of();
+    private List<PresentationService.PresentationSlide> presentationInfo = List.of();
+    private boolean presentationsLoaded;
+    private boolean importInStrip;
+    /** REFRESH of the open presentation: the slide the operator was on, to open it there again (not slide 1). */
+    private Long refreshedPresentationId;
+    private int refreshedSlideIndex = -1;
+    private boolean suppressAutoTake;
+    private Sidebar.Category activeCategory = Sidebar.Category.SONGS;
+    /** What was last sent to Program from a slide strip, to mark it LIVE. */
+    private LiveContent takenContent;
+    private String takenKey;
+    private List<Slide> takenSlides;
+    private int takenIndex = -1;
+
+    private final Map<String, JSplitPane> splits;
+    private final JSplitPane sidebarSplit;
+    private final JSplitPane librarySplit;
+    private final JSplitPane scheduleSplit;
+    private final JSplitPane verticalSplit;
+    private final JSplitPane bottomSplit;
+    private final ActionOrderPanel actionOrder;
+    /** Slide object that was last sent to Program from the strip (to find it again after reordering). */
+    private Slide takenSlide;
+
+    public MainFrame(AppContext context) {
+        super(BrandingManager.DEFAULT_NAME);
+        this.context = context;
+        // the app's name and icon (Settings → Branding) for every window, header and dialog
+        this.branding = BrandingManager.install(new BrandingManager(context.config(), context.paths()));
+        setTitle(branding.applicationName());
+        this.shortcuts = new Shortcuts(context.config());
+        this.topBar = new TopBar(this::showPage);
+        // where Program and Preview media sound goes (speakers, monitor headphones) and the media mixer
+        this.audioRouting = new com.jamc.worship.media.AudioRouting(context.config());
+        this.hub = new MediaHub(path -> context.mediaService().resolve(path), cameras, audioRouting);
+        // the operator's mute / volume / loop per video, audio file and scene source (kept across visits and restarts)
+        this.mediaStates = new com.jamc.worship.media.MediaStates(context.config());
+        hub.sceneVideos().setStates(mediaStates);
+        Rendering.installFrames(hub);
+        this.globalBackground = new GlobalBackgroundManager(context.config(), path -> context.mediaService().resolve(path));
+        Rendering.installGlobalBackground(globalBackground);
+        // Presentation scene sources reference library presentations by id; their cached slides are looked up here
+        this.libraryPresentations = new com.jamc.worship.presentation.LibraryPresentations(context.presentationService());
+        Rendering.installPresentations(libraryPresentations);
+        this.slideshows = new com.jamc.worship.output.Slideshows(id -> context.mediaService().load(id)
+                .filter(m -> context.mediaService().exists(m)).map(MediaItem::getPath).orElse(null));
+        com.jamc.worship.output.Compositor.installSlideshows(slideshows);
+        this.backgroundPanel = new GlobalBackgroundPanel(globalBackground,
+                file -> FileUtils.importInto(context.paths(), file, context.paths().backgroundsDir()));
+        StyleForm.ImageImporter importer = file ->
+                FileUtils.importInto(context.paths(), file, context.paths().backgroundsDir());
+        List<Image> icons = new ArrayList<>(branding.windowIcons());
+        branding.addListener(() -> SwingUtilities.invokeLater(() -> {
+            setTitle(branding.applicationName());
+            icons.clear(); // the projector windows opened from now on get the new icon too
+            icons.addAll(branding.windowIcons());
+            setIconImages(icons);
+            topBar.refreshBranding();
+        }));
+
+        schedule = new ServiceSchedulePanel(context.servicePlans());
+        songLibrary = new SongLibraryPanel(context.songService(), context.themeService(), importer);
+        // Lyrics → Import from YouTube saves LYRICS; Videos → Import from YouTube adds a VIDEO (two separate workflows)
+        songLibrary.setYouTubeSupport(context.mediaService(), context.config());
+        songDetail = new SongDetailPanel(songLibrary::editSelected, this::addCurrentSongToService);
+        songDetail.setQuickTypographyListener(this::songTypographyChanged);
+        // APPLY TO = All Songs: the quick bar edits Settings → Lyrics Typography (one setup for every song)
+        songDetail.setGlobalTypographyEditor(op -> {
+            var typo = context.themeService().typography();
+            if (typo != null) {
+                typo.set(com.jamc.worship.model.ContentKind.LYRICS, op.apply(typo.get(com.jamc.worship.model.ContentKind.LYRICS)));
+                if (!typo.isGlobal(com.jamc.worship.model.ContentKind.LYRICS)) {
+                    typo.setGlobal(com.jamc.worship.model.ContentKind.LYRICS, true);
+                }
+            }
+        });
+        if (context.themeService().typography() != null) {
+            context.themeService().typography().addListener(this::typographyChanged);
+        }
+        themeLibrary = new ThemeLibraryPanel(context.themeService(), importer);
+        themeDetail = new ThemeDetailPanel(themeLibrary::editSelected, themeLibrary::duplicateSelected);
+        deckLibrary = new SlideDeckLibraryPanel(context.slideDeckService());
+        slideEditor = new SlideEditorPanel(context.slideDeckService(), context.themeService(), importer, thumbnails);
+        biblePanel = new BiblePanel(context.bibleService());
+        bibleDetail = new BibleDetailPanel(() -> biblePanel.step(-1), () -> biblePanel.step(1), () -> {
+            BiblePassage p = biblePanel.selectedPassage();
+            if (p != null) schedule.addItem(BiblePanel.serviceItem(p));
+        });
+        itemDetail = new BibleDetailPanel(thumbnails::selectPrevious, thumbnails::selectNext, () -> { });
+        mediaLibrary = new MediaLibraryPanel(context.mediaService(), "Media", List.of(), null);
+        videoLibrary = new MediaLibraryPanel(context.mediaService(), "Videos", List.of(MediaCategory.VIDEO), MediaCategory.VIDEO);
+        videoLibrary.setYouTubeSupport(context.config());
+        imageLibrary = new MediaLibraryPanel(context.mediaService(), "Images", List.of(MediaCategory.IMAGE), MediaCategory.IMAGE);
+        audioLibrary = new MediaLibraryPanel(context.mediaService(), "Audio", List.of(MediaCategory.AUDIO), MediaCategory.AUDIO);
+        backgroundLibrary = new MediaLibraryPanel(context.mediaService(), "Backgrounds", List.of(MediaCategory.BACKGROUND),
+                MediaCategory.BACKGROUND);
+        // the one MEDIA PREVIEW monitor for every media library; the background's controls sit under it
+        mediaDetail = new MediaOutputPanel(context.mediaService(), hub, globalBackground, backgroundPanel, new MediaOutputPanel.Actions() {
+            @Override
+            public void sendToPreview(MediaItem item) {
+                previewMedia(item);
+            }
+
+            @Override
+            public void playAudio(MediaItem item) {
+                MainFrame.this.playAudio(item);
+            }
+
+            @Override
+            public void addToService(ServiceItem item) {
+                schedule.addItem(item);
+                statusBar.showMessage("\"" + item.getTitle() + "\" added to the service. Preview and Program are unchanged.");
+            }
+
+            @Override
+            public void toggleFavorite(MediaItem item) {
+                BackgroundTask.run("Favorite", () -> {
+                    context.mediaService().setFavorite(item.getId(), !item.isFavorite());
+                    return true;
+                }, ok -> activeMediaLibrary().refresh(item.getId()),
+                        err -> Dialogs.showError(MainFrame.this, "Could not update favorites.", err));
+            }
+        });
+        mediaDetail.setMediaStates(mediaStates);
+        cameraWorkspace = new com.jamc.worship.ui.components.CameraWorkspacePanel(cameras, context.config(), this::previewCamera);
+        lowerThirds = new LowerThirdsPanel(context.sceneService());
+        lowerThirdEditor = new LowerThirdEditorPanel(context.sceneService(), program, importer);
+        presentationLibrary = new PresentationLibraryPanel(context.presentationService());
+        presentationDetail = new PresentationDetailPanel(new PresentationDetailPanel.Actions() {
+            @Override
+            public void select(int index) {
+                thumbnails.setSelectedIndex(index);
+            }
+
+            @Override
+            public void take(int index) {
+                thumbnails.setSelectedIndex(index);
+                if (doubleClickTakes()) {
+                    MainFrame.this.take();
+                }
+            }
+
+            @Override
+            public void previous() {
+                thumbnails.selectPrevious();
+            }
+
+            @Override
+            public void next() {
+                thumbnails.selectNext();
+            }
+
+            @Override
+            public void preview() {
+                previewSelectedPresentationSlide();
+            }
+
+            @Override
+            public void takeSelected() {
+                previewSelectedPresentationSlide();
+                MainFrame.this.take();
+            }
+
+            @Override
+            public void addToService() {
+                if (currentPresentation != null) schedule.addItem(PresentationLibraryPanel.serviceItem(currentPresentation));
+            }
+
+            @Override
+            public void refresh() {
+                presentationLibrary.refreshSelected(null);
+            }
+
+            @Override
+            public void locate() {
+                presentationLibrary.locateSelected();
+            }
+
+            @Override
+            public void importPowerPoint() {
+                presentationLibrary.importPowerPoint();
+            }
+
+            @Override
+            public void showNotes() {
+                showPresentationNotes();
+            }
+        });
+        servicesPanel = new ServicesPanel(context.servicePlans());
+        scenesPanel = new ScenesPanel(context.sceneService(), program, cameras, importer, context.presentationService(),
+                context.mediaService());
+        this.output = new OutputService(program, previewState, displays, context.config(), icons, this::operatorDevice);
+        this.obs = new ObsOutput(program, context.config(), icons);
+        // recording and livestreaming always take their frames from Program
+        this.streamManager = new com.jamc.worship.stream.StreamManager(context.config(), context.paths().root(), program,
+                new com.jamc.worship.stream.SecretStore(context.paths().settingsFile().resolveSibling("secrets.properties")),
+                cameras::cameras);
+        this.streamPanel = new com.jamc.worship.ui.components.StreamPanel(streamManager, msg -> statusBar.showMessage(msg));
+        streamManager.addListener(this::updateRecordingIndicator);
+        topBar.setRecordActions(streamPanel::toggleRecording, streamPanel::startStream);
+        // recordings capture the sound of the device Program plays on (Settings → Audio → Program output)
+        streamManager.setProgramDevice(() -> {
+            String id = audioRouting.programDeviceInUse();
+            return id == null || id.isEmpty() ? "" : audioRouting.nameOf(id);
+        });
+        new javax.swing.Timer(1000, e -> updateRecordingIndicator()).start();
+        this.settingsPanel = new SettingsPanel(context, this::changeTheme, shortcuts, obs, hub, this::restartApplication,
+                this::manageBibleVersions);
+        settingsPanel.setSongsResetHandler(() -> {
+            songLibrary.reloadCurrent(); // the open song drops its own font settings too
+            typographyChanged();
+        });
+        // Preview animates with the same transition as Program, so the operator sees the change before TAKE
+        this.liveDock = new LiveDock(program, previewState, new LiveDock.Actions() {
+            @Override
+            public void take() {
+                MainFrame.this.take();
+            }
+
+            @Override
+            public void toggleOutput() {
+                output.toggle(MainFrame.this);
+            }
+
+            @Override
+            public void transitionChanged(Transition transition, int durationMs) {
+                program.setTransition(transition, durationMs);
+                previewState.setTransition(transition, durationMs);
+                context.config().set(AppConfig.KEY_TRANSITION, transition.name());
+                context.config().set(AppConfig.KEY_TRANSITION_MS, String.valueOf(durationMs));
+                context.config().save();
+            }
+
+            @Override
+            public void takeScene() {
+                Scene s = previewState.scene();
+                if (s != null) {
+                    setLiveScene(s, true);
+                }
+            }
+
+            @Override
+            public void autoTakeChanged(boolean autoTake) {
+                SwingUtilities.invokeLater(MainFrame.this::updateClickHint);
+                context.config().set(AppConfig.KEY_AUTO_TAKE, String.valueOf(autoTake));
+                context.config().save();
+                statusBar.showMessage(autoTake ? "Auto-take on: selecting a slide sends it live."
+                        : "Auto-take off: select a slide, then press TAKE or Space.");
+            }
+        });
+        loadLiveSettings();
+        liveDock.setOutputRouter(output, displays, () -> this);
+        liveDock.setMonitorListener(on -> {
+            audioRouting.setPreviewMonitor(on);
+            statusBar.showMessage(on ? "Preview audio ON: Preview videos play on the monitor device ("
+                    + audioRouting.nameOf(audioRouting.monitorDevice()) + ")." : "Preview audio off: only Program is heard.");
+        });
+        liveDock.setMixerAction(this::showMixer);
+        hub.sceneVideos().addListener(this::updateProgramMedia);
+        new javax.swing.Timer(1000, e -> updateProgramMediaNote()).start();
+
+        setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        setIconImages(icons);
+        setJMenuBar(buildMenuBar());
+
+        // ---- library column (one card per sidebar category)
+        libraryHolder.add(songLibrary, Sidebar.Category.SONGS.name());
+        libraryHolder.add(biblePanel, Sidebar.Category.BIBLE.name());
+        libraryHolder.add(mediaLibrary, Sidebar.Category.MEDIA.name());
+        libraryHolder.add(videoLibrary, Sidebar.Category.VIDEOS.name());
+        libraryHolder.add(imageLibrary, Sidebar.Category.IMAGES.name());
+        libraryHolder.add(audioLibrary, Sidebar.Category.AUDIO.name());
+        libraryHolder.add(deckLibrary, Sidebar.Category.SLIDES.name());
+        libraryHolder.add(presentationLibrary, Sidebar.Category.PRESENTATIONS.name());
+        libraryHolder.add(themeLibrary, Sidebar.Category.THEMES.name());
+        libraryHolder.add(backgroundLibrary, Sidebar.Category.BACKGROUNDS.name());
+        libraryHolder.add(lowerThirds, Sidebar.Category.LOWER_THIRDS.name());
+        libraryHolder.add(cameraWorkspace.libraryPanel(), Sidebar.Category.CAMERA.name());
+
+        // ---- details beside the slide cards (Songs, Bible, Presentations, Custom Slides, service items)
+        centerHolder.add(songDetail, CENTER_SONG);
+        centerHolder.add(slideEditor, CENTER_DECK);
+        centerHolder.add(bibleDetail, CENTER_BIBLE);
+        centerHolder.add(itemDetail, CENTER_ITEM);
+        centerHolder.add(presentationDetail, CENTER_PRESENTATION);
+
+        JPanel sidebarPanel = region(sidebar);
+        JPanel detailPanel = region(centerHolder);
+        JPanel scheduleColumn = Ui.panel(new BorderLayout(), Palette::panelBackground);
+        scheduleColumn.add(schedule, BorderLayout.CENTER);
+        scheduleColumn.add(buildAudioBar(), BorderLayout.SOUTH);
+        libraryHolder.setMinimumSize(new Dimension(240, 0));
+        detailPanel.setMinimumSize(new Dimension(320, 0));
+        scheduleColumn.setMinimumSize(new Dimension(210, 0));
+
+        // Library | PRESENTATION AREA (Preview · TAKE · Program) | Service schedule
+        livePanel = region(liveDock);
+        livePanel.setMinimumSize(new Dimension(480, 0));
+        // SCENES (how the output is arranged) above the service schedule
+        scenesDock = new com.jamc.worship.ui.components.ScenesDock(sceneHost);
+        JPanel scenesPanelRegion = region(scenesDock);
+        scenesPanelRegion.setBorder(Ui.line(false, false, true, false));
+        scenesSplit = split(JSplitPane.VERTICAL_SPLIT, scenesPanelRegion, scheduleColumn, 0.45);
+        scenesSplit.setMinimumSize(new Dimension(250, 0));
+
+        librarySplit = split(JSplitPane.HORIZONTAL_SPLIT, libraryHolder, livePanel, 0.0);
+
+        JPanel thumbsPanel = region(thumbnails);
+        thumbsPanel.setMinimumSize(new Dimension(260, 110));
+        // ONE horizontal strip is the content selector: lyrics cards (songs, Bible) or rendered pages
+        // (PowerPoint, custom slides). The order list opens from its ORDER button, not as a second list.
+        actionOrder = new ActionOrderPanel(thumbnails, new OrderHost());
+        thumbnails.setTextCase(() -> new OrderHost().cardsUseTextCase());
+        thumbnails.addHeaderAction(clearToggle());
+        actionOrder.addHeaderAction(clearToggle());
+        JButton order = Ui.button("Order", "list");
+        order.setToolTipText("Change the order (a song's arrangement)");
+        order.addActionListener(e -> showOrderEditor());
+        thumbnails.addHeaderAction(order);
+        thumbnails.addSlidesChangedListener(this::applyStripMode);
+        // CURRENT CONTENT: the lyrics / page cards, beside the selected item's details
+        bottomSplit = split(JSplitPane.HORIZONTAL_SPLIT, thumbsPanel, detailPanel, 0.6);
+        bottomSplit.setMinimumSize(new Dimension(0, 150));
+
+        // DYNAMIC LIBRARY WORKSPACE: one whole view per Library category, switched as a unit (CardLayout)
+        workspaces.add(LibraryWorkspaceController.Workspace.SLIDES, bottomSplit);
+        workspaces.add(LibraryWorkspaceController.Workspace.MEDIA, region(mediaDetail));
+        workspaces.add(LibraryWorkspaceController.Workspace.CAMERA, region(cameraWorkspace));
+        workspaces.add(LibraryWorkspaceController.Workspace.THEME, region(themeDetail));
+        workspaces.add(LibraryWorkspaceController.Workspace.LOWER_THIRD, region(lowerThirdEditor));
+        workspaces.container().setMinimumSize(new Dimension(0, 150));
+        verticalSplit = split(JSplitPane.VERTICAL_SPLIT, librarySplit, workspaces.container(), 0.5);
+        // the LIBRARY navigation runs the full height on the left
+        // SCENES and the SERVICE schedule run the full height on the right, like the LIBRARY on the left
+        scheduleSplit = split(JSplitPane.HORIZONTAL_SPLIT, verticalSplit, scenesSplit, 1.0);
+        sidebarSplit = split(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, scheduleSplit, 0.0);
+        // ".v2": the panes moved in the simplified layout, so old saved positions no longer fit
+        splits = Map.of("sidebar", sidebarSplit, "library", librarySplit, "schedule.v3", scheduleSplit, "scenes.v3", scenesSplit,
+                "vertical.v2", verticalSplit, "bottom.v2", bottomSplit);
+
+        JPanel workspace = Ui.transparent(new BorderLayout());
+        // no permanent background bar: its controls live under MEDIA PREVIEW, with a small "BG:" pill in the top bar
+        workspace.add(sidebarSplit, BorderLayout.CENTER);
+        pages.add(workspace, PAGE_WORKSPACE);
+        pages.add(region(servicesPanel), TopBar.Page.SERVICE.name());
+        // Scenes and sources stay in the rendering engine (the live scene still composes Program) but are not
+        // part of the normal worship UI: OBS handles cameras and production scenes.
+        pages.add(region(new OutputPanel(displays, output, this::operatorDevice)), TopBar.Page.OUTPUT.name());
+        pages.add(region(streamPanel), TopBar.Page.STREAM.name());
+        // SCENE: the homepage (scene cards; one scene open with its sources and + ADD SOURCE)
+        scenesHome = new com.jamc.worship.ui.components.ScenesHomePanel(sceneHost, region(scenesPanel), s -> scenesPanel.edit(s.getId()));
+        scenesPanel.setSongs(context.songService());
+        scenesPanel.setSlideshows(slideshows);
+        scenesPanel.setServiceItems(() -> schedule.current() == null ? List.of() : schedule.current().getItems());
+        scenesPanel.setOpenSong(id -> {
+            topBar.selectPage(TopBar.Page.LIBRARY);
+            showPage(TopBar.Page.LIBRARY);
+            sidebar.selectCategory(Sidebar.Category.SONGS);
+            songLibrary.refresh(id);
+        });
+        pages.add(scenesHome, TopBar.Page.SCENE.name());
+        pages.add(region(settingsPanel), TopBar.Page.SETTINGS.name());
+
+        // MAIN NAVIGATION is in the top bar; the page uses the full width (the Library sidebar is inside LIBRARY)
+        JPanel body = Ui.transparent(new BorderLayout());
+        body.add(pages, BorderLayout.CENTER);
+        JPanel root = Ui.panel(new BorderLayout(), Palette::windowBackground);
+        root.add(topBar, BorderLayout.NORTH);
+        root.add(body, BorderLayout.CENTER);
+        root.add(statusBar, BorderLayout.SOUTH);
+        setContentPane(root);
+
+        wireEvents();
+        installShortcuts();
+
+        statusBar.setDataDirectory(context.paths().root().toString());
+        statusBar.setDatabaseStatus(true, "Database OK");
+
+        // the app opens on the Library, on its last category (Lyrics on the first launch); nothing goes to Program
+        sidebar.selectCategory(savedLibraryCategory());
+        openLibrary();
+        restoreWindowBounds();
+
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowOpened(WindowEvent e) {
+                restoreDividers();
+                songLibrary.refresh(null);
+                startup();
+                SwingUtilities.invokeLater(songLibrary::focusSearch);
+            }
+
+            @Override
+            public void windowClosing(WindowEvent e) {
+                shutdown();
+            }
+        });
+    }
+
+    // ------------------------------------------------------------------ startup
+
+    private void startup() {
+        loadScenes();
+        lowerThirds.refresh(null);
+        openStartupService();
+        watchAudioDevices();
+        BackgroundTask.run("Detect cameras", cameras::detect, cams -> { }, err -> log.warn("Camera detection failed", err));
+        BackgroundTask.run("Clean presentation cache", context.presentationService()::cleanUp, n -> { },
+                err -> log.warn("Presentation cache clean-up failed", err));
+        if (context.config().getBoolean(SettingsPanel.KEY_OPEN_OUTPUT, false)) {
+            output.restore(this); // the remembered Preview / Program routing
+        }
+    }
+
+    /**
+     * Lists the audio outputs once VLC is ready and again every 20 s, so headphones, HDMI audio or a USB
+     * interface plugged in or out is noticed; a missing chosen device falls back to the Windows default.
+     */
+    private void watchAudioDevices() {
+        Runnable check = () -> BackgroundTask.run("Audio devices", () -> {
+            for (int i = 0; i < 60 && !hub.available(); i++) {
+                Thread.sleep(500); // VLC starts in the background
+            }
+            return audioRouting.refreshDevices();
+        }, devices -> {
+            String chosen = audioRouting.programDevice();
+            boolean missing = !chosen.isEmpty() && !audioRouting.available(chosen);
+            if (missing && !audioDeviceWarned) {
+                statusBar.showMessage("⚠ Program audio device unavailable: using the Windows default output (Settings → Audio).");
+                log.warn("Program audio device {} unavailable; using the default", chosen);
+            }
+            audioDeviceWarned = missing;
+        }, err -> log.warn("Audio device check failed", err));
+        check.run();
+        new javax.swing.Timer(20_000, e -> check.run()).start();
+    }
+
+    private boolean audioDeviceWarned;
+
+    private void openStartupService() {
+        boolean reopen = context.config().getBoolean(SettingsPanel.KEY_REOPEN_SERVICE, true);
+        String saved = context.config().get(KEY_CURRENT_SERVICE, null);
+        BackgroundTask.run("Open service", () -> {
+            if (reopen && saved != null) {
+                try {
+                    Optional<Service> s = context.servicePlans().load(Long.parseLong(saved));
+                    if (s.isPresent()) {
+                        return s.get();
+                    }
+                } catch (NumberFormatException ignored) {
+                    // fall through to the newest Sunday service
+                }
+            }
+            String playlist = Sidebar.PLAYLISTS.getFirst();
+            return context.servicePlans().latest(playlist).orElseGet(() -> context.servicePlans().create(playlist));
+        }, s -> {
+            schedule.open(s);
+            syncingPlaylist = false;
+            statusBar.showMessage("Opened \"" + s.getName() + "\"");
+        }, err -> {
+            syncingPlaylist = false;
+            Dialogs.showError(this, "The service could not be opened.", err);
+        });
+    }
+
+    private void loadScenes() {
+        BackgroundTask.run("Load scenes", () -> context.sceneService().scenes(), list -> {
+            scenes = list;
+            // Program starts with the default scene; else the last live scene when it shows content (a
+            // "Camera" or "Blank" scene left live last week should not hide this week's lyrics); else Worship.
+            String defaultId = context.config().get(KEY_DEFAULT_SCENE, null);
+            String savedId = context.config().get(KEY_LIVE_SCENE, null);
+            Scene live = list.stream().filter(s -> String.valueOf(s.getId()).equals(defaultId)).findFirst()
+                    .or(() -> list.stream().filter(s -> String.valueOf(s.getId()).equals(savedId)).filter(MainFrame::showsContent).findFirst())
+                    .or(() -> list.stream().filter(s -> s.getName().equalsIgnoreCase("Worship")).filter(MainFrame::showsContent).findFirst())
+                    .orElse(null); // null = the built-in composition: background, content, lower third
+            program.setScene(live, false);
+            if (separateLayouts()) {
+                String previewId = context.config().get(KEY_PREVIEW_SCENE, null);
+                list.stream().filter(s -> String.valueOf(s.getId()).equals(previewId)).findFirst()
+                        .ifPresent(s -> previewState.setScene(s, false));
+            }
+            scenesDock.setScenes(list);
+            if (scenesHome != null) scenesHome.setScenes(list);
+            liveDock.setTakeSceneVisible(separateLayouts());
+            updatePreviewNote();
+        }, err -> log.warn("Could not load scenes", err));
+    }
+
+    /** True if the scene draws slide content (lyrics, verses, slides) on Program. */
+    static boolean showsContent(Scene scene) {
+        return scene.getSources().stream().anyMatch(s -> s.isVisible()
+                && (s.getType() == com.jamc.worship.model.SourceType.LYRICS || s.getType() == com.jamc.worship.model.SourceType.BIBLE));
+    }
+
+    // ------------------------------------------------------------------ wiring
+
+    private void wireEvents() {
+        sidebar.addCategoryListener(category -> {
+            showPage(TopBar.Page.LIBRARY);
+            topBar.selectPage(TopBar.Page.LIBRARY);
+            showCategory(category);
+            // the Library reopens on the category used last (also after a restart)
+            if (!category.name().equals(context.config().get(KEY_LIBRARY_CATEGORY, null))) {
+                context.config().set(KEY_LIBRARY_CATEGORY, category.name());
+                context.config().save();
+            }
+        });
+        sidebar.addPlaylistListener(this::openPlaylist);
+
+        songLibrary.setStatusHandler(statusBar::showMessage);
+        songLibrary.setAddToServiceHandler(song -> schedule.addItem(ServiceItem.ofSong(song)));
+        songLibrary.addSelectionListener(this::onSongLoaded);
+
+        schedule.setStatusHandler(statusBar::showMessage);
+        schedule.setActivationHandler(this::presentItem);
+        schedule.setOpenServicesHandler(() -> {
+            topBar.selectPage(TopBar.Page.SERVICE);
+            showPage(TopBar.Page.SERVICE);
+        });
+        schedule.setServiceChangedHandler(s -> {
+            if (s.getId() != null) {
+                context.config().set(KEY_CURRENT_SERVICE, String.valueOf(s.getId()));
+                context.config().save();
+            }
+            if (s.getPlaylist() != null) {
+                boolean was = syncingPlaylist;
+                syncingPlaylist = true;
+                sidebar.selectPlaylist(s.getPlaylist());
+                syncingPlaylist = was;
+            }
+        });
+        schedule.setLowerThirdChoices(() -> lowerThirds.items().stream().map(LowerThirdsPanel::serviceItem).toList());
+        servicesPanel.setStatusHandler(statusBar::showMessage);
+        servicesPanel.setOpenHandler(s -> {
+            schedule.open(s);
+            topBar.selectPage(TopBar.Page.LIBRARY);
+            showPage(TopBar.Page.LIBRARY);
+        });
+
+        themeLibrary.setStatusHandler(statusBar::showMessage);
+        themeLibrary.addSelectionListener(themeDetail::setSelection);
+        themeLibrary.addThemesChangedListener(() -> {
+            songLibrary.reloadCurrent();
+            slideEditor.reloadThemes();
+            bibleStyle = null;
+        });
+
+        deckLibrary.setStatusHandler(statusBar::showMessage);
+        deckLibrary.addSelectionListener(deck -> slideEditor.open(deck == null ? null : deck.getId()));
+        deckLibrary.setBeforeDelete(slideEditor::discard);
+        deckLibrary.setAddToServiceHandler(deck ->
+                schedule.addItem(new ServiceItem(ServiceItem.Type.SLIDE, deck.getName(), deck.getId())));
+        slideEditor.setStatusHandler(statusBar::showMessage);
+        slideEditor.setSummaryListener(deckLibrary::updateSummary);
+        slideEditor.setThemesChangedHandler(() -> {
+            if (themesLoaded) {
+                themeLibrary.refresh(null);
+            }
+        });
+        slideEditor.setCurrentSlideListener(slide -> setPreview(slide, slideEditor.baseStyle(), slideEditor.deckName()));
+
+        deckLibrary.setImportPowerPointHandler(() -> {
+            sidebar.selectCategory(Sidebar.Category.PRESENTATIONS);
+            presentationLibrary.importPowerPoint();
+        });
+        presentationLibrary.setStatusHandler(statusBar::showMessage);
+        presentationLibrary.setAddToServiceHandler(schedule::addItem);
+        presentationLibrary.addSelectionListener(this::openPresentation);
+        presentationLibrary.setImportListener(new PresentationLibraryPanel.ImportListener() {
+            @Override
+            public void importStarted(String name, int slideCount, String renderer, Long refreshingId) {
+                // REFRESH of the open presentation: reopen it on the slide the operator is on
+                boolean same = refreshingId != null && currentPresentation != null
+                        && refreshingId.equals(currentPresentation.id()) && stripSource == StripSource.PRESENTATION;
+                refreshedPresentationId = same ? refreshingId : null;
+                refreshedSlideIndex = same ? thumbnails.getSelectedIndex() : -1;
+                // Show the slides as they arrive, unless the operator is working with something else
+                boolean show = activeCategory == Sidebar.Category.PRESENTATIONS;
+                importInStrip = show;
+                if (!show) {
+                    return;
+                }
+                currentPresentation = null;
+                presentationSlides = new ArrayList<>();
+                presentationInfo = new ArrayList<>();
+                stripSource = StripSource.PRESENTATION;
+                centerCards.show(centerHolder, CENTER_PRESENTATION);
+                presentationDetail.showImporting(name, slideCount, renderer);
+                suppressAutoTake = true;
+                thumbnails.setTitle("Importing " + name);
+                thumbnails.setEmptyMessage("Rendering slides…");
+                thumbnails.setSlides(List.of(), SlideStyle.fallback());
+                suppressAutoTake = false;
+            }
+
+            @Override
+            public void importSlide(PresentationService.PresentationSlide s) {
+                if (!importInStrip || stripSource != StripSource.PRESENTATION) {
+                    return;
+                }
+                Slide slide = presentationSlide(s, null, presentationSlides.size()); // no library id until the import ends
+                presentationSlides.add(slide);
+                presentationInfo.add(s);
+                thumbnails.appendSlides(List.of(slide));
+                presentationDetail.appendSlide(slide);
+            }
+
+            @Override
+            public void importEnded(Presentation p, boolean refreshed) {
+                importInStrip = false;
+                // the library reloads and selects the new presentation, which opens it
+            }
+        });
+
+        biblePanel.setStatusHandler(statusBar::showMessage);
+        biblePanel.setActions(new BiblePanel.Actions() {
+            @Override
+            public void preview() {
+                previewBible();
+            }
+
+            @Override
+            public void live() {
+                liveBible();
+            }
+
+            @Override
+            public void addToService(ServiceItem item) {
+                schedule.addItem(item);
+            }
+
+            @Override
+            public void manageVersions() {
+                manageBibleVersions();
+            }
+        });
+        biblePanel.setPassageListener(this::onPassage);
+
+        for (MediaLibraryPanel lib : List.of(mediaLibrary, videoLibrary, imageLibrary, audioLibrary, backgroundLibrary)) {
+            lib.setStatusHandler(statusBar::showMessage);
+            lib.setAddToServiceHandler(schedule::addItem);
+            lib.addSelectionListener(mediaDetail::show);
+        }
+
+        lowerThirds.setStatusHandler(statusBar::showMessage);
+        lowerThirds.setAddToServiceHandler(schedule::addItem);
+        lowerThirds.setSelectionListener(lowerThirdEditor::edit);
+        lowerThirdEditor.setSavedListener(lowerThirds::updated);
+
+        scenesPanel.setStatusHandler(statusBar::showMessage);
+        scenesPanel.setScenesChanged(list -> {
+            scenes = list;
+            scenesDock.setScenes(list);
+            if (scenesHome != null) scenesHome.setScenes(list);
+            Scene live = program.scene();
+            if (live != null) {
+                list.stream().filter(s -> Objects.equals(s.getId(), live.getId())).findFirst()
+                        .ifPresent(s -> program.setScene(s, false));
+            }
+        });
+        scenesPanel.setLiveSceneChosen(s -> setLiveScene(s, true));
+
+        thumbnails.addSelectionListener(index -> {
+            Slide slide = thumbnails.getSelectedSlide();
+            switch (stripSource) {
+                case SONG -> {
+                    songDetail.showSlide(slide, songStyle);
+                    Song song = songLibrary.currentSong();
+                    stripToPreview(slide, songStyle, song == null ? null : song.getTitle());
+                }
+                case BIBLE -> {
+                    bibleDetail.showSlide(slide, bibleStyle);
+                    stripToPreview(slide, bibleStyle, biblePassage == null ? "Bible" : biblePassage.referenceWithTranslation());
+                }
+                case ITEM -> {
+                    itemDetail.showSlide(slide, itemStyle);
+                    stripToPreview(slide, itemStyle, itemTitle);
+                }
+                case PRESENTATION -> {
+                    presentationDetail.setSelectedIndex(index);
+                    if (slide != null) {
+                        stripToPreview(slide, SlideStyle.fallback(), presentationTitle());
+                        preloadPresentationSlide(index);
+                        preloadPresentationSlide(index + 1);
+                    }
+                }
+                default -> {
+                    // DECK: the slide editor already updated Preview
+                }
+            }
+            // the live slide clicked again after a typography change goes live again with the new look
+            boolean alreadyLive = slide != null && slide == takenSlide && program.content() == takenContent
+                    && Objects.equals(takenContent.style(), previewStyle);
+            boolean lyricsGoLive = clickGoesLive() && !alreadyLive;
+            if ((liveDock.isAutoTake() || lyricsGoLive) && index >= 0 && !suppressAutoTake) {
+                take(false);
+            }
+        });
+        thumbnails.addActivationListener(index -> {
+            if (doubleClickTakes()) {
+                take();
+            }
+        });
+        thumbnails.addSlidesChangedListener(this::refreshLiveMarker);
+        thumbnails.addSlidesChangedListener(this::updateClickHint);
+
+        program.addListener(this::refreshLiveMarker);
+        program.addListener(this::followProgramScene);
+        program.addListener(() -> { scenesDock.sync(); if (scenesHome != null) scenesHome.sync(); updatePreviewNote(); });
+        previewState.addListener(() -> { scenesDock.sync(); if (scenesHome != null) scenesHome.sync(); });
+        // scene VIDEO sources: Program plays them with sound; Preview silently unless MONITOR is on
+        // only when the scene itself changes: a lyrics / slide TAKE (and every frame of its transition) leaves
+        // the scene's video players, their position and their sound completely alone
+        program.addListener(() -> {
+            if (program.scene() != syncedProgramScene) {
+                syncedProgramScene = program.scene();
+                hub.sceneVideos().syncProgram(syncedProgramScene);
+                slideshows.syncProgram(syncedProgramScene); // IMAGE SLIDESHOW sources: Program's own position
+            }
+        });
+        previewState.addListener(() -> {
+            hub.sceneVideos().syncPreview(previewState.scene());
+            if (previewState.scene() != syncedPreviewScene) {
+                syncedPreviewScene = previewState.scene();
+                slideshows.syncPreview(syncedPreviewScene); // Preview steps its slideshows without moving Program
+            }
+        });
+        program.addListener(this::updateLiveIndicators);
+        // a slideshow moved in Preview (NEXT / PREVIOUS / Auto Play): TAKE becomes available
+        slideshows.addListener(() -> liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null
+                || pendingScene != null || slideshows.takePending()));
+        // PREV / NEXT under the monitors when the scene there has an image slideshow
+        slideshows.addListener(() -> {
+            liveDock.showImageNav(false, slideshows.summary(false));
+            liveDock.showImageNav(true, slideshows.summary(true));
+        });
+        liveDock.setImageStep((onProgram, delta) -> {
+            var step = delta < 0 ? com.jamc.worship.output.Slideshows.Control.PREVIOUS : com.jamc.worship.output.Slideshows.Control.NEXT;
+            if (onProgram) {
+                slideshows.controlProgram(step); // the operator chose to step the live image directly
+            } else {
+                slideshows.controlPreview(step); // Program follows at TAKE
+            }
+        });
+        program.addListener(this::syncProgramVideo);
+        program.addListener(() -> globalBackground.blackChanged(program.isBlack()));
+        // Lyrics off applies to Preview too (and to any display showing Preview)
+        program.addListener(() -> {
+            if (previewState.isLyricsHidden() != program.isLyricsHidden()) {
+                previewState.setLyricsHidden(program.isLyricsHidden());
+            }
+        });
+        backgroundPanel.setStatusHandler(statusBar::showMessage);
+        backgroundPanel.setBrowseHandler(this::showBackgroundsLibrary);
+        topBar.setBackgroundClick(this::showBackgroundsLibrary);
+        globalBackground.addListener(this::updateBackgroundIndicator);
+        updateBackgroundIndicator();
+        output.addListener(this::updateLiveIndicators);
+        output.setNotifier(message -> {
+            statusBar.showMessage(message);
+            log.warn(message);
+        });
+        displays.startMonitoring();
+        updateLiveIndicators();
+    }
+
+    private void showCategory(Sidebar.Category category) {
+        activeCategory = category;
+        boolean decks = category == Sidebar.Category.SLIDES;
+        if (stripSource == StripSource.DECK && !decks) {
+            slideEditor.detach();
+            stripSource = StripSource.NONE;
+        }
+        if (!isMedia(category)) {
+            mediaDetail.stopPreview();
+        }
+        // the whole workspace beside the monitors switches to this category (Preview / Program are not touched)
+        workspaces.select(category);
+        switch (category) {
+            case SONGS, FAVORITES -> {
+                songLibrary.setFavoritesOnly(category == Sidebar.Category.FAVORITES);
+                libraryCards.show(libraryHolder, Sidebar.Category.SONGS.name());
+                centerCards.show(centerHolder, CENTER_SONG);
+                restoreStrip(this::showSongSlides); // back on Songs: the strip returns, Preview is left alone
+            }
+            case BIBLE -> {
+                libraryCards.show(libraryHolder, Sidebar.Category.BIBLE.name());
+                centerCards.show(centerHolder, CENTER_BIBLE);
+                biblePanel.activate();
+                showBibleSlides();
+            }
+            case MEDIA, VIDEOS, IMAGES, AUDIO, BACKGROUNDS -> {
+                libraryCards.show(libraryHolder, category.name());
+                MediaLibraryPanel lib = activeMediaLibrary();
+                lib.refresh(null);
+                mediaDetail.show(lib.selected()); // this library's own selection, never the previous category's
+            }
+            case CAMERA -> {
+                libraryCards.show(libraryHolder, Sidebar.Category.CAMERA.name());
+                cameraWorkspace.activate();
+            }
+            case THEMES -> {
+                libraryCards.show(libraryHolder, Sidebar.Category.THEMES.name());
+                if (!themesLoaded) {
+                    themesLoaded = true;
+                    themeLibrary.refresh(null);
+                }
+            }
+            case SLIDES -> {
+                libraryCards.show(libraryHolder, Sidebar.Category.SLIDES.name());
+                centerCards.show(centerHolder, CENTER_DECK);
+                if (stripSource != StripSource.DECK) {
+                    stripSource = StripSource.DECK;
+                    slideEditor.attach();
+                }
+                if (!decksLoaded) {
+                    decksLoaded = true;
+                    deckLibrary.refresh(null);
+                }
+            }
+            case PRESENTATIONS -> {
+                libraryCards.show(libraryHolder, Sidebar.Category.PRESENTATIONS.name());
+                centerCards.show(centerHolder, CENTER_PRESENTATION);
+                if (!importInStrip) {
+                    restoreStrip(this::showPresentationSlides);
+                }
+                if (!presentationsLoaded) {
+                    presentationsLoaded = true;
+                    presentationLibrary.refresh(null);
+                }
+            }
+            case LOWER_THIRDS -> {
+                libraryCards.show(libraryHolder, Sidebar.Category.LOWER_THIRDS.name());
+                lowerThirds.refresh(null);
+            }
+        }
+    }
+
+    private MediaLibraryPanel activeMediaLibrary() {
+        return switch (activeCategory == null ? Sidebar.Category.MEDIA : activeCategory) {
+            case VIDEOS -> videoLibrary;
+            case IMAGES -> imageLibrary;
+            case AUDIO -> audioLibrary;
+            case BACKGROUNDS -> backgroundLibrary;
+            default -> mediaLibrary;
+        };
+    }
+
+    /** Library → Backgrounds, where the global background is chosen and controlled. */
+    private void showBackgroundsLibrary() {
+        topBar.selectPage(TopBar.Page.LIBRARY);
+        showPage(TopBar.Page.LIBRARY);
+        sidebar.selectCategory(Sidebar.Category.BACKGROUNDS);
+    }
+
+    private static boolean isMedia(Sidebar.Category c) {
+        return c == Sidebar.Category.MEDIA || c == Sidebar.Category.VIDEOS || c == Sidebar.Category.IMAGES
+                || c == Sidebar.Category.AUDIO || c == Sidebar.Category.BACKGROUNDS;
+    }
+
+    // ------------------------------------------------------------------ presenting content
+
+    private void onSongLoaded(SongLibraryPanel.LoadedSong loaded) {
+        songDetail.setSong(loaded == null ? null : loaded.song());
+        songDetail.setThemeName(loaded == null ? null : loaded.themeName());
+        songSlides = loaded == null ? List.of() : SlideGenerator.fromSong(loaded.song());
+        songStyle = loaded == null ? null : loaded.style();
+        songDetail.showTypography(songStyle);
+        if (stripSource == StripSource.SONG) {
+            showSongSlides();
+        }
+    }
+
+    /**
+     * The quick typography bar changed the song's own font settings: save them (never the lyrics)
+     * and show the new look in the cards and Preview. Program keeps its look until the next TAKE.
+     */
+    private void songTypographyChanged(Song song) {
+        if (song == null || song.getId() == null) {
+            return;
+        }
+        String family = song.getFontFamily();
+        Integer size = song.getFontSize();
+        var typography = song.getTypography() == null ? null : song.getTypography().copy();
+        BackgroundTask.run("Save song typography", () -> {
+            context.songService().setTypography(song.getId(), family, size, typography);
+            return context.themeService().styleForSong(song);
+        }, style -> {
+            Song current = songLibrary.currentSong();
+            if (current != null && Objects.equals(current.getId(), song.getId())) {
+                current.setFontFamily(family);
+                current.setFontSize(size);
+                current.setTypography(typography);
+                restyleSong(style);
+            }
+        }, err -> Dialogs.showError(this, "Could not save the song's typography.", err));
+    }
+
+    /** A global typography profile changed in Settings: restyle what is showing; Program waits for TAKE. */
+    private void typographyChanged() {
+        bibleStyle = null; // recomputed (with the new Bible typography) the next time verses are prepared
+        Song song = songLibrary.currentSong();
+        if (song != null) {
+            BackgroundTask.run("Apply lyrics typography", () -> context.themeService().styleForSong(song), style -> {
+                Song current = songLibrary.currentSong();
+                if (current != null && Objects.equals(current.getId(), song.getId())) {
+                    restyleSong(style);
+                }
+            }, err -> log.warn("Could not apply the lyrics typography", err));
+        }
+        if (stripSource == StripSource.BIBLE && biblePassage != null) {
+            onPassage(biblePassage); // fit and splitting depend on the font
+        }
+        if (stripSource == StripSource.ITEM && currentTextItem != null) {
+            ServiceItem item = currentTextItem;
+            BackgroundTask.run("Apply typography", () -> context.themeService().styleFor(ContentKind.ANNOUNCEMENTS,
+                    item.getType() == ServiceItem.Type.BLANK ? context.themeService().defaultTheme()
+                            : themeNamed(item.getType() == ServiceItem.Type.SERMON ? "Sermon" : "Announcement")), style -> {
+                if (stripSource != StripSource.ITEM || currentTextItem != item) {
+                    return;
+                }
+                itemStyle = style;
+                thumbnails.setStyle(style);
+                Slide selected = thumbnails.getSelectedSlide();
+                itemDetail.showSlide(selected, style);
+                if (previewSlide != null && previewSlide == selected) {
+                    setPreview(selected, style, itemTitle);
+                }
+            }, err -> log.warn("Could not apply the typography", err));
+        }
+        slideEditor.reloadThemes();
+    }
+
+    private void restyleSong(SlideStyle style) {
+        songStyle = style;
+        songDetail.showTypography(style);
+        if (stripSource == StripSource.SONG) {
+            thumbnails.setStyle(style);
+            Slide selected = thumbnails.getSelectedSlide();
+            songDetail.showSlide(selected, style);
+            if (previewSlide != null && previewSlide == selected) {
+                Song song = songLibrary.currentSong();
+                setPreview(selected, style, song == null ? previewTitle : song.getTitle());
+            }
+        }
+    }
+
+    private void showSongSlides() {
+        stripSource = StripSource.SONG;
+        Song titled = songLibrary.currentSong();
+        thumbnails.setTitle(titled == null ? "Lyrics" : "Lyrics – " + titled.getTitle());
+        thumbnails.setEmptyMessage("Select lyrics to see them here.");
+        suppressAutoTake = true; // opening a song never puts a slide live by itself; clicking one does
+        try {
+            thumbnails.setSlides(songSlides, songStyle);
+        } finally {
+            suppressAutoTake = false;
+        }
+        updateClickHint();
+    }
+
+    /** True while a workspace refills the slide strip on a category switch: Preview keeps what it has. */
+    private boolean restoringStrip;
+    /** The next Bible passage load only restores the Bible workspace (returning to Library → Bible). */
+    private boolean restoringBible;
+
+    /** A strip slide was selected: it goes to Preview, unless the strip is only being restored. */
+    private void stripToPreview(Slide slide, SlideStyle style, String title) {
+        if (restoringStrip) {
+            return;
+        }
+        // the lyrics Preview already shows (a second event for one click, or a click on the PREVIEW card):
+        // no second transition of the same words
+        LiveContent shown = previewState.content();
+        if (slide != null && slide == previewSlide && shown != null && shown.slide() == slide
+                && Objects.equals(style, previewStyle) && Objects.equals(title, previewTitle) && previewVideoPath == null) {
+            return;
+        }
+        setPreview(slide, style, title);
+    }
+
+    /** Refills the strip for the category the operator switched to, without touching Preview or Program. */
+    private void restoreStrip(Runnable fill) {
+        boolean was = restoringStrip;
+        restoringStrip = true;
+        try {
+            fill.run();
+        } finally {
+            restoringStrip = was;
+        }
+    }
+
+    private void onPassage(BiblePassage p) {
+        biblePassage = p;
+        if (p == null) {
+            bibleDetail.setPassage(null, 0);
+            if (stripSource == StripSource.BIBLE) {
+                thumbnails.setSlides(List.of(), bibleStyle);
+            }
+            return;
+        }
+        BibleDisplay display = bibleDisplay();
+        BackgroundTask.run("Prepare Bible slides", () -> {
+            SlideStyle style = resolveBibleStyle();
+            List<Slide> slides = context.bibleService().slides(p, display, style,
+                    (heading, body, caption, s) -> Rendering.renderer().measure(heading, body, caption, s).fontSize());
+            return new Object[]{slides, style};
+        }, r -> {
+            if (biblePassage != p) {
+                return;
+            }
+            @SuppressWarnings("unchecked")
+            List<Slide> slides = (List<Slide>) r[0];
+            bibleStyle = (SlideStyle) r[1];
+            bibleDetail.setPassage(p, slides.size());
+            stripSource = StripSource.BIBLE;
+            thumbnails.setTitle(p.referenceWithTranslation());
+            thumbnails.setEmptyMessage("Select verses to see them here.");
+            if (restoringBible) {
+                restoringBible = false;
+                restoreStrip(() -> thumbnails.setSlides(slides, bibleStyle)); // back on Bible: Preview stays as it is
+            } else {
+                thumbnails.setSlides(slides, bibleStyle);
+            }
+            if (pendingBibleLive) {
+                pendingBibleLive = false;
+                take();
+            }
+        }, err -> {
+            pendingBibleLive = false;
+            Dialogs.showError(this, "Could not prepare the verses.", err);
+        });
+    }
+
+    /** Reference position, version label and auto-fit, from Settings. */
+    private BibleDisplay bibleDisplay() {
+        AppConfig c = context.config();
+        return new BibleDisplay(BibleDisplay.ReferencePosition.parse(c.get(SettingsPanel.KEY_BIBLE_REF_POSITION, null)),
+                c.getBoolean(SettingsPanel.KEY_BIBLE_SHOW_VERSION, true), c.getBoolean(SettingsPanel.KEY_BIBLE_UPPERCASE, true),
+                c.getBoolean(SettingsPanel.KEY_BIBLE_AUTOFIT, true));
+    }
+
+    /** Bible "Preview": show the selected verses' first slide in Preview. */
+    private void previewBible() {
+        stripSource = StripSource.BIBLE;
+        centerCards.show(centerHolder, CENTER_BIBLE);
+        if (!thumbnails.getSlides().isEmpty()) {
+            thumbnails.setSelectedIndex(-1);
+            thumbnails.setSelectedIndex(0);
+        }
+        statusBar.showMessage("Verse in Preview. Press TAKE (Space) to send it live.");
+    }
+
+    /** Bible "Live": send the selected verses straight to Program (once their slides are ready). */
+    private void liveBible() {
+        BiblePassage p = biblePanel.selectedPassage();
+        if (p == null) {
+            return;
+        }
+        if (biblePassage != null && biblePassage.equals(p) && stripSource == StripSource.BIBLE && !thumbnails.getSlides().isEmpty()) {
+            previewBible();
+            take();
+        } else {
+            pendingBibleLive = true;
+            onPassage(p);
+        }
+    }
+
+    private void manageBibleVersions() {
+        if (BibleVersionsDialog.show(this, context.bibleService(), context.config())) {
+            biblePanel.versionsChanged();
+        }
+    }
+
+    private boolean pendingBibleLive;
+
+    private void showBibleSlides() {
+        stripSource = StripSource.BIBLE;
+        restoringBible = biblePanel.selectedPassage() != null;
+        onPassage(biblePanel.selectedPassage());
+    }
+
+    /** Bible theme: the one chosen in Settings, else a theme named "Bible", else the default. Blocking. */
+    private SlideStyle resolveBibleStyle() {
+        if (bibleStyle != null) {
+            return bibleStyle;
+        }
+        String id = context.config().get(SettingsPanel.KEY_BIBLE_THEME, null);
+        if (id != null) {
+            try {
+                return context.themeService().styleFor(ContentKind.BIBLE, context.themeService().resolve(Long.parseLong(id)));
+            } catch (NumberFormatException ignored) {
+                // fall through
+            }
+        }
+        return context.themeService().styleFor(ContentKind.BIBLE, themeNamed("Bible"));
+    }
+
+    /** The theme with this name, else the default theme. Blocking. */
+    private Theme themeNamed(String name) {
+        return context.themeService().list().stream().filter(t -> t.getName().equalsIgnoreCase(name)).findFirst()
+                .orElseGet(() -> context.themeService().defaultTheme());
+    }
+
+    /**
+     * Shows a service item: the Library page opens (its tab active at the top) on the item's category, and its
+     * lyrics / slides go to the workspace cards, ready for Preview and TAKE. The same from any page, e.g. the
+     * service list under the Scenes.
+     */
+    private void presentItem(ServiceItem item) {
+        topBar.selectPage(TopBar.Page.LIBRARY);
+        showPage(TopBar.Page.LIBRARY);
+        switch (item.getType()) {
+            case SONG -> {
+                if (item.getRefId() != null) {
+                    sidebar.selectCategory(Sidebar.Category.SONGS);
+                    songLibrary.showSong(item.getRefId());
+                }
+            }
+            case SLIDE -> {
+                if (item.getRefId() != null) {
+                    sidebar.selectCategory(Sidebar.Category.SLIDES);
+                    slideEditor.open(item.getRefId());
+                    deckLibrary.refresh(item.getRefId());
+                }
+            }
+            case BIBLE -> {
+                BiblePassage p = Json.readOrNull(item.getPayload(), BiblePassage.class);
+                if (p != null) {
+                    sidebar.selectCategory(Sidebar.Category.BIBLE);
+                    biblePanel.goTo(p);
+                }
+            }
+            case IMAGE, VIDEO, AUDIO -> {
+                if (item.getRefId() != null) {
+                    sidebar.selectCategory(Sidebar.Category.MEDIA);
+                    mediaLibrary.select(item.getRefId());
+                }
+            }
+            case LOWER_THIRD -> {
+                if (item.getRefId() != null) {
+                    sidebar.selectCategory(Sidebar.Category.LOWER_THIRDS);
+                    lowerThirds.select(item.getRefId());
+                }
+            }
+            case ANNOUNCEMENT, SERMON, BLANK -> presentTextItem(item);
+            case PRESENTATION -> {
+                if (item.getRefId() != null) {
+                    boolean first = !presentationsLoaded;
+                    presentationsLoaded = true;
+                    sidebar.selectCategory(Sidebar.Category.PRESENTATIONS);
+                    if (first || currentPresentation == null || !Objects.equals(currentPresentation.id(), item.getRefId())) {
+                        presentationLibrary.select(item.getRefId());
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ presentations
+
+    /** Loads a presentation's cached slides into the strip and the grid (selected in the library or the schedule). */
+    private void openPresentation(Presentation p) {
+        if (presentationLibrary.isImporting() && importInStrip) {
+            return; // the import is filling the strip; the finished presentation is opened afterwards
+        }
+        if (p == null) {
+            currentPresentation = null;
+            presentationSlides = List.of();
+            presentationInfo = List.of();
+            presentationDetail.setPresentation(null, List.of(), null, true);
+            if (stripSource == StripSource.PRESENTATION) {
+                thumbnails.setTitle("Presentation");
+                thumbnails.setEmptyMessage("Select a presentation to see its slides here.");
+                thumbnails.setSlides(List.of(), SlideStyle.fallback());
+            }
+            return;
+        }
+        PresentationService service = context.presentationService();
+        BackgroundTask.run("Open presentation", () -> new Object[]{service.slides(p), service.sourceState(p), service.isCached(p)}, r -> {
+            if (presentationLibrary.selected() != null && !Objects.equals(presentationLibrary.selected().id(), p.id())) {
+                return; // another presentation was chosen meanwhile
+            }
+            @SuppressWarnings("unchecked")
+            List<PresentationService.PresentationSlide> info = (List<PresentationService.PresentationSlide>) r[0];
+            List<Slide> slides = new ArrayList<>();
+            libraryPresentations.invalidate(); // the library changed (opened after an import, refresh or rename)
+            for (PresentationService.PresentationSlide s : info) {
+                slides.add(presentationSlide(s, p.id(), slides.size()));
+            }
+            currentPresentation = p;
+            presentationInfo = info;
+            presentationSlides = slides;
+            presentationDetail.setPresentation(p, slides, (PresentationService.SourceState) r[1], (Boolean) r[2]);
+            if (activeCategory == Sidebar.Category.PRESENTATIONS) {
+                centerCards.show(centerHolder, CENTER_PRESENTATION);
+                showPresentationSlides();
+            }
+        }, err -> Dialogs.showError(this, "Could not open the presentation.", err));
+    }
+
+    /** Puts the open presentation in the bottom strip, keeping the LIVE marker if one of its slides is live. */
+    private void showPresentationSlides() {
+        if (stripSource == StripSource.DECK) {
+            slideEditor.detach();
+        }
+        stripSource = StripSource.PRESENTATION;
+        String key = currentPresentation == null ? null : "presentation:" + currentPresentation.id() + ":" + currentPresentation.folder();
+        if (key != null && key.equals(thumbnails.getSourceKey())) {
+            return; // already showing it; keep the operator's position
+        }
+        thumbnails.setTitle(currentPresentation == null ? "Slides" : currentPresentation.name());
+        thumbnails.setEmptyMessage("Select a presentation to see its slides here.");
+        int start = key != null && key.equals(takenKey) && takenIndex >= 0 ? takenIndex : 0;
+        if (currentPresentation != null && Objects.equals(currentPresentation.id(), refreshedPresentationId)
+                && refreshedSlideIndex >= 0) {
+            start = Math.min(refreshedSlideIndex, Math.max(0, presentationSlides.size() - 1)); // stay after REFRESH
+            refreshedPresentationId = null;
+            refreshedSlideIndex = -1;
+        }
+        suppressAutoTake = true; // opening a presentation never sends a slide live by itself
+        try {
+            thumbnails.setSlides(presentationSlides, SlideStyle.fallback(), start);
+        } finally {
+            suppressAutoTake = false;
+        }
+        thumbnails.setSourceKey(key);
+        refreshLiveMarker();
+    }
+
+    /** A cached slide picture as a presentable slide: the full image as the background, no text. */
+    private static Slide presentationSlide(PresentationService.PresentationSlide s, Long presentationId, int index) {
+        StyleOverrides o = new StyleOverrides();
+        o.backgroundType = BackgroundType.IMAGE;
+        o.backgroundValue = s.image().toString();
+        o.overlayOpacity = 0.0;
+        Slide slide = new Slide(s.label(), "", null);
+        slide.setOverrides(o);
+        slide.setThumbnail(s.thumbnail().toString());
+        slide.setCoversBackground(true); // a PowerPoint slide is full-screen: the global video keeps running under it
+        slide.setPresentation(presentationId, index); // a scene's Presentation source shows it in its own box instead
+        return slide;
+    }
+
+    private String presentationTitle() {
+        return currentPresentation != null ? currentPresentation.name() : "Presentation";
+    }
+
+    /** Decodes a slide's full image in the background so taking it live is instant. */
+    private void preloadPresentationSlide(int index) {
+        List<Slide> slides = thumbnails.getSlides();
+        if (index >= 0 && index < slides.size() && slides.get(index).getOverrides() != null) {
+            Rendering.renderer().images().get(slides.get(index).getOverrides().backgroundValue);
+        }
+    }
+
+    // ------------------------------------------------------------------ action / order list
+
+    /** Lyrics, Bible verses and text items show their words on the cards; PowerPoint and custom slides show pages. */
+    private void applyStripMode() {
+        switch (stripSource) {
+            case SONG, BIBLE, ITEM -> thumbnails.setCardMode(true, "card");
+            case PRESENTATION -> thumbnails.setCardMode(false, "page");
+            default -> thumbnails.setCardMode(false, "slide");
+        }
+    }
+
+    private javax.swing.JDialog orderDialog;
+
+    /**
+     * The order list (songs: their arrangement) opens on demand from the strip's ORDER button; it is no
+     * longer a second permanent list beside the horizontal lyrics cards.
+     */
+    /**
+     * CLEAR beside the lyrics cards and in the Order dialog: the same switch as CLEAR under Program
+     * (hides the lyrics, keeps the background and video); red while the lyrics are cleared.
+     */
+    private javax.swing.JToggleButton clearToggle() {
+        javax.swing.JToggleButton b = new javax.swing.JToggleButton("Clear");
+        b.setToolTipText("Clear: hide the lyrics on the screen until pressed again (L)");
+        b.setFocusable(false);
+        b.putClientProperty(com.formdev.flatlaf.FlatClientProperties.STYLE,
+                "font: bold -1; margin: 3,9,3,9; selectedBackground: #EF4444; selectedForeground: #FFFFFF");
+        b.setSelected(program.isLyricsHidden());
+        b.addActionListener(e -> program.setLyricsHidden(b.isSelected()));
+        program.addListener(() -> b.setSelected(program.isLyricsHidden()));
+        return b;
+    }
+
+    private void showOrderEditor() {
+        if (orderDialog == null) {
+            orderDialog = new javax.swing.JDialog(this, "Order", false);
+            orderDialog.setContentPane(region(actionOrder));
+            orderDialog.setSize(460, 620);
+        }
+        orderDialog.setTitle("Order – " + thumbnails.getTitle());
+        orderDialog.setLocationRelativeTo(thumbnails);
+        orderDialog.setVisible(true);
+    }
+
+    /** Settings: clicking a song lyrics slide sends it live at once (no Preview step). On by default. */
+    private boolean songClickGoesLive() {
+        return context.config().getBoolean(SettingsPanel.KEY_SONG_CLICK_LIVE, true);
+    }
+
+    /**
+     * Song lyrics and PowerPoint slides go live on click (Preview and Program together); Bible, images and
+     * media keep Preview + TAKE. Each is a setting.
+     */
+    private boolean clickGoesLive() {
+        return stripSource == StripSource.SONG && songClickGoesLive()
+                || stripSource == StripSource.PRESENTATION && context.config().getBoolean(SettingsPanel.KEY_PRESENTATION_CLICK_LIVE, true);
+    }
+
+    /** Tells the operator above the lyrics cards what a click does for the content shown. */
+    private void updateClickHint() {
+        boolean live = liveDock.isAutoTake() || clickGoesLive();
+        thumbnails.setHint(live ? "Click = LIVE" : "Click = Preview · TAKE = Live", live);
+    }
+
+    /** Settings: a double-click on a slide goes live; by default it only previews and TAKE goes live. */
+    private boolean doubleClickTakes() {
+        return context.config().getBoolean(SettingsPanel.KEY_DOUBLE_CLICK_LIVE, false);
+    }
+
+    /**
+     * The Action / Order list edits the order of what the strip shows. Songs keep the new order (their
+     * arrangement); for Bible passages, PowerPoint and text items the order applies until they are
+     * opened again, and the original files are never changed. Slide decks are reordered in their editor.
+     */
+    private final class OrderHost implements ActionOrderPanel.Host {
+        @Override
+        public boolean cardsUseTextCase() {
+            var typo = context.themeService().typography();
+            return typo != null && typo.actionCardsUseCase();
+        }
+
+        @Override
+        public void select(int slideIndex) {
+            thumbnails.select(slideIndex);
+        }
+
+        @Override
+        public void take(int slideIndex) {
+            thumbnails.setSelectedIndex(slideIndex);
+            if (stripSource == StripSource.PRESENTATION) {
+                previewSelectedPresentationSlide();
+            }
+            MainFrame.this.take();
+        }
+
+        @Override
+        public boolean doubleClickTakes() {
+            return MainFrame.this.doubleClickTakes();
+        }
+
+        @Override
+        public boolean canEditOrder() {
+            return stripSource != StripSource.DECK && stripSource != StripSource.NONE && !thumbnails.getSlides().isEmpty()
+                    && !(stripSource == StripSource.PRESENTATION && importInStrip);
+        }
+
+        @Override
+        public void applyOrder(List<List<Slide>> entries) {
+            List<Slide> flat = new ArrayList<>();
+            entries.forEach(flat::addAll);
+            Slide selected = thumbnails.getSelectedSlide();
+            int select = Math.max(0, indexOf(flat, selected));
+            String key = thumbnails.getSourceKey();
+            suppressAutoTake = true;
+            try {
+                thumbnails.setSlides(flat, thumbnails.getBaseStyle(), select);
+            } finally {
+                suppressAutoTake = false;
+            }
+            thumbnails.setSourceKey(key);
+            switch (stripSource) {
+                case SONG -> {
+                    songSlides = flat;
+                    Song song = songLibrary.currentSong();
+                    if (song != null && song.getId() != null) {
+                        List<String> keys = new ArrayList<>();
+                        for (List<Slide> e : entries) {
+                            String k = e.getFirst().getSectionKey();
+                            if (k != null) {
+                                keys.add(k);
+                            }
+                        }
+                        boolean written = keys.equals(SlideGenerator.sectionKeys(song));
+                        song.setArrangement(written ? null : String.join("|", keys));
+                        BackgroundTask.run("Save song order", () -> {
+                            context.songService().setArrangement(song.getId(), written ? null : keys);
+                            return true;
+                        }, ok -> statusBar.showMessage("Saved the order of \"" + song.getTitle() + "\": "
+                                + String.join(" · ", keys)), err -> Dialogs.showError(MainFrame.this,
+                                "Could not save the song order.", err));
+                    }
+                }
+                case PRESENTATION -> {
+                    presentationSlides = flat;
+                    presentationDetail.setPresentation(currentPresentation, flat, null, true);
+                    presentationDetail.setSelectedIndex(select);
+                    statusBar.showMessage("Slide order changed for this showing. The PowerPoint file is not changed.");
+                }
+                default -> statusBar.showMessage("Order changed.");
+            }
+            refreshLiveMarker();
+        }
+
+        @Override
+        public boolean canResetOrder() {
+            Song song = songLibrary.currentSong();
+            return stripSource == StripSource.SONG && song != null && song.getArrangement() != null;
+        }
+
+        @Override
+        public void resetOrder() {
+            Song song = songLibrary.currentSong();
+            if (song == null || song.getId() == null) {
+                return;
+            }
+            song.setArrangement(null);
+            BackgroundTask.run("Reset song order", () -> {
+                context.songService().setArrangement(song.getId(), null);
+                return true;
+            }, ok -> statusBar.showMessage("\"" + song.getTitle() + "\" is back in its written order."),
+                    err -> Dialogs.showError(MainFrame.this, "Could not reset the song order.", err));
+            songSlides = SlideGenerator.fromSong(song);
+            suppressAutoTake = true;
+            try {
+                showSongSlides();
+            } finally {
+                suppressAutoTake = false;
+            }
+        }
+
+        private static int indexOf(List<Slide> slides, Slide s) {
+            for (int i = 0; i < slides.size(); i++) {
+                if (slides.get(i) == s) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+    }
+
+    private void previewSelectedPresentationSlide() {
+        if (stripSource != StripSource.PRESENTATION) {
+            showPresentationSlides();
+        }
+        Slide slide = thumbnails.getSelectedSlide();
+        if (slide != null) {
+            setPreview(slide, SlideStyle.fallback(), presentationTitle());
+            // the Preview scene is kept; a Presentation source in it shows the slide in its own box
+            Scene scene = previewState.scene();
+            com.jamc.worship.model.Source slot = com.jamc.worship.output.Compositor.presentationSlot(scene, previewState.content());
+            statusBar.showMessage("Slide " + (thumbnails.getSelectedIndex() + 1) + " is in Preview"
+                    + (slot != null ? " in the \"" + scene.getName() + "\" scene's " + slot.getName() + " source" : "")
+                    + ". Press TAKE (Space) to send it live.");
+        }
+    }
+
+    private void showPresentationNotes() {
+        StringBuilder sb = new StringBuilder();
+        for (PresentationService.PresentationSlide s : presentationInfo) {
+            if (!s.warnings().isEmpty()) {
+                sb.append("Slide ").append(s.number()).append(":\n");
+                for (String w : s.warnings()) {
+                    sb.append("  • ").append(w).append('\n');
+                }
+            }
+        }
+        javax.swing.JTextArea text = new javax.swing.JTextArea(sb.isEmpty() ? "No notes." : sb.toString(), 16, 64);
+        text.setEditable(false);
+        text.setLineWrap(true);
+        text.setWrapStyleWord(true);
+        javax.swing.JOptionPane.showMessageDialog(this, new javax.swing.JScrollPane(text),
+                "What may look different from PowerPoint", javax.swing.JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    /** Marks the strip (and presentation grid) slide that is on Program. */
+    private void refreshLiveMarker() {
+        int idx = -1;
+        if (takenContent != null && program.content() == takenContent) {
+            List<Slide> slides = thumbnails.getSlides();
+            for (int i = 0; i < slides.size(); i++) {
+                if (slides.get(i) == takenSlide) { // still the same slide, wherever it moved in the order
+                    idx = i;
+                    break;
+                }
+            }
+            boolean sameSource = takenKey != null ? takenKey.equals(thumbnails.getSourceKey()) : slides == takenSlides;
+            if (idx < 0 && sameSource) {
+                idx = takenIndex;
+            }
+        }
+        thumbnails.setLiveIndex(idx);
+        presentationDetail.setLiveIndex(stripSource == StripSource.PRESENTATION ? idx : -1);
+    }
+
+    private void presentTextItem(ServiceItem item) {
+        String themeName = item.getType() == ServiceItem.Type.SERMON ? "Sermon" : "Announcement";
+        BackgroundTask.run("Prepare item", () -> context.themeService().styleFor(ContentKind.ANNOUNCEMENTS,
+                item.getType() == ServiceItem.Type.BLANK ? context.themeService().defaultTheme() : themeNamed(themeName)), style -> {
+            currentTextItem = item;
+            if (stripSource == StripSource.DECK) {
+                slideEditor.detach();
+            }
+            List<Slide> slides = new ArrayList<>();
+            if (item.getType() == ServiceItem.Type.BLANK) {
+                slides.add(new Slide("Blank", "", null));
+            } else {
+                int n = 1;
+                for (String part : splitParagraphs(item.getPayload())) {
+                    slides.add(new Slide(item.getTitle() + " " + n++, part, null));
+                }
+                if (slides.isEmpty()) {
+                    slides.add(new Slide(item.getTitle(), item.getTitle(), null));
+                }
+            }
+            itemStyle = style;
+            itemTitle = item.getTitle();
+            stripSource = StripSource.ITEM;
+            topBar.selectPage(TopBar.Page.LIBRARY);
+            showPage(TopBar.Page.LIBRARY);
+            centerCards.show(centerHolder, CENTER_ITEM);
+            workspaces.show(LibraryWorkspaceController.Workspace.SLIDES); // the item's own slides, not the last category's view
+            itemDetail.setHeader(item.getTitle(), item.getType().displayName() + "  ·  " + slides.size()
+                    + (slides.size() == 1 ? " slide" : " slides") + "  ·  double-click the item in the schedule to edit");
+            thumbnails.setTitle(item.getTitle());
+            thumbnails.setSlides(slides, style);
+        }, err -> Dialogs.showError(this, "Could not show the item.", err));
+    }
+
+    private static List<String> splitParagraphs(String text) {
+        List<String> out = new ArrayList<>();
+        if (text == null) {
+            return out;
+        }
+        for (String p : text.replace("\r\n", "\n").split("\\n\\s*\\n")) {
+            if (!p.isBlank()) {
+                out.add(p.strip());
+            }
+        }
+        return out;
+    }
+
+    private void previewMedia(MediaItem item) {
+        if (com.jamc.worship.background.BackgroundPresets.isPreset(item)) {
+            // a built-in color / gradient as full-screen content (TAKE AS BACKGROUND makes it the global background instead)
+            StyleOverrides o = new StyleOverrides();
+            boolean gradient = item.getPath().startsWith(GlobalBackgroundManager.GRADIENT_PREFIX);
+            o.backgroundType = gradient ? BackgroundType.GRADIENT : BackgroundType.COLOR;
+            o.backgroundValue = item.getPath().substring(item.getPath().indexOf(':') + 1);
+            o.backgroundMode = com.jamc.worship.model.BackgroundMode.OVERRIDE;
+            o.overlayOpacity = 0.0;
+            setPreview(new Slide(item.getName(), "", null), o.applyTo(SlideStyle.fallback()), item.getName());
+            statusBar.showMessage("\"" + item.getName() + "\" is in Preview. Press TAKE (Space) to send it live.");
+            return;
+        }
+        String path = context.mediaService().resolve(item).toString();
+        if (item.getKind() == MediaKind.IMAGE) {
+            StyleOverrides o = new StyleOverrides();
+            o.backgroundType = BackgroundType.IMAGE;
+            o.backgroundValue = item.getPath();
+            o.overlayOpacity = 0.0;
+            Slide picture = new Slide(item.getName(), "", null);
+            picture.setCoversBackground(true);
+            setPreview(picture, o.applyTo(SlideStyle.fallback()), item.getName());
+        } else if (item.getKind() == MediaKind.VIDEO) {
+            if (item.isYouTube()) {
+                // a YouTube video plays through the embedded YouTube player (never VLC); it needs the internet
+                var yt = com.jamc.worship.youtube.YouTubeEngine.get();
+                var availability = com.jamc.worship.youtube.YouTubeLibrary.availability(item.getYoutubeVideoId());
+                if (!yt.isUsable()) {
+                    Dialogs.showInfo(this, "YouTube player unavailable", yt.problem());
+                    return;
+                }
+                if (availability == com.jamc.worship.youtube.YouTubeClient.Availability.OFFLINE
+                        || availability == com.jamc.worship.youtube.YouTubeClient.Availability.UNAVAILABLE) {
+                    Dialogs.showInfo(this, "YouTube video " + availability.label().toLowerCase(java.util.Locale.ROOT),
+                            availability == com.jamc.worship.youtube.YouTubeClient.Availability.OFFLINE
+                                    ? "\"" + item.getName() + "\" needs the internet, and YouTube cannot be reached right now.\n"
+                                    + "Local videos and saved lyrics keep working offline."
+                                    : "YouTube no longer plays \"" + item.getName() + "\" (removed, private or not embeddable).");
+                    return;
+                }
+                path = item.getPath();
+            } else if (!hub.available()) {
+                Dialogs.showInfo(this, "Video unavailable", hub.problem());
+                return;
+            }
+            setPreview(new Slide(item.getName(), "▶  " + item.getName(), "Video"), SlideStyle.fallback(), item.getName());
+            previewVideoPath = path;
+            previewState.take(LiveContent.video(path, item.getName()));
+        }
+        statusBar.showMessage("\"" + item.getName() + "\" is in Preview. Press TAKE (Space) to send it live.");
+    }
+
+    private void playAudio(MediaItem item) {
+        if (!hub.available()) {
+            Dialogs.showInfo(this, "Audio unavailable", hub.problem());
+            return;
+        }
+        var audio = hub.audio();
+        // this file's own mute / volume / loop from last time (else the Settings volume), set before it plays
+        String key = com.jamc.worship.media.MediaStates.mediaKey(item.getPath());
+        com.jamc.worship.media.MediaStates.apply(audio, mediaStates.get(key, new com.jamc.worship.media.MediaStates.State(
+                false, parseInt(context.config().get(SettingsPanel.KEY_VOLUME, "100"), 100), false)));
+        audio.play(context.mediaService().resolve(item).toString(), item.getName());
+        audioControls.bind(mediaStates.remember(audio, key));
+        audioTitle.setText("♪ " + item.getName());
+        audioBar.setVisible(true);
+        statusBar.showMessage("Playing \"" + item.getName() + "\". Audio keeps playing while slides change.");
+    }
+
+    private JComponent buildAudioBar() {
+        audioBar.setBorder(BorderFactory.createCompoundBorder(Ui.line(true, false, false, false),
+                BorderFactory.createEmptyBorder(6, 10, 6, 10)));
+        audioBar.add(audioTitle, BorderLayout.NORTH);
+        audioBar.add(audioControls, BorderLayout.CENTER);
+        audioBar.setVisible(false);
+        return audioBar;
+    }
+
+    private void addCurrentSongToService() {
+        Song song = songLibrary.currentSong();
+        if (song != null) {
+            schedule.addItem(ServiceItem.ofSong(song));
+        }
+    }
+
+    private void openPlaylist(String playlist) {
+        if (syncingPlaylist) {
+            return;
+        }
+        BackgroundTask.run("Open playlist", () -> context.servicePlans().latest(playlist)
+                .orElseGet(() -> context.servicePlans().create(playlist)), s -> {
+            schedule.open(s);
+            statusBar.showMessage("Opened \"" + s.getName() + "\"");
+        }, err -> Dialogs.showError(this, "Could not open the playlist.", err));
+    }
+
+    // ------------------------------------------------------------------ live
+
+    private void setPreview(Slide slide, SlideStyle style, String title) {
+        previewSlide = slide;
+        previewStyle = style;
+        previewTitle = title;
+        previewVideoPath = null;
+        if (slide != null && style != null) {
+            previewState.take(LiveContent.snapshot(slide, style, title));
+        } else {
+            previewState.clear();
+        }
+        liveDock.setPreviewReady(slide != null || pendingScene != null);
+        updatePreviewNote();
+    }
+
+    /** Preview follows Program's scene unless the operator has another scene waiting in Preview. */
+    private void followProgramScene() {
+        Scene live = program.scene();
+        if (separateLayouts()) {
+            lastProgramScene = live; // Preview keeps its own layout
+            return;
+        }
+        if (live != lastProgramScene) {
+            lastProgramScene = live;
+            if (pendingScene == null || (live != null && Objects.equals(live.getId(), pendingScene.getId()))) {
+                pendingScene = null;
+                previewState.setScene(live, false);
+            }
+        }
+    }
+
+    /**
+     * TAKE: the whole Preview (content and any scene waiting in Preview) becomes Program in one
+     * transition. Program, projector, OBS, the LIVE markers and the Action / Order list all follow the
+     * single Program state; the global video background is not touched.
+     */
+    private void take() {
+        take(true);
+    }
+
+    /**
+     * Intelligent TAKE. With {@code withScene}, a scene the operator put in Preview goes live together
+     * with the content (SCENE TAKE); otherwise only the content changes and Program keeps its scene
+     * (CONTENT TAKE): the camera keeps running and only the lyrics layer changes.
+     */
+    private void take(boolean withScene) {
+        if (withScene && selectedScene != null) {
+            // a scene card was selected since the last TAKE: it goes live now, with what Preview holds.
+            // With separate layouts it becomes the PREVIEW layout only; Program keeps its scene (TAKE SCENE
+            // changes that) and only the content below goes to both.
+            Scene chosen = selectedScene;
+            selectedScene = null;
+            sceneClicked(chosen);
+        }
+        Scene scene = withScene && !separateLayouts() ? pendingScene : null;
+        LiveContent taken = null;
+        if (previewVideoPath != null) {
+            taken = LiveContent.video(previewVideoPath, previewTitle);
+        } else if (previewSlide == null || previewStyle == null) {
+            if (scene == null) {
+                if (slideshows.takePending()) {
+                    // only an image slideshow moved in Preview (NEXT / PREVIOUS): Program goes to that image
+                    slideshows.take();
+                    statusBar.showMessage("Slideshow image sent to Program.");
+                    return;
+                }
+                statusBar.showMessage("Nothing in Preview. Select a slide first.");
+                return;
+            }
+        } else {
+            LiveContent content = LiveContent.snapshot(previewSlide, previewStyle, previewTitle);
+            List<Slide> strip = thumbnails.getSlides();
+            int index = -1;
+            for (int i = 0; i < strip.size(); i++) {
+                if (strip.get(i) == previewSlide) {
+                    index = i;
+                    break;
+                }
+            }
+            takenContent = content;
+            takenSlides = strip;
+            takenKey = thumbnails.getSourceKey();
+            takenIndex = index;
+            takenSlide = previewSlide;
+            taken = content;
+        }
+        program.take(taken, scene);
+        // IMAGE SLIDESHOWS follow Preview at TAKE (each in its own layer, nothing else is rebuilt)
+        slideshows.take();
+        if (scene != null) {
+            pendingScene = null;
+            context.config().set(KEY_LIVE_SCENE, String.valueOf(scene.getId()));
+            context.config().save();
+            statusBar.showMessage("Scene \"" + scene.getName() + "\" is live");
+        }
+        liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null || pendingScene != null);
+        updatePreviewNote();
+        if (!output.isOpen()) {
+            statusBar.showMessage("Sent to Program. The projector is off: press F5 or click Projector to show it.");
+        }
+    }
+
+    private boolean separateLayouts() {
+        return context.config().getBoolean(KEY_SEPARATE_LAYOUTS, false);
+    }
+
+    private boolean directSceneSwitch() {
+        return context.config().getBoolean(SettingsPanel.KEY_SCENE_DIRECT, false);
+    }
+
+    /**
+     * Library → Camera → SEND TO PREVIEW: the Camera scene, showing this camera with these options, goes to
+     * Preview only (TAKE puts it on Program). The saved scene itself is not changed.
+     */
+    private void previewCamera(String camera, com.jamc.worship.model.FitMode fit, boolean mirror) {
+        List<Scene> all = scenes == null ? List.of() : scenes;
+        Scene base = all.stream().filter(s -> s.getName().equals("Camera")).findFirst()
+                .orElseGet(() -> all.stream().filter(s -> s.has(com.jamc.worship.model.SourceType.CAMERA)).findFirst().orElse(null));
+        if (base == null) {
+            Dialogs.showInfo(this, "Camera", "There is no scene with a camera. Add a Camera source to a scene first.");
+            return;
+        }
+        Scene s = base.copy();
+        for (com.jamc.worship.model.Source src : s.getSources()) {
+            if (src.getType() == com.jamc.worship.model.SourceType.CAMERA) {
+                src.setVisible(true);
+                src.getConfig().camera = camera;
+                src.getConfig().fit = fit;
+                src.getConfig().mirror = mirror ? Boolean.TRUE : null;
+            }
+        }
+        pendingScene = separateLayouts() ? null : s;
+        previewState.setScene(s, false);
+        liveDock.setPreviewReady(true);
+        updatePreviewNote();
+        scenesDock.sync();
+        if (scenesHome != null) scenesHome.sync();
+        statusBar.showMessage("\"" + camera + "\" is in Preview (" + s.getName() + " scene). Press TAKE to put it live.");
+    }
+
+    /** A scene card was clicked: Preview (safe default), or Program at once in Direct Switch mode. */
+    private void sceneClicked(Scene scene) {
+        selectedScene = null; // the selection was acted on (double-click, PREVIEW, or this TAKE)
+        if (directSceneSwitch()) {
+            sendSceneToProgram(scene);
+            return;
+        }
+        if (separateLayouts()) {
+            previewState.setScene(scene, false);
+            pendingScene = null;
+            context.config().set(KEY_PREVIEW_SCENE, String.valueOf(scene.getId()));
+            context.config().save();
+            Scene live = program.scene();
+            statusBar.showMessage("Preview layout: " + scene.getName() + ". Program keeps "
+                    + (live == null ? "its layout" : live.getName()) + " (TAKE SCENE changes it).");
+        } else {
+            Scene live = program.scene();
+            if (live != null && Objects.equals(live.getId(), scene.getId())) {
+                pendingScene = null;
+                previewState.setScene(live, false);
+            } else {
+                pendingScene = scene;
+                previewState.setScene(scene, false);
+                statusBar.showMessage("Scene \"" + scene.getName() + "\" is in Preview. Press TAKE to put it live.");
+            }
+        }
+        liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null || pendingScene != null);
+        updatePreviewNote();
+        scenesDock.sync();
+        if (scenesHome != null) scenesHome.sync();
+    }
+
+    private void sendSceneToProgram(Scene scene) {
+        selectedScene = null;
+        setLiveScene(scene, true);
+        if (!separateLayouts()) {
+            pendingScene = null;
+            previewState.setScene(scene, false);
+        }
+        updatePreviewNote();
+        scenesDock.sync();
+        if (scenesHome != null) scenesHome.sync();
+    }
+
+    /** "NEXT: Camera + Lyrics · Scene change" / "NEXT: Amazing Grace – Verse 2 · Content change" on Preview. */
+    private void updatePreviewNote() {
+        String note = null;
+        boolean sceneChange = false;
+        if (!separateLayouts() && pendingScene != null) {
+            note = "NEXT: " + pendingScene.getName() + " · Scene change";
+            sceneChange = true;
+        } else {
+            boolean contentWaiting = previewVideoPath != null
+                    || (previewSlide != null && !(previewSlide == takenSlide && program.content() == takenContent));
+            if (contentWaiting) {
+                String label = previewSlide == null || previewSlide.getLabel() == null ? "" : " – " + previewSlide.getLabel();
+                note = "NEXT: " + (previewTitle == null ? "slide" : previewTitle) + label + " · Content change";
+            }
+        }
+        if (separateLayouts()) {
+            Scene p = previewState.scene();
+            String layout = "Preview layout: " + (p == null ? "Standard" : p.getName());
+            note = note == null ? layout : note + "  ·  " + layout;
+        }
+        liveDock.setPreviewNote(note, sceneChange);
+    }
+
+    /** Scenes dock actions. */
+    private final class SceneHost implements com.jamc.worship.ui.components.ScenesDock.Host {
+        @Override
+        public void sceneClicked(Scene scene) {
+            MainFrame.this.sceneClicked(scene);
+        }
+
+        @Override
+        public void sceneSelected(Scene scene) {
+            selectedScene = scene;
+            statusBar.showMessage(separateLayouts()
+                    ? "Scene \"" + scene.getName() + "\" selected. TAKE makes it the Preview layout; Program keeps its scene "
+                            + "(LIVE or TAKE SCENE changes Program)."
+                    : "Scene \"" + scene.getName() + "\" selected. TAKE puts it live; double-click or "
+                            + "PREVIEW sends it to Preview first.");
+        }
+
+        @Override
+        public void sendToProgram(Scene scene) {
+            sendSceneToProgram(scene);
+        }
+
+        @Override
+        public void editLayout(Scene scene) {
+            scenesPanel.edit(scene.getId());
+            topBar.selectPage(TopBar.Page.SCENE);
+            showPage(TopBar.Page.SCENE);
+            scenesHome.showEditor(scene);
+            statusBar.showMessage("Editing \"" + scene.getName() + "\": + ADD SOURCE adds content. ALL SCENES goes back.");
+        }
+
+        @Override
+        public void addScene() {
+            Scene current = previewState.scene() != null ? previewState.scene() : program.scene();
+            var req = com.jamc.worship.ui.dialogs.CreateSceneDialog.show(MainFrame.this, current == null ? null : current.getName());
+            if (req == null) {
+                return;
+            }
+            Long copyFrom = switch (req.start()) {
+                case BLANK -> null;
+                case DUPLICATE_CURRENT -> current == null ? null : current.getId();
+                case TEMPLATE -> scenes.stream().filter(s -> s.getName().equals(req.templateScene())).map(Scene::getId)
+                        .findFirst().orElse(null);
+            };
+            BackgroundTask.run("Add scene", () -> {
+                if (copyFrom == null) {
+                    return context.sceneService().create(req.name());
+                }
+                Scene copy = context.sceneService().duplicate(copyFrom);
+                copy.setName(req.name());
+                return context.sceneService().save(copy);
+            }, created -> {
+                loadScenes();
+                editLayout(created);
+            }, err -> Dialogs.showError(MainFrame.this, "Could not add the scene.", err));
+        }
+
+        @Override
+        public void renameScene(Scene scene) {
+            Object name = javax.swing.JOptionPane.showInputDialog(MainFrame.this, "New name:", "Rename Scene",
+                    javax.swing.JOptionPane.PLAIN_MESSAGE, null, null, scene.getName());
+            if (name == null || name.toString().isBlank()) {
+                return;
+            }
+            Scene copy = scene.copy();
+            copy.setName(name.toString().strip());
+            BackgroundTask.run("Rename scene", () -> context.sceneService().save(copy), saved -> loadScenes(),
+                    err -> Dialogs.showError(MainFrame.this, "Could not rename the scene.", err));
+        }
+
+        @Override
+        public void duplicateScene(Scene scene) {
+            BackgroundTask.run("Duplicate scene", () -> context.sceneService().duplicate(scene.getId()), copy -> loadScenes(),
+                    err -> Dialogs.showError(MainFrame.this, "Could not duplicate the scene.", err));
+        }
+
+        @Override
+        public void setDefaultScene(Scene scene) {
+            context.config().set(KEY_DEFAULT_SCENE, String.valueOf(scene.getId()));
+            context.config().save();
+            scenesDock.sync();
+            if (scenesHome != null) scenesHome.sync();
+            statusBar.showMessage("\"" + scene.getName() + "\" is now the default scene when the app starts.");
+        }
+
+        @Override
+        public void deleteScene(Scene scene) {
+            if (program.scene() != null && java.util.Objects.equals(program.scene().getId(), scene.getId())) {
+                Dialogs.showInfo(MainFrame.this, "Scene is live", "Switch Program to another scene before deleting this one.");
+                return;
+            }
+            if (javax.swing.JOptionPane.showConfirmDialog(MainFrame.this, "Delete the scene \"" + scene.getName() + "\"?",
+                    "Delete Scene", javax.swing.JOptionPane.OK_CANCEL_OPTION) != javax.swing.JOptionPane.OK_OPTION) {
+                return;
+            }
+            BackgroundTask.run("Delete scene", () -> {
+                context.sceneService().delete(scene.getId());
+                return true;
+            }, ok -> {
+                scenesPanel.refresh(); // every scene list (and the scene editor) drops it; Program stays
+            }, err -> Dialogs.showError(MainFrame.this, err.getMessage(), err));
+        }
+
+        @Override
+        public Scene programScene() {
+            return program.scene();
+        }
+
+        @Override
+        public Scene previewScene() {
+            return previewState.scene();
+        }
+
+        @Override
+        public Long defaultSceneId() {
+            String id = context.config().get(KEY_DEFAULT_SCENE, null);
+            try {
+                return id == null ? null : Long.parseLong(id);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+
+        @Override
+        public boolean separateLayouts() {
+            return MainFrame.this.separateLayouts();
+        }
+
+        @Override
+        public void setSeparateLayouts(boolean separate) {
+            context.config().set(KEY_SEPARATE_LAYOUTS, String.valueOf(separate));
+            context.config().save();
+            pendingScene = null;
+            if (!separate) {
+                previewState.setScene(program.scene(), false); // Preview follows Program again
+            }
+            liveDock.setTakeSceneVisible(separate);
+            updatePreviewNote();
+            scenesDock.sync();
+            if (scenesHome != null) scenesHome.sync();
+            statusBar.showMessage(separate
+                    ? "Separate layouts: click a scene to set Preview's layout; TAKE changes only the content, TAKE SCENE changes Program's layout."
+                    : "Preview and Program share the scene again: a scene clicked goes to Preview, TAKE puts it live.");
+        }
+    }
+
+    private void setLiveScene(Scene scene, boolean animate) {
+        program.setScene(scene, animate);
+        context.config().set(KEY_LIVE_SCENE, String.valueOf(scene.getId()));
+        context.config().save();
+        statusBar.showMessage("Scene \"" + scene.getName() + "\" is live");
+    }
+
+    /**
+     * Whether the taken fullscreen video needs its own Program player in this scene. Not when the scene has no
+     * visible Media (background) layer to show it, and not when one of the scene's Video sources already plays
+     * the same video: otherwise the video would play twice, PROGRAM MEDIA would drive one copy while the other
+     * is silenced, and the play / pause / stop / mute buttons would seem to do nothing.
+     */
+    private static boolean showsContent(Scene scene, String path) {
+        if (scene == null) {
+            return true;
+        }
+        boolean mediaLayer = false;
+        for (var s : scene.getSources()) {
+            if (!s.isVisible()) {
+                continue;
+            }
+            if (s.getType() == com.jamc.worship.model.SourceType.VIDEO && Objects.equals(s.getConfig().path, path)) {
+                return false; // the scene's own source plays it (one player, with sound, under PROGRAM MEDIA)
+            }
+            mediaLayer |= s.getType() == com.jamc.worship.model.SourceType.BACKGROUND;
+        }
+        return mediaLayer;
+    }
+
+    /** Plays, stops and follows the video that is live on Program. */
+    private void syncProgramVideo() {
+        LiveContent c = program.content();
+        String path = c != null && c.isVideo() && showsContent(program.scene(), c.videoPath()) ? c.videoPath() : null;
+        if (Objects.equals(path, playingProgramVideo)) {
+            return;
+        }
+        playingProgramVideo = path;
+        if (path == null) {
+            hub.stopProgramVideo();
+            updateProgramMedia();
+            return;
+        }
+        boolean youtube = com.jamc.worship.youtube.YouTubeRef.is(path);
+        if (!youtube && !hub.available()) {
+            statusBar.showMessage(hub.problem());
+            return;
+        }
+        // a YouTube video plays in the embedded YouTube player; a file plays in VLC
+        com.jamc.worship.media.VideoPlayback player = hub.programPlayer(path);
+        SettingsPanel.VideoEnd end = SettingsPanel.VideoEnd.parse(context.config().get(SettingsPanel.KEY_VIDEO_END, null));
+        // this video's own mute / volume / loop from last time; Settings only for a video never changed
+        var state = mediaStates.get(com.jamc.worship.media.MediaStates.mediaKey(path), new com.jamc.worship.media.MediaStates.State(
+                false, parseInt(context.config().get(SettingsPanel.KEY_VOLUME, "100"), 100), end == SettingsPanel.VideoEnd.LOOP));
+        boolean loop = state.loop();
+        hub.setProgramVideoVolume(state.volume()); // through the mixer
+        hub.setProgramVideoMuted(state.muted());
+        if (context.config().getBoolean(SettingsPanel.KEY_AUTOPLAY, true)) {
+            player.play(path, loop, state.muted());
+        } else {
+            player.cue(path, loop);
+        }
+        updateProgramMedia();
+        if (videoEndHooked.add(player)) {
+            player.addFinishedListener(() -> {
+                SettingsPanel.VideoEnd e = SettingsPanel.VideoEnd.parse(context.config().get(SettingsPanel.KEY_VIDEO_END, null));
+                LiveContent now = program.content();
+                if (e == SettingsPanel.VideoEnd.BLACK && now != null && now.isVideo()) {
+                    program.clear();
+                    statusBar.showMessage("Video ended. Program cleared.");
+                }
+            });
+        }
+    }
+
+    /** Program players whose end-of-video is already handled (VLC and YouTube each get one hook). */
+    private final java.util.Set<com.jamc.worship.media.VideoPlayback> videoEndHooked =
+            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+
+    /** What the PROGRAM MEDIA controls are bound to (a fullscreen video path or a scene video key). */
+    private String programMediaKey;
+    private String programMediaTitle;
+    private com.jamc.worship.media.Transport programMediaTransport;
+    private com.jamc.worship.media.VideoPlayback programMediaPlayer;
+
+    /**
+     * PROGRAM MEDIA controls follow the video playing on Program: the fullscreen video, else the first
+     * video source of the Program scene. Hidden when Program has no video.
+     */
+    private void updateProgramMedia() {
+        String key = null;
+        String title = null;
+        com.jamc.worship.media.Transport transport = null;
+        com.jamc.worship.media.VideoPlayback player = null;
+        if (playingProgramVideo != null && hub.hasProgramVideo()) {
+            player = hub.activeProgramPlayer();
+            key = "program:" + playingProgramVideo;
+            // volume and mute go through the hub (the mixer keeps them) and are remembered for this video
+            transport = Objects.equals(key, programMediaKey) ? programMediaTransport
+                    : mediaStates.remember(hub.programVideoTransport(), com.jamc.worship.media.MediaStates.mediaKey(playingProgramVideo));
+            LiveContent live = program.content();
+            title = com.jamc.worship.youtube.YouTubeRef.is(playingProgramVideo)
+                    ? "YouTube: " + (live != null && live.title() != null ? live.title() : com.jamc.worship.youtube.YouTubeRef.id(playingProgramVideo))
+                    : java.nio.file.Path.of(playingProgramVideo).getFileName().toString();
+        } else {
+            List<com.jamc.worship.media.SceneVideos.Slot> slots = hub.sceneVideos().programSlots();
+            if (!slots.isEmpty()) {
+                var slot = slots.getFirst();
+                player = slot.player();
+                key = slot.key();
+                title = slot.name() + (slots.size() > 1 ? "  (+" + (slots.size() - 1) + " more)" : "");
+                transport = Objects.equals(key, programMediaKey) ? programMediaTransport : hub.sceneVideos().transport(slot);
+            }
+        }
+        if (Objects.equals(key, programMediaKey) && player == programMediaPlayer) {
+            updateProgramMediaNote();
+            return;
+        }
+        programMediaKey = key;
+        programMediaTitle = title;
+        programMediaTransport = transport;
+        programMediaPlayer = player;
+        liveDock.bindProgramMedia(transport, title, audioNote(player));
+    }
+
+    /** "No audio track" once VLC knows the Program video has no sound (not an error). */
+    private void updateProgramMediaNote() {
+        if (programMediaTransport != null) {
+            liveDock.bindProgramMediaLabel(programMediaTitle, audioNote(programMediaPlayer));
+        }
+    }
+
+    private static String audioNote(com.jamc.worship.media.VideoPlayback p) {
+        if (p instanceof com.jamc.worship.youtube.YouTubePlayer yt) {
+            return yt.hasError() ? yt.errorMessage() : "YouTube sound: Windows default output";
+        }
+        return p != null && p.audioTrackCount() == 0 ? "No audio track" : null;
+    }
+
+    private javax.swing.JDialog mixerDialog;
+    private com.jamc.worship.ui.components.AudioMixerPanel mixerPanel;
+
+    /**
+     * MIXER: a dialog (stays open beside the work) with the microphone and camera audio inputs to choose,
+     * and the volume / mute of microphone, camera audio, media and master.
+     */
+    private void showMixer() {
+        if (mixerDialog == null) {
+            mixerPanel = new com.jamc.worship.ui.components.AudioMixerPanel(audioRouting, streamManager);
+            mixerDialog = new javax.swing.JDialog(this, "Audio Mixer", false);
+            JPanel content = new JPanel(new BorderLayout());
+            content.add(mixerPanel, BorderLayout.CENTER);
+            JButton close = Ui.button("Close", null);
+            close.addActionListener(e -> mixerDialog.setVisible(false));
+            // a Bluetooth headset or USB microphone plugged in after the app started appears after a refresh
+            JButton refresh = Ui.button("Refresh Inputs", "refresh");
+            refresh.setToolTipText("Look for sound inputs again (e.g. a Bluetooth headset or USB microphone just connected)");
+            refresh.addActionListener(e -> {
+                mixerFilled = false;
+                streamManager.refreshCapabilities();
+            });
+            JPanel buttons = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 8));
+            buttons.add(refresh);
+            buttons.add(close);
+            content.add(buttons, BorderLayout.SOUTH);
+            mixerDialog.setContentPane(content);
+            mixerDialog.getRootPane().registerKeyboardAction(e -> mixerDialog.setVisible(false),
+                    javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, 0),
+                    JComponent.WHEN_IN_FOCUSED_WINDOW);
+            // the input lists fill in once FFmpeg has listed the sound inputs
+            streamManager.addListener(() -> {
+                if (mixerDialog.isVisible() && streamManager.capabilities() != null && !streamManager.isProbing() && !mixerFilled) {
+                    mixerFilled = true;
+                    mixerPanel.reload();
+                    mixerDialog.pack();
+                }
+            });
+        }
+        mixerFilled = streamManager.capabilities() != null;
+        if (!mixerFilled) {
+            streamManager.refreshCapabilities();
+        }
+        mixerPanel.reload();
+        mixerDialog.pack();
+        mixerDialog.setLocationRelativeTo(this);
+        mixerDialog.setVisible(true);
+    }
+
+    private boolean mixerFilled;
+
+    private void updateBackgroundIndicator() {
+        String name = globalBackground.path() == null ? null : GlobalBackgroundPanel.displayName(globalBackground.path());
+        switch (globalBackground.status()) {
+            case ACTIVE -> topBar.setBackgroundState("BG: " + name, Palette::live);
+            case PAUSED -> topBar.setBackgroundState("BG: " + name + " (paused)", Palette::warning);
+            default -> topBar.setBackgroundState(null, null);
+        }
+    }
+
+    /** "● REC 00:21:15" in the top bar while Program is being recorded. */
+    private void updateRecordingIndicator() {
+        var r = streamManager.recording();
+        topBar.setRecording(!r.active() ? null : r.finishing() ? "SAVING…"
+                : "■ STOP REC " + com.jamc.worship.ui.components.StreamPanel.elapsed(r.startedMillis()), r.finishing());
+        // the running time ticks every second while recording, not only when FFmpeg reports progress
+        if (r.active() && !recordingClock.isRunning()) {
+            recordingClock.start();
+        } else if (!r.active()) {
+            recordingClock.stop();
+        }
+    }
+
+    private final javax.swing.Timer recordingClock = new javax.swing.Timer(1000, e -> updateRecordingIndicator());
+
+    private void updateLiveIndicators() {
+        boolean programShown = output.isRouted(OutputService.Source.PROGRAM);
+        topBar.setOutputActive(output.isOpen());
+        topBar.setLive(programShown && program.isShowingContent());
+        liveDock.setOutputState(output.isOpen(), output.isOpen() ? "On" : output.isWaiting() ? "Waiting for display" : "Off",
+                programShown);
+    }
+
+    private void loadLiveSettings() {
+        AppConfig cfg = context.config();
+        Transition t = Transition.parse(cfg.get(AppConfig.KEY_TRANSITION, null), Transition.FADE);
+        int ms = parseInt(cfg.get(AppConfig.KEY_TRANSITION_MS, "500"), 500);
+        program.setTransition(t, ms);
+        previewState.setTransition(t, ms);
+        liveDock.setTransition(t, ms);
+        if (cfg.get(KEY_PREVIEW_FIRST, null) == null) {
+            // Preview → TAKE → Program is the rule: Auto-take (which skips Preview) starts off once for everyone
+            cfg.set(AppConfig.KEY_AUTO_TAKE, "false");
+            cfg.set(KEY_PREVIEW_FIRST, "true");
+            cfg.save();
+        }
+        if (cfg.get(KEY_LYRICS_CLICK_LIVE_RESET, null) == null) {
+            // the operator asked again: song lyrics go live on click (Bible, PowerPoint, media keep Preview + TAKE)
+            cfg.set(SettingsPanel.KEY_SONG_CLICK_LIVE, "true");
+            cfg.set(KEY_LYRICS_CLICK_LIVE_RESET, "true");
+            cfg.save();
+        }
+        liveDock.setAutoTake(cfg.getBoolean(AppConfig.KEY_AUTO_TAKE, false));
+    }
+
+    private GraphicsDevice operatorDevice() {
+        return getGraphicsConfiguration() == null ? null : getGraphicsConfiguration().getDevice();
+    }
+
+    private void showPage(TopBar.Page page) {
+        placeLiveDock(page == TopBar.Page.SCENE);
+        switch (page) {
+            case SCENE -> pageCards.show(pages, page.name());
+            case LIBRARY -> pageCards.show(pages, PAGE_WORKSPACE);
+            case SERVICE -> {
+                servicesPanel.refresh();
+                pageCards.show(pages, page.name());
+            }
+            case STREAM -> {
+                streamPanel.activate();
+                pageCards.show(pages, page.name());
+            }
+            case SETTINGS -> {
+                settingsPanel.refreshInfo();
+                pageCards.show(pages, page.name());
+            }
+            default -> pageCards.show(pages, page.name());
+        }
+    }
+
+    /**
+     * Preview · TAKE · Program is one component: under the scene on the SCENE page, beside the library list
+     * everywhere else. Moving it never touches what Preview or Program show.
+     */
+    private void placeLiveDock(boolean scenePage) {
+        if (scenePage) {
+            if (livePanel.getParent() != scenesHome.liveHolder()) {
+                libraryDivider = librarySplit.getDividerLocation();
+                scenesHome.liveHolder().add(livePanel, BorderLayout.CENTER);
+                scenesHome.liveHolder().revalidate();
+                librarySplit.setRightComponent(new JPanel()); // placeholder while the monitors are on the SCENE page
+            }
+        } else if (livePanel.getParent() == scenesHome.liveHolder()) {
+            scenesHome.liveHolder().remove(livePanel);
+            librarySplit.setRightComponent(livePanel);
+            if (libraryDivider > 0) {
+                librarySplit.setDividerLocation(libraryDivider);
+            }
+            librarySplit.revalidate();
+        }
+    }
+
+    private int libraryDivider = -1;
+
+    private static final String KEY_LIBRARY_CATEGORY = "ui.library.category";
+
+    private Sidebar.Category savedLibraryCategory() {
+        try {
+            return Sidebar.Category.valueOf(context.config().get(KEY_LIBRARY_CATEGORY, Sidebar.Category.SONGS.name()));
+        } catch (IllegalArgumentException e) {
+            return Sidebar.Category.SONGS;
+        }
+    }
+
+    /** LIBRARY from the main navigation or the logo: the Library page on its current category. */
+    private void openLibrary() {
+        topBar.selectPage(TopBar.Page.LIBRARY);
+        showPage(TopBar.Page.LIBRARY);
+    }
+
+    private void changeTheme(String theme) {
+        if (theme.equals(context.config().uiTheme())) {
+            return;
+        }
+        context.config().set(AppConfig.KEY_UI_THEME, theme);
+        context.config().save();
+        Themes.switchTo(theme);
+        settingsPanel.setTheme(theme);
+        log.info("Switched UI theme to {}", theme);
+    }
+
+    // ------------------------------------------------------------------ menu & shortcuts
+
+    private JMenuBar buildMenuBar() {
+        JMenuBar bar = new JMenuBar();
+
+        JMenu file = new JMenu("File");
+        file.add(menuItem("New Lyrics…", "plus", shortcuts.get(Shortcuts.Action.NEW_SONG), this::newSong));
+        file.add(menuItem("Services…", "list", null, () -> {
+            topBar.selectPage(TopBar.Page.SERVICE);
+            showPage(TopBar.Page.SERVICE);
+        }));
+        file.add(menuItem("Save", null, shortcuts.get(Shortcuts.Action.SAVE), this::saveAll));
+        file.addSeparator();
+        file.add(menuItem("Backup / Restore…", "copy", null, () -> {
+            topBar.selectPage(TopBar.Page.SETTINGS);
+            showPage(TopBar.Page.SETTINGS);
+        }));
+        file.add(menuItem("Open Data Folder", "folder", null, this::openDataFolder));
+        file.addSeparator();
+        file.add(menuItem("Exit", null, KeyStroke.getKeyStroke(KeyEvent.VK_F4, KeyEvent.ALT_DOWN_MASK), this::shutdown));
+        bar.add(file);
+
+        JMenu view = new JMenu("View");
+        view.add(menuItem("Dark Theme", "moon", null, () -> changeTheme(AppConfig.THEME_DARK)));
+        view.add(menuItem("Light Theme", "sun", null, () -> changeTheme(AppConfig.THEME_LIGHT)));
+        view.addSeparator();
+        view.add(menuItem("Find Lyrics", "search", shortcuts.get(Shortcuts.Action.SEARCH), this::focusSongSearch));
+        view.addSeparator();
+        view.add(menuItem("Projector Output On/Off", "monitor", null, () -> output.toggle(this)));
+        view.add(menuItem("OBS Output Window On/Off", "monitor", null, obs::toggle));
+        bar.add(view);
+
+        JMenu help = new JMenu("Help");
+        help.add(menuItem("Keyboard Shortcuts", null, null, () -> {
+            topBar.selectPage(TopBar.Page.SETTINGS);
+            showPage(TopBar.Page.SETTINGS);
+        }));
+        help.add(menuItem("About…", null, null, () -> Dialogs.showInfo(this, "About " + branding.applicationName(),
+                branding.applicationName() + "\nVersion " + appVersion() + "\n\nLocal-first worship presentation.\n"
+                        + "Data folder: " + context.paths().root())));
+        bar.add(help);
+        return bar;
+    }
+
+    private static JMenuItem menuItem(String text, String icon, KeyStroke accelerator, Runnable action) {
+        JMenuItem item = new JMenuItem(text, icon == null ? null : Icons.get(icon, Icons.SMALL));
+        if (accelerator != null) {
+            item.setAccelerator(accelerator);
+        }
+        item.addActionListener(e -> action.run());
+        return item;
+    }
+
+    private void saveAll() {
+        schedule.save();
+        slideEditor.save();
+        statusBar.showMessage("All changes are saved.");
+    }
+
+    private void installShortcuts() {
+        // Presentation keys are handled once for the whole window (GlobalShortcuts): they work in search
+        // boxes too (a TAKE key like ` takes and is never typed), but never interrupt real text editing.
+        Predicate<KeyEvent> enterTakes = e -> {
+            if (e.getKeyCode() != KeyEvent.VK_ENTER || e.getModifiersEx() != 0) {
+                return false;
+            }
+            // Enter takes the selected slide while the slides or a presentation has focus
+            Component owner = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
+            for (JComponent area : new JComponent[]{thumbnails, presentationDetail}) {
+                if (owner != null && SwingUtilities.isDescendingFrom(owner, area)) {
+                    take();
+                    return true;
+                }
+            }
+            return false;
+        };
+        new GlobalShortcuts(this::isActive, shortcuts, enterTakes, action -> {
+            switch (action) {
+                case NEXT_SLIDE -> thumbnails.selectNext();
+                case PREVIOUS_SLIDE -> thumbnails.selectPrevious();
+                case SLIDESHOW_NEXT -> slideshows.controlPreview(com.jamc.worship.output.Slideshows.Control.NEXT);
+                case SLIDESHOW_PREVIOUS -> slideshows.controlPreview(com.jamc.worship.output.Slideshows.Control.PREVIOUS);
+                case TAKE -> take();
+                case BLACK -> program.toggleBlack();
+                case BLANK -> program.toggleBlank();
+                case LYRICS -> program.toggleLyrics();
+                case HIDE_LOWER_THIRD -> program.hideLowerThird();
+                case NEXT_ITEM -> schedule.selectNext();
+                case PREVIOUS_ITEM -> schedule.selectPrevious();
+                case TOGGLE_OUTPUT -> output.toggle(this);
+                case CLOSE_OUTPUT -> {
+                    if (!output.isOpen() || output.mode() != OutputService.Mode.FULLSCREEN) {
+                        return false; // let dialogs and popups handle Esc normally
+                    }
+                    output.close();
+                    statusBar.showMessage("Projector output closed (Esc). Press F5 to open it again.");
+                }
+                default -> {
+                    return false;
+                }
+            }
+            return true;
+        }).install();
+    }
+
+    private void newSong() {
+        focusLibraryPage();
+        songLibrary.addSong();
+    }
+
+    private void focusSongSearch() {
+        focusLibraryPage();
+        songLibrary.focusSearch();
+    }
+
+    private void focusLibraryPage() {
+        Sidebar.Category current = sidebar.selectedCategory();
+        if (current != Sidebar.Category.SONGS && current != Sidebar.Category.FAVORITES) {
+            sidebar.selectCategory(Sidebar.Category.SONGS);
+        }
+        topBar.selectPage(TopBar.Page.LIBRARY);
+        showPage(TopBar.Page.LIBRARY);
+    }
+
+    private void openDataFolder() {
+        try {
+            Desktop.getDesktop().open(context.paths().root().toFile());
+        } catch (Exception e) {
+            Dialogs.showError(this, "Could not open the data folder.", e);
+        }
+    }
+
+    // ------------------------------------------------------------------ layout helpers
+
+    private static JPanel region(JComponent content) {
+        JPanel p = Ui.panel(new BorderLayout(), Palette::panelBackground);
+        p.add(content, BorderLayout.CENTER);
+        return p;
+    }
+
+    private static JSplitPane split(int orientation, Component a, Component b, double resizeWeight) {
+        JSplitPane s = new JSplitPane(orientation, a, b);
+        s.setResizeWeight(resizeWeight);
+        s.setContinuousLayout(true);
+        s.setBorder(null);
+        s.setOneTouchExpandable(false);
+        return s;
+    }
+
+    private static int parseInt(String s, int def) {
+        try {
+            return Integer.parseInt(s.strip());
+        } catch (RuntimeException e) {
+            return def;
+        }
+    }
+
+    // ------------------------------------------------------------------ window state
+
+    private void restoreWindowBounds() {
+        Rectangle usable = GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds();
+        setMinimumSize(new Dimension(Math.min(1200, usable.width), Math.min(680, usable.height)));
+        Rectangle saved = parseBounds(context.config().get(AppConfig.KEY_WINDOW_BOUNDS, null));
+        if (saved != null && isOnScreen(saved)) {
+            setBounds(saved);
+        } else {
+            int w = Math.min(1600, usable.width);
+            int h = Math.min(940, usable.height);
+            setBounds(usable.x + (usable.width - w) / 2, usable.y + (usable.height - h) / 2, w, h);
+        }
+        if (context.config().getBoolean(AppConfig.KEY_WINDOW_MAXIMIZED, true)) {
+            setExtendedState(getExtendedState() | MAXIMIZED_BOTH);
+        }
+    }
+
+    private void restoreDividers() {
+        SwingUtilities.invokeLater(() -> {
+            int width = sidebarSplit.getWidth();
+            int height = verticalSplit.getHeight();
+            setDivider("sidebar", 196);
+            setDivider("library", Math.max(260, Math.min(330, (int) (width * 0.2))));
+            setDivider("schedule.v3", scheduleSplit.getWidth() - Math.max(270, Math.min(310, (int) (width * 0.18))));
+            setDivider("scenes.v3", Math.max(240, (int) (scenesSplit.getHeight() * 0.5)));
+            setDivider("vertical.v2", Math.max(300, (int) (height * 0.45)));
+            setDivider("bottom.v2", Math.max(420, (int) (bottomSplit.getWidth() * 0.6)));
+        });
+    }
+
+    private void setDivider(String key, int fallback) {
+        splits.get(key).setDividerLocation(parseInt(context.config().get("ui.split." + key, String.valueOf(fallback)), fallback));
+    }
+
+    private void saveWindowState() {
+        AppConfig config = context.config();
+        boolean maximized = (getExtendedState() & MAXIMIZED_BOTH) == MAXIMIZED_BOTH;
+        config.set(AppConfig.KEY_WINDOW_MAXIMIZED, String.valueOf(maximized));
+        if (!maximized) {
+            Rectangle b = getBounds();
+            config.set(AppConfig.KEY_WINDOW_BOUNDS, b.x + "," + b.y + "," + b.width + "," + b.height);
+        }
+        splits.forEach((key, split) -> config.set("ui.split." + key, String.valueOf(split.getDividerLocation())));
+        config.save();
+    }
+
+    private static Rectangle parseBounds(String value) {
+        if (value == null) {
+            return null;
+        }
+        String[] p = value.split(",");
+        if (p.length != 4) {
+            return null;
+        }
+        try {
+            return new Rectangle(Integer.parseInt(p[0].strip()), Integer.parseInt(p[1].strip()),
+                    Integer.parseInt(p[2].strip()), Integer.parseInt(p[3].strip()));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** True if the title bar area of {@code r} is visible on some connected monitor. */
+    private static boolean isOnScreen(Rectangle r) {
+        Rectangle titleBar = new Rectangle(r.x + 40, r.y, Math.max(1, r.width - 80), 30);
+        for (var device : GraphicsEnvironment.getLocalGraphicsEnvironment().getScreenDevices()) {
+            if (device.getDefaultConfiguration().getBounds().intersects(titleBar)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Saves everything that might be unsaved. Safe to call more than once. */
+    private void saveEverything() {
+        try {
+            saveWindowState();
+        } catch (RuntimeException e) {
+            log.error("Could not save window state", e);
+        }
+        try {
+            schedule.saveBlocking();
+        } catch (RuntimeException e) {
+            log.error("Could not save the service while closing", e);
+        }
+        try {
+            slideEditor.saveBlocking();
+        } catch (RuntimeException e) {
+            log.error("Could not save the slide deck while closing", e);
+        }
+    }
+
+    private void releaseResources() {
+        displays.stopMonitoring();
+        output.shutdown();
+        streamManager.shutdown();
+        globalBackground.shutdown();
+        obs.close();
+        try {
+            hub.shutdown();
+        } catch (RuntimeException e) {
+            log.warn("Error releasing media", e);
+        }
+    }
+
+    private void shutdown() {
+        log.info("Shutting down");
+        saveEverything();
+        releaseResources();
+        dispose();
+        System.exit(0);
+    }
+
+    /** Restarts the application (after a restore or VLC setup). */
+    private void restartApplication() {
+        log.info("Restarting");
+        saveEverything();
+        releaseResources();
+        try {
+            ProcessHandle.Info info = ProcessHandle.current().info();
+            List<String> cmd = new ArrayList<>();
+            cmd.add(info.command().orElse("java"));
+            info.arguments().ifPresent(args -> cmd.addAll(List.of(args)));
+            new ProcessBuilder(cmd).inheritIO().start();
+        } catch (Exception e) {
+            log.error("Could not restart automatically", e);
+            Dialogs.showInfo(this, "Restart", "Please start " + branding.applicationName() + " again.");
+        }
+        dispose();
+        System.exit(0);
+    }
+
+    private static String appVersion() {
+        String v = MainFrame.class.getPackage().getImplementationVersion();
+        return v == null ? "development" : v;
+    }
+
+}

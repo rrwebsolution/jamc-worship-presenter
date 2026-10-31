@@ -1,0 +1,374 @@
+package com.jamc.worship.stream;
+
+import com.jamc.worship.config.AppConfig;
+import com.jamc.worship.output.ProgramOutput;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.swing.SwingUtilities;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.net.URI;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
+
+/**
+ * Recording and livestreaming of Program. Program is the only source: the frames come from
+ * {@link ProgramFrameTap}, so viewers and recordings always match the Program monitor.
+ *
+ * <p>Recording and streaming are independent sessions with their own encoder. Encoder failures stay
+ * here: the presentation (Program, projector, songs, Bible, PowerPoint) keeps working. Public methods
+ * are called on the Swing thread; slow work runs on background threads and listeners are notified on
+ * the Swing thread.
+ */
+public final class StreamManager {
+
+    private static final Logger log = LoggerFactory.getLogger(StreamManager.class);
+    public static final String KEY_FFMPEG_PATH = "stream.ffmpegPath";
+    private static final DateTimeFormatter FILE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH-mm-ss");
+
+    public enum State { IDLE, STARTING, ACTIVE, ERROR }
+
+    /** What a session is doing, for the panel and the top bar. */
+    public record Session(State state, String detail, StreamEncoder.Stats stats, long startedMillis, Path file) {
+        static Session idle() {
+            return new Session(State.IDLE, null, null, 0, null);
+        }
+
+        public boolean active() {
+            return state == State.ACTIVE || state == State.STARTING;
+        }
+
+        /** STOP was pressed: FFmpeg is closing the file (a moment). */
+        public boolean finishing() {
+            return state == State.STARTING && FINISHING.equals(detail);
+        }
+    }
+
+    /** One line of the pre-stream check. */
+    public record Check(String label, Level level, String detail) {
+        public enum Level { OK, WARNING, PROBLEM }
+    }
+
+    private final AppConfig config;
+    private final Path defaultRecordingsDir;
+    static final String FINISHING = "Finishing the file…";
+    /** Settings → Stream: the folder recordings are saved in (empty = the default folder). */
+    public static final String KEY_RECORDINGS_DIR = "stream.recordingsDir";
+    private final SecretStore secrets;
+    private final Supplier<List<String>> cameras;
+    private final ProgramFrameTap tap;
+    private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
+    private volatile FFmpeg.Capabilities capabilities;
+    private boolean probing;
+    private FFmpegStreamEncoder recorder;
+    /** This app's own sound while recording (MEDIA = {@link StreamSettings#APP_AUDIO}). */
+    private LoopbackAudio loopback;
+    private final Path toolsDir;
+    /** Name of the output device Program plays on ("" = the Windows default): the one whose sound is recorded. */
+    private Supplier<String> programDevice = () -> "";
+    private Session recording = Session.idle();
+
+    public StreamManager(AppConfig config, Path dataRoot, ProgramOutput program, SecretStore secrets,
+                         Supplier<List<String>> cameras) {
+        this.config = config;
+        this.defaultRecordingsDir = dataRoot.resolve("recordings");
+        this.toolsDir = dataRoot.resolve("tools");
+        this.secrets = secrets;
+        this.cameras = cameras;
+        this.tap = new ProgramFrameTap(program);
+    }
+
+    /** Where Program's sound plays (Settings → Audio), so recordings capture that device. */
+    public void setProgramDevice(Supplier<String> deviceName) {
+        this.programDevice = deviceName;
+    }
+
+    public void addListener(Runnable l) {
+        listeners.add(l);
+    }
+
+    /** Where recordings are saved: the folder chosen in the Stream settings, else the default folder. */
+    public Path recordingsDir() {
+        String chosen = config.get(KEY_RECORDINGS_DIR, null);
+        if (chosen != null && !chosen.isBlank()) {
+            try {
+                return Path.of(chosen);
+            } catch (java.nio.file.InvalidPathException e) {
+                log.warn("Recordings folder setting is not a valid path: {}", chosen);
+            }
+        }
+        return defaultRecordingsDir;
+    }
+
+    public Path defaultRecordingsDir() {
+        return defaultRecordingsDir;
+    }
+
+    /** Saves recordings in {@code folder} from the next recording on (null = the default folder). */
+    public void setRecordingsDir(Path folder) {
+        config.set(KEY_RECORDINGS_DIR, folder == null ? "" : folder.toAbsolutePath().toString());
+        config.save();
+        fire();
+    }
+
+    public SecretStore secrets() {
+        return secrets;
+    }
+
+    // ------------------------------------------------------------------ settings and key
+
+    public StreamSettings settings() {
+        return StreamSettings.load(config);
+    }
+
+    public void saveSettings(StreamSettings s) {
+        s.save(config);
+        fire();
+    }
+
+    private static String keyName(StreamingProvider p) {
+        return "stream.key." + p.id();
+    }
+
+    public boolean hasStreamKey(StreamingProvider p) {
+        return secrets.has(keyName(p));
+    }
+
+    /** The stored key, for "Show" only. */
+    public String streamKey(StreamingProvider p) {
+        return secrets.get(keyName(p));
+    }
+
+    public void setStreamKey(StreamingProvider p, String key) {
+        secrets.put(keyName(p), key);
+        log.info("Stream key for {} {}", p.displayName(), key == null || key.isBlank() ? "removed" : "updated"); // never the key
+        fire();
+    }
+
+    // ------------------------------------------------------------------ FFmpeg
+
+    /** Last probe result (null until the first probe finished). */
+    public FFmpeg.Capabilities capabilities() {
+        return capabilities;
+    }
+
+    public boolean isProbing() {
+        return probing;
+    }
+
+    /** Looks for FFmpeg and tests its encoders and devices in the background. */
+    public void refreshCapabilities() {
+        if (probing) {
+            return;
+        }
+        probing = true;
+        fire();
+        String configured = config.get(KEY_FFMPEG_PATH, null);
+        Thread.ofVirtual().name("ffmpeg-probe").start(() -> {
+            FFmpeg.Capabilities caps;
+            try {
+                caps = FFmpeg.probe(FFmpeg.locate(configured));
+            } catch (RuntimeException e) {
+                log.warn("FFmpeg probe failed", e);
+                caps = FFmpeg.Capabilities.none();
+            }
+            FFmpeg.Capabilities result = caps;
+            SwingUtilities.invokeLater(() -> {
+                capabilities = result;
+                probing = false;
+                fire();
+            });
+        });
+    }
+
+    public void setFFmpegPath(String path) {
+        config.set(KEY_FFMPEG_PATH, path);
+        config.save();
+        refreshCapabilities();
+    }
+
+    // ------------------------------------------------------------------ recording
+
+    public Session recording() {
+        return recording;
+    }
+
+    /** Starts recording Program to recordings/. Problems are reported through {@code onError}. */
+    public void startRecording(Consumer<String> onError) {
+        if (recording.active()) {
+            return;
+        }
+        FFmpeg.Capabilities caps = capabilities;
+        StreamSettings s = settings();
+        String encoder = caps == null ? null : caps.encoderFor(s.encoder());
+        if (caps == null || !caps.available() || encoder == null) {
+            onError.accept(ffmpegMissingMessage());
+            return;
+        }
+        Path folder = recordingsDir();
+        Path file = folder.resolve("Service " + LocalDateTime.now().format(FILE_TIME) + ".mp4");
+        recording = new Session(State.STARTING, "Starting…", null, System.currentTimeMillis(), file);
+        fire();
+        FFmpegStreamEncoder enc = new FFmpegStreamEncoder(caps.executable(), s, encoder, FFmpegStreamEncoder.Target.RECORDING,
+                file.toString(), new StreamEncoder.Listener() {
+            @Override
+            public void stats(StreamEncoder.Stats stats) {
+                SwingUtilities.invokeLater(() -> {
+                    if (recorder != null && recording.active()) {
+                        recording = new Session(State.ACTIVE, null, stats, recording.startedMillis(), recording.file());
+                        fire();
+                    }
+                });
+            }
+
+            @Override
+            public void ended(String error) {
+                SwingUtilities.invokeLater(() -> recordingEnded(error, onError));
+            }
+        });
+        recorder = enc;
+        Thread.ofVirtual().name("recording-start").start(() -> {
+            try {
+                Files.createDirectories(folder);
+                if (s.usesAppAudio()) {
+                    try {
+                        LoopbackAudio a = LoopbackAudio.start(toolsDir, programDevice.get());
+                        enc.setAppAudio(a.input());
+                        SwingUtilities.invokeLater(() -> {
+                            if (recorder == enc) loopback = a; else a.close();
+                        });
+                    } catch (IOException e) {
+                        log.warn("Recording without this app's sound: {}", e.getMessage());
+                        SwingUtilities.invokeLater(() -> onError.accept("The sound of videos and music in this app is not "
+                                + "recorded: " + e.getMessage()));
+                    }
+                }
+                enc.start();
+                SwingUtilities.invokeLater(() -> {
+                    if (recorder == enc) {
+                        tap.addSink(enc, s.width(), s.height(), s.fps());
+                        log.info("Recording Program to {} ({}x{} {} fps, {})", file.getFileName(), s.width(), s.height(), s.fps(), encoder);
+                    }
+                });
+            } catch (IOException e) {
+                SwingUtilities.invokeLater(() -> recordingEnded("FFmpeg could not be started: " + e.getMessage(), onError));
+            }
+        });
+    }
+
+    public void stopRecording() {
+        FFmpegStreamEncoder enc = recorder;
+        if (enc == null) {
+            return;
+        }
+        tap.removeSink(enc);
+        enc.stop();
+        recording = new Session(State.STARTING, FINISHING, recording.stats(), recording.startedMillis(), recording.file());
+        fire();
+    }
+
+    private void recordingEnded(String error, Consumer<String> onError) {
+        if (loopback != null) {
+            loopback.close();
+            loopback = null;
+        }
+        if (recorder != null) {
+            tap.removeSink(recorder);
+        }
+        recorder = null;
+        Path file = recording.file();
+        recording = error == null ? Session.idle() : new Session(State.ERROR, error, null, 0, file);
+        if (error != null) {
+            onError.accept("Recording stopped: " + error);
+        } else if (file != null) {
+            log.info("Recording saved: {}", file.getFileName());
+        }
+        fire();
+    }
+
+    // ------------------------------------------------------------------ livestream checks
+
+    /**
+     * Everything START STREAM needs, with what to do about anything missing. Blocking (checks the
+     * internet connection): call off the Swing thread.
+     */
+    public List<Check> preStreamCheck(StreamSettings s, FFmpeg.Capabilities caps) {
+        List<Check> out = new ArrayList<>();
+        List<String> cams = cameras.get();
+        out.add(cams.isEmpty()
+                ? new Check("Camera", Check.Level.WARNING, "No camera detected: viewers see the presentation only.")
+                : new Check("Camera detected", Check.Level.OK, String.join(", ", cams)));
+        boolean micOk = s.micDevice() != null && caps != null && caps.audioDevices().contains(s.micDevice());
+        out.add(micOk ? new Check("Microphone detected", Check.Level.OK, s.micDevice())
+                : new Check("Microphone", Check.Level.WARNING, s.micDevice() == null
+                ? "No microphone chosen in the Audio Mixer: the stream will be silent."
+                : "\"" + s.micDevice() + "\" is not connected."));
+        out.add(new Check("Program output ready", Check.Level.OK, "Viewers see exactly the Program monitor."));
+        String encoder = caps == null ? null : caps.encoderFor(s.encoder());
+        out.add(encoder != null
+                ? new Check("Encoder available", Check.Level.OK, "FFmpeg " + caps.version() + " · " + encoder)
+                : new Check("Encoder", Check.Level.PROBLEM, ffmpegMissingMessage()));
+        List<String> problems = s.provider().validate(s.server(), hasStreamKey(s.provider()));
+        out.add(problems.isEmpty()
+                ? new Check("Stream configuration available", Check.Level.OK, s.provider().displayName())
+                : new Check("Stream configuration", Check.Level.PROBLEM, String.join(" ", problems)));
+        String reach = problems.isEmpty() ? testConnection(s) : "skipped";
+        out.add(reach == null
+                ? new Check("Internet available", Check.Level.OK, "The streaming server answers.")
+                : new Check("Internet", Check.Level.PROBLEM, reach.equals("skipped") ? "Complete the stream configuration first." : reach));
+        return out;
+    }
+
+    /**
+     * Checks that the streaming server can be reached (a network connection only: the stream key is
+     * not sent, so nothing goes live). Returns null when it answers, else what is wrong. Blocking.
+     */
+    public String testConnection(StreamSettings s) {
+        String server = s.server() == null || s.server().isBlank() ? s.provider().defaultServer() : s.server();
+        if (server == null) {
+            return "Enter the server URL.";
+        }
+        try {
+            URI uri = URI.create(server.strip());
+            String host = uri.getHost();
+            int port = uri.getPort() > 0 ? uri.getPort() : "rtmps".equalsIgnoreCase(uri.getScheme()) ? 443 : 1935;
+            if (host == null) {
+                return "The server URL is not valid.";
+            }
+            try (Socket socket = new Socket()) {
+                socket.connect(new InetSocketAddress(host, port), 5000);
+            }
+            return null;
+        } catch (IllegalArgumentException e) {
+            return "The server URL is not valid.";
+        } catch (IOException e) {
+            return "Cannot reach the streaming server. Check the internet connection. (" + e.getClass().getSimpleName() + ")";
+        }
+    }
+
+    /** Stops everything (application exit). */
+    public void shutdown() {
+        if (recorder != null) {
+            tap.removeSink(recorder);
+            recorder.stop();
+        }
+    }
+
+    public static String ffmpegMissingMessage() {
+        return "FFmpeg is not installed. Open a Command Prompt, run: winget install Gyan.FFmpeg  "
+                + "then click Refresh (or Locate FFmpeg… if you installed it somewhere else).";
+    }
+
+    private void fire() {
+        listeners.forEach(Runnable::run);
+    }
+}

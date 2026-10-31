@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>JAMC YouTube player</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #000; overflow: hidden; }
+  #player { position: fixed; inset: 0; width: 100vw; height: 100vh; border: 0; }
+</style>
+</head>
+<body>
+<div id="player"></div>
+<script>
+// YouTube's official IFrame player, driven by JAMC Worship Presenter through window.jamc.
+// State goes back to the app as console messages starting with "JAMC:".
+var q = new URLSearchParams(location.search);
+var videoId = q.get('v');
+var wantLoop = q.get('loop') === '1';
+// what the app asked for: YouTube mutes autoplaying videos on its own, so this is re-applied while playing
+var wantMuted = q.get('muted') === '1';
+var wantVolume = parseInt(q.get('volume') || '100', 10);
+var player = null, ready = false, pending = [];
+
+function send(o) { console.log('JAMC:' + JSON.stringify(o)); }
+
+function call(fn) { if (ready) { try { fn(); } catch (e) { send({e: 'jserror', m: String(e)}); } } else { pending.push(fn); } }
+
+window.jamc = {
+  load: function (id, autoplay) {
+    videoId = id;
+    call(function () { autoplay ? player.loadVideoById(id) : player.cueVideoById(id); });
+  },
+  play: function () { call(function () { player.playVideo(); }); },
+  pause: function () { call(function () { player.pauseVideo(); }); },
+  stop: function () { call(function () { player.pauseVideo(); player.seekTo(0, true); }); },
+  seek: function (sec) { call(function () { player.seekTo(sec, true); }); },
+  volume: function (v) { wantVolume = v; call(function () { player.setVolume(v); }); },
+  mute: function (m) { wantMuted = m; call(function () { m ? player.mute() : player.unMute(); }); },
+  loop: function (l) { wantLoop = l; }
+};
+
+function onYouTubeIframeAPIReady() {
+  player = new YT.Player('player', {
+    videoId: videoId, width: '100%', height: '100%',
+    playerVars: {
+      autoplay: q.get('autoplay') === '1' ? 1 : 0, controls: 0, rel: 0, playsinline: 1, iv_load_policy: 3,
+      disablekb: 1, fs: 0, cc_load_policy: 0, modestbranding: 1, origin: location.origin
+    },
+    events: {
+      onReady: function () {
+        ready = true;
+        player.setVolume(wantVolume);
+        if (wantMuted) { player.mute(); } else { player.unMute(); }
+        try { player.unloadModule('captions'); } catch (e) { }
+        if (q.get('autoplay') === '1') { player.playVideo(); }
+        var p = pending; pending = [];
+        p.forEach(function (fn) { try { fn(); } catch (e) { } });
+        send({e: 'ready', d: player.getDuration()});
+      },
+      onStateChange: function (ev) {
+        if (ev.data === YT.PlayerState.PLAYING) { try { player.unloadModule('captions'); } catch (e) { } }
+        if (ev.data === YT.PlayerState.ENDED && wantLoop) { player.seekTo(0, true); player.playVideo(); return; }
+        send({e: 'state', s: ev.data, t: player.getCurrentTime(), d: player.getDuration()});
+      },
+      onError: function (ev) { send({e: 'error', code: ev.data}); }
+    }
+  });
+  setInterval(function () {
+    if (ready) {
+      // keep the sound as the app wants it (YouTube may have muted the autoplay)
+      if (!wantMuted && player.isMuted()) { player.unMute(); player.setVolume(wantVolume); }
+      if (wantMuted && !player.isMuted()) { player.mute(); }
+      send({e: 'tick', s: player.getPlayerState(), t: player.getCurrentTime(), d: player.getDuration(),
+            m: player.isMuted(), v: player.getVolume()});
+    }
+  }, 250);
+}
+</script>
+<script src="https://www.youtube.com/iframe_api"></script>
+</body>
+</html>
