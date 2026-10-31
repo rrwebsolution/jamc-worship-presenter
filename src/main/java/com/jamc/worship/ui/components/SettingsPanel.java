@@ -149,8 +149,14 @@ public class SettingsPanel extends JPanel {
         light.addActionListener(e -> onThemeChange.accept(AppConfig.THEME_LIGHT));
         JCheckBox reopen = checkbox("Reopen the last service when the app starts", KEY_REOPEN_SERVICE, true);
         JCheckBox openOutput = checkbox("Open the projector output when the app starts", KEY_OPEN_OUTPUT, false);
+        JCheckBox autoUpdate = checkbox("Check for a new version when the app starts (needs internet)",
+                com.jamc.worship.update.UpdateChecker.KEY_AUTO_CHECK, true);
+        JButton checkUpdates = Ui.button("Check for Updates", "refresh");
+        checkUpdates.addActionListener(e -> updateCheck.run());
+        String version = com.jamc.worship.update.UpdateChecker.currentVersion();
         JPanel general = rows(flow(Ui.small("Application theme:"), dark, light), reopen, openOutput,
-                Ui.label("Songs, slides, themes and services save automatically as you work.", Palette::mutedText, "small"));
+                Ui.label("Songs, slides, themes and services save automatically as you work.", Palette::mutedText, "small"),
+                autoUpdate, flow(checkUpdates, Ui.small("Version " + (version == null ? "(development)" : version))));
         content.add(section("General", "Look and startup behaviour", general), c);
         c.gridy++;
 
@@ -377,14 +383,20 @@ public class SettingsPanel extends JPanel {
         (AppConfig.THEME_LIGHT.equals(theme) ? light : dark).setSelected(true);
     }
 
-    /** Refreshes database, theme, VLC and camera information (queries run in the background). */
     private Runnable songsReset = () -> { };
+    private Runnable updateCheck = () -> { };
 
     /** Called after every song was set to follow the Lyrics Typography (the open song reloads). */
     public void setSongsResetHandler(Runnable handler) {
         songsReset = handler == null ? () -> { } : handler;
     }
 
+    /** General → Check for Updates. */
+    public void setUpdateCheckHandler(Runnable handler) {
+        updateCheck = handler == null ? () -> { } : handler;
+    }
+
+    /** Refreshes database, theme, VLC and camera information (queries run in the background). */
     public void refreshInfo() {
         vlcStatus.setText(hub.available() ? "VLC is ready: video, audio and camera are available."
                 : "<html><font color='#F59E0B'>" + hub.problem() + "</font></html>");

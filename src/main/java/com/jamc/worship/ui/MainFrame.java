@@ -430,6 +430,7 @@ public class MainFrame extends JFrame {
         new javax.swing.Timer(1000, e -> updateRecordingIndicator()).start();
         this.settingsPanel = new SettingsPanel(context, this::changeTheme, shortcuts, obs, hub, this::restartApplication,
                 this::manageBibleVersions);
+        settingsPanel.setUpdateCheckHandler(() -> checkForUpdates(true));
         settingsPanel.setSongsResetHandler(() -> {
             songLibrary.reloadCurrent(); // the open song drops its own font settings too
             typographyChanged();
@@ -634,6 +635,135 @@ public class MainFrame extends JFrame {
         if (context.config().getBoolean(SettingsPanel.KEY_OPEN_OUTPUT, false)) {
             output.restore(this); // the remembered Preview / Program routing
         }
+        BackgroundTask.run("Remove installed update files", () -> {
+            java.nio.file.Path dir = context.paths().root().resolve("updates"); // the installer already ran
+            if (java.nio.file.Files.isDirectory(dir)) {
+                try (var files = java.nio.file.Files.list(dir)) {
+                    for (java.nio.file.Path f : files.toList()) {
+                        java.nio.file.Files.deleteIfExists(f);
+                    }
+                }
+            }
+            return null;
+        }, x -> { }, err -> log.debug("Update files not removed", err));
+        if (context.config().getBoolean(com.jamc.worship.update.UpdateChecker.KEY_AUTO_CHECK, true)) {
+            javax.swing.Timer later = new javax.swing.Timer(8000, e -> checkForUpdates(false)); // after startup settles
+            later.setRepeats(false);
+            later.start();
+        }
+    }
+
+    // ------------------------------------------------------------------ updates
+
+    /**
+     * Looks for a newer version on GitHub. Automatic checks stay quiet when offline, up to date or the
+     * version was skipped; {@code manual} (Settings → Check for Updates) always says what it found.
+     */
+    void checkForUpdates(boolean manual) {
+        String current = com.jamc.worship.update.UpdateChecker.currentVersion();
+        if (current == null) {
+            if (manual) {
+                Dialogs.showInfo(this, "Updates", "This copy runs from the source code (development), so it is not updated "
+                        + "from GitHub. Installed copies (the .exe installer) update themselves.");
+            }
+            return;
+        }
+        var checker = new com.jamc.worship.update.UpdateChecker();
+        BackgroundTask.run("Check for updates", checker::latest, found -> {
+            var release = found.orElse(null);
+            boolean newer = release != null && com.jamc.worship.update.UpdateChecker.isNewer(release.version(), current);
+            String skipped = context.config().get(com.jamc.worship.update.UpdateChecker.KEY_SKIPPED, "");
+            if (!newer || (!manual && release.version().equals(skipped))) {
+                if (manual) {
+                    Dialogs.showInfo(this, "Updates", "You have the latest version (" + current + ").");
+                }
+                return;
+            }
+            Object[] options = {"Update Now", "Later", "Skip This Version"};
+            int choice = javax.swing.JOptionPane.showOptionDialog(this, "A new version of " + branding.applicationName()
+                            + " is available.\n\nInstalled:  " + current + "\nNew:  " + release.version()
+                            + String.format("  (%.0f MB download)", release.size() / 1_048_576.0)
+                            + "\n\nUpdate Now downloads it, saves your work, closes the app and opens the installer.\n"
+                            + "Songs, services and settings are kept.",
+                    "Update available", javax.swing.JOptionPane.DEFAULT_OPTION, javax.swing.JOptionPane.INFORMATION_MESSAGE,
+                    null, options, options[0]);
+            if (choice == 0) {
+                installUpdate(checker, release);
+            } else if (choice == 2) {
+                context.config().set(com.jamc.worship.update.UpdateChecker.KEY_SKIPPED, release.version());
+                context.config().save();
+            }
+        }, err -> {
+            log.info("Update check skipped: {}", err.getMessage()); // offline is normal
+            if (manual) {
+                Dialogs.showInfo(this, "Updates", "Could not check for updates. Check the internet connection.\n("
+                        + err.getMessage() + ")");
+            }
+        });
+    }
+
+    private void installUpdate(com.jamc.worship.update.UpdateChecker checker,
+                               com.jamc.worship.update.UpdateChecker.Release release) {
+        if (streamManager.live().active() || streamManager.recording().active()) {
+            Dialogs.showInfo(this, "Update", "Stop the livestream / recording first, then choose Update Now again "
+                    + "(Settings → General → Check for Updates).");
+            return;
+        }
+        javax.swing.JProgressBar bar = new javax.swing.JProgressBar(0, 1000);
+        bar.setStringPainted(true);
+        bar.setString("Downloading " + release.installerName() + "…");
+        javax.swing.JDialog progress = new javax.swing.JDialog(this, "Downloading update", true);
+        javax.swing.JPanel box = new javax.swing.JPanel(new java.awt.BorderLayout(0, 10));
+        box.setBorder(javax.swing.BorderFactory.createEmptyBorder(16, 16, 16, 16));
+        box.add(new javax.swing.JLabel("Downloading version " + release.version() + "…"), java.awt.BorderLayout.NORTH);
+        box.add(bar, java.awt.BorderLayout.CENTER);
+        javax.swing.JButton cancel = new javax.swing.JButton("Cancel");
+        javax.swing.JPanel south = new javax.swing.JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+        south.add(cancel);
+        box.add(south, java.awt.BorderLayout.SOUTH);
+        progress.setContentPane(box);
+        progress.setSize(420, 150);
+        progress.setLocationRelativeTo(this);
+        progress.setDefaultCloseOperation(javax.swing.WindowConstants.DO_NOTHING_ON_CLOSE);
+        java.nio.file.Path dir = context.paths().root().resolve("updates");
+        Thread worker = Thread.ofVirtual().name("update-download").start(() -> {
+            try {
+                java.nio.file.Path exe = checker.download(release, dir, got -> SwingUtilities.invokeLater(() -> {
+                    if (release.size() > 0) {
+                        bar.setValue((int) (got * 1000 / release.size()));
+                        bar.setString(String.format("%.0f / %.0f MB", got / 1_048_576.0, release.size() / 1_048_576.0));
+                    }
+                }));
+                SwingUtilities.invokeLater(() -> {
+                    progress.dispose();
+                    runInstaller(exe);
+                });
+            } catch (InterruptedException e) {
+                SwingUtilities.invokeLater(progress::dispose);
+            } catch (Exception e) {
+                SwingUtilities.invokeLater(() -> {
+                    progress.dispose();
+                    Dialogs.showError(this, "The update could not be downloaded.", e);
+                });
+            }
+        });
+        cancel.addActionListener(e -> worker.interrupt());
+        progress.setVisible(true);
+    }
+
+    /** Saves everything, starts the installer and closes the app (the installer replaces the old version). */
+    private void runInstaller(java.nio.file.Path exe) {
+        log.info("Installing update {}", exe.getFileName());
+        saveEverything();
+        try {
+            new ProcessBuilder("cmd", "/c", "start", "", exe.toString()).start();
+        } catch (java.io.IOException e) {
+            Dialogs.showError(this, "The installer could not be started. It was saved in " + exe.getParent() + ".", e);
+            return;
+        }
+        releaseResources();
+        dispose();
+        System.exit(0);
     }
 
     /**
