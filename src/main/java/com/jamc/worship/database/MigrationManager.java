@@ -94,6 +94,10 @@ public final class MigrationManager {
                 new Migration(14, "Lyrics source and provider (search, paste, file import, YouTube reference)", conn -> {
                     executeScript(conn, Schema.V14);
                     return null;
+                }),
+                new Migration(15, "Tags on service items (Fast, Slow, ...)", conn -> {
+                    executeScript(conn, Schema.V15);
+                    return null;
                 })
         );
     }

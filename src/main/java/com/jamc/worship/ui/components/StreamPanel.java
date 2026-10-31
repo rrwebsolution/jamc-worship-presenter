@@ -94,6 +94,7 @@ public class StreamPanel extends JPanel {
     private final JButton checkButton = Ui.button("Pre-stream Check", "list");
     private final JPanel checkList = Ui.transparent(new GridBagLayout());
     private final JButton startStream = new JButton("START STREAM");
+    private final JLabel liveStatus = Ui.label("Not live", Palette::secondaryText, null);
 
     private boolean loading;
 
@@ -154,7 +155,7 @@ public class StreamPanel extends JPanel {
         startStream.putClientProperty(FlatClientProperties.STYLE,
                 "font: bold +2; margin: 10,20,10,20; background: #DC2626; foreground: #FFFFFF");
         content.add(section("Live Stream", "Check everything, then start. You always confirm before going live.",
-                rows(flow(checkButton, startStream), checkList)), c);
+                rows(flow(checkButton, startStream), flow(liveStatus), checkList)), c);
         c.gridy++;
 
         c.weighty = 1;
@@ -298,7 +299,7 @@ public class StreamPanel extends JPanel {
             }
         });
         checkButton.addActionListener(e -> runCheck(false));
-        startStream.addActionListener(e -> runCheck(true));
+        startStream.addActionListener(e -> startStream());
     }
 
     private void changeKey() {
@@ -323,8 +324,22 @@ public class StreamPanel extends JPanel {
         recordButton.doClick();
     }
 
-    /** START STREAM from anywhere (the top bar): the pre-stream check, then the confirmation. */
+    /** START STREAM from anywhere (the top bar): the pre-stream check, then the confirmation. While live: STOP (confirmed). */
     public void startStream() {
+        StreamManager.Session live = manager.live();
+        if (live.finishing()) {
+            return;
+        }
+        if (live.active()) {
+            Object[] options = {"KEEP STREAMING", "STOP STREAM"};
+            int choice = JOptionPane.showOptionDialog(this, "Stop the livestream?\nViewers will see the live video end.",
+                    "Stop livestream", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[0]);
+            if (choice == 1) {
+                manager.stopStream();
+                status.accept("Livestream stopped.");
+            }
+            return;
+        }
         runCheck(true);
     }
 
@@ -332,6 +347,9 @@ public class StreamPanel extends JPanel {
     private void runCheck(boolean start) {
         StreamSettings s = current();
         FFmpeg.Capabilities caps = manager.capabilities();
+        if (start && manager.live().active()) {
+            return;
+        }
         checkButton.setEnabled(false);
         startStream.setEnabled(false);
         showChecks(List.of(new StreamManager.Check("Checking…", StreamManager.Check.Level.OK, "")));
@@ -355,9 +373,8 @@ public class StreamPanel extends JPanel {
                             + "Resolution:  " + s.width() + " × " + s.height() + "\nFPS:  " + s.fps(),
                     "Start livestream", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[0]);
             if (choice == 1) {
-                Dialogs.showInfo(this, "Live Stream", "Everything is ready. Direct streaming is switched on in the next "
-                        + "update, after local recording has been tested on this computer.\n\n"
-                        + "For now, record Program here, or stream with OBS (Window Capture of \"JAMC Worship - OBS Output\").");
+                manager.startStream(msg -> Dialogs.showInfo(this, "Live Stream", msg));
+                status.accept("Connecting to " + s.provider().displayName() + "…");
             }
         }, err -> {
             checkButton.setEnabled(true);
@@ -585,6 +602,33 @@ public class StreamPanel extends JPanel {
         }
         stateLabel.setText(active ? "● REC " + elapsed(r.startedMillis()) : "● OFFLINE");
         stateLabel.setForeground(active ? Palette.live() : Palette.mutedText());
+        syncLive();
+    }
+
+    private void syncLive() {
+        StreamManager.Session l = manager.live();
+        boolean on = l.active();
+        startStream.setText(l.finishing() ? "STOPPING…" : on ? "■ STOP STREAM" : "START STREAM");
+        startStream.setEnabled(!l.finishing());
+        if (l.state() == StreamManager.State.ERROR) {
+            liveStatus.setText("<html>Livestream stopped: " + l.detail() + "</html>");
+            liveStatus.setForeground(Palette.danger());
+        } else if (l.state() == StreamManager.State.ACTIVE) {
+            StreamEncoder.Stats st = l.stats();
+            liveStatus.setText("● LIVE " + elapsed(l.startedMillis()) + (st == null ? "" : String.format(
+                    "  ·  %.0f fps  ·  %.1f Mbps  ·  dropped %d", st.fps(), st.bitrateKbps() / 1000, st.droppedFrames())));
+            liveStatus.setForeground(Palette.live());
+        } else if (on) {
+            liveStatus.setText(l.detail() == null ? "Connecting…" : l.detail());
+            liveStatus.setForeground(Palette.warning());
+        } else {
+            liveStatus.setText("Not live");
+            liveStatus.setForeground(Palette.secondaryText());
+        }
+        if (on && !l.finishing()) {
+            stateLabel.setText(l.state() == StreamManager.State.ACTIVE ? "● LIVE " + elapsed(l.startedMillis()) : "● CONNECTING…");
+            stateLabel.setForeground(l.state() == StreamManager.State.ACTIVE ? Palette.danger() : Palette.warning());
+        }
     }
 
     /** "00:21:15" since {@code startedMillis}. */

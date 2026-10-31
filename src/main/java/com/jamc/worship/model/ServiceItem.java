@@ -1,5 +1,6 @@
 package com.jamc.worship.model;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -46,6 +47,10 @@ public class ServiceItem {
     private String title;
     private Long refId;
     private String payload;
+    private String tag;
+
+    /** Tags offered in the schedule's right-click menu; any other text is allowed too. */
+    public static final List<String> COMMON_TAGS = List.of("Fast", "Slow", "Opening", "Worship", "Offering", "Closing");
 
     public ServiceItem(Type type, String title, Long refId) {
         this.type = Objects.requireNonNull(type);
@@ -53,15 +58,27 @@ public class ServiceItem {
         this.refId = refId;
     }
 
+    /** A song item; a "Fast" or "Slow" song tag becomes the item's tag. */
     public static ServiceItem ofSong(Song song) {
-        return new ServiceItem(Type.SONG, song.getTitle(), song.getId());
+        ServiceItem item = new ServiceItem(Type.SONG, song.getTitle(), song.getId());
+        for (String t : song.tagList()) {
+            if (t.equalsIgnoreCase("Fast") || t.equalsIgnoreCase("Slow")) {
+                item.setTag(t.equalsIgnoreCase("Fast") ? "Fast" : "Slow");
+                break;
+            }
+        }
+        return item;
     }
 
     public ServiceItem copy() {
         ServiceItem c = new ServiceItem(type, title, refId);
         c.payload = payload;
+        c.tag = tag;
         return c;
     }
+
+    public String getTag() { return tag; }
+    public void setTag(String tag) { this.tag = tag == null || tag.isBlank() ? null : tag.strip(); }
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }

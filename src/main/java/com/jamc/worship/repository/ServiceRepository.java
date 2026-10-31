@@ -110,7 +110,7 @@ public class ServiceRepository {
                 }
             }
             try (PreparedStatement ps = conn.prepareStatement(
-                    "INSERT INTO service_items(service_id, item_type, title, ref_id, payload, sort_order) VALUES (?, ?, ?, ?, ?, ?)")) {
+                    "INSERT INTO service_items(service_id, item_type, title, ref_id, payload, sort_order, tag) VALUES (?, ?, ?, ?, ?, ?, ?)")) {
                 List<ServiceItem> items = service.getItems();
                 for (int i = 0; i < items.size(); i++) {
                     ServiceItem it = items.get(i);
@@ -124,6 +124,7 @@ public class ServiceRepository {
                     }
                     ps.setString(5, it.getPayload());
                     ps.setInt(6, i);
+                    ps.setString(7, it.getTag());
                     ps.addBatch();
                 }
                 ps.executeBatch();
@@ -144,7 +145,7 @@ public class ServiceRepository {
 
     private static List<ServiceItem> loadItems(Connection conn, long serviceId) throws SQLException {
         try (PreparedStatement ps = conn.prepareStatement(
-                "SELECT id, item_type, title, ref_id, payload FROM service_items WHERE service_id = ? ORDER BY sort_order, id")) {
+                "SELECT id, item_type, title, ref_id, payload, tag FROM service_items WHERE service_id = ? ORDER BY sort_order, id")) {
             ps.setLong(1, serviceId);
             List<ServiceItem> items = new ArrayList<>();
             try (ResultSet rs = ps.executeQuery()) {
@@ -154,6 +155,7 @@ public class ServiceRepository {
                             rs.getString("title"), rs.wasNull() ? null : ref);
                     item.setId(rs.getLong("id"));
                     item.setPayload(rs.getString("payload"));
+                    item.setTag(rs.getString("tag"));
                     items.add(item);
                 }
             }

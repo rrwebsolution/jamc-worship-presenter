@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.jamc.worship.youtube.YouTubeRefTest
 -------------------------------------------------------------------------------
-Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.033 s -- in com.jamc.worship.youtube.YouTubeRefTest
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.106 s -- in com.jamc.worship.youtube.YouTubeRefTest

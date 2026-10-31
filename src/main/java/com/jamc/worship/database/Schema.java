@@ -169,6 +169,11 @@ final class Schema {
             ALTER TABLE songs ADD COLUMN source_reference TEXT
             """;
 
+    /** A short label on a service item (e.g. Fast, Slow), shown in the schedule. */
+    static final String V15 = """
+            ALTER TABLE service_items ADD COLUMN tag TEXT
+            """;
+
     /**
      * YouTube. Video library items can reference a YouTube video instead of a file (source_type YOUTUBE,
      * file_path 'youtube:ID'; nothing is downloaded). Songs stay text lyrics and may only remember the

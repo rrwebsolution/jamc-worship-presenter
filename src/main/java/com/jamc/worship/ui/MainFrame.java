@@ -298,17 +298,6 @@ public class MainFrame extends JFrame {
         // Lyrics → Import from YouTube saves LYRICS; Videos → Import from YouTube adds a VIDEO (two separate workflows)
         songLibrary.setYouTubeSupport(context.mediaService(), context.config());
         songDetail = new SongDetailPanel(songLibrary::editSelected, this::addCurrentSongToService);
-        songDetail.setQuickTypographyListener(this::songTypographyChanged);
-        // APPLY TO = All Songs: the quick bar edits Settings → Lyrics Typography (one setup for every song)
-        songDetail.setGlobalTypographyEditor(op -> {
-            var typo = context.themeService().typography();
-            if (typo != null) {
-                typo.set(com.jamc.worship.model.ContentKind.LYRICS, op.apply(typo.get(com.jamc.worship.model.ContentKind.LYRICS)));
-                if (!typo.isGlobal(com.jamc.worship.model.ContentKind.LYRICS)) {
-                    typo.setGlobal(com.jamc.worship.model.ContentKind.LYRICS, true);
-                }
-            }
-        });
         if (context.themeService().typography() != null) {
             context.themeService().typography().addListener(this::typographyChanged);
         }
@@ -1101,35 +1090,9 @@ public class MainFrame extends JFrame {
         songDetail.setThemeName(loaded == null ? null : loaded.themeName());
         songSlides = loaded == null ? List.of() : SlideGenerator.fromSong(loaded.song());
         songStyle = loaded == null ? null : loaded.style();
-        songDetail.showTypography(songStyle);
         if (stripSource == StripSource.SONG) {
             showSongSlides();
         }
-    }
-
-    /**
-     * The quick typography bar changed the song's own font settings: save them (never the lyrics)
-     * and show the new look in the cards and Preview. Program keeps its look until the next TAKE.
-     */
-    private void songTypographyChanged(Song song) {
-        if (song == null || song.getId() == null) {
-            return;
-        }
-        String family = song.getFontFamily();
-        Integer size = song.getFontSize();
-        var typography = song.getTypography() == null ? null : song.getTypography().copy();
-        BackgroundTask.run("Save song typography", () -> {
-            context.songService().setTypography(song.getId(), family, size, typography);
-            return context.themeService().styleForSong(song);
-        }, style -> {
-            Song current = songLibrary.currentSong();
-            if (current != null && Objects.equals(current.getId(), song.getId())) {
-                current.setFontFamily(family);
-                current.setFontSize(size);
-                current.setTypography(typography);
-                restyleSong(style);
-            }
-        }, err -> Dialogs.showError(this, "Could not save the song's typography.", err));
     }
 
     /** A global typography profile changed in Settings: restyle what is showing; Program waits for TAKE. */
@@ -1169,7 +1132,6 @@ public class MainFrame extends JFrame {
 
     private void restyleSong(SlideStyle style) {
         songStyle = style;
-        songDetail.showTypography(style);
         if (stripSource == StripSource.SONG) {
             thumbnails.setStyle(style);
             Slide selected = thumbnails.getSelectedSlide();
@@ -2435,10 +2397,16 @@ public class MainFrame extends JFrame {
         var r = streamManager.recording();
         topBar.setRecording(!r.active() ? null : r.finishing() ? "SAVING…"
                 : "■ STOP REC " + com.jamc.worship.ui.components.StreamPanel.elapsed(r.startedMillis()), r.finishing());
-        // the running time ticks every second while recording, not only when FFmpeg reports progress
-        if (r.active() && !recordingClock.isRunning()) {
+        var l = streamManager.live();
+        topBar.setStreaming(!l.active() ? null : l.finishing() ? "STOPPING…"
+                : l.state() == com.jamc.worship.stream.StreamManager.State.ACTIVE
+                ? "■ LIVE " + com.jamc.worship.ui.components.StreamPanel.elapsed(l.startedMillis()) : "CONNECTING…",
+                l.state() == com.jamc.worship.stream.StreamManager.State.ACTIVE);
+        // the running time ticks every second while recording / streaming, not only when FFmpeg reports progress
+        boolean ticking = r.active() || l.active();
+        if (ticking && !recordingClock.isRunning()) {
             recordingClock.start();
-        } else if (!r.active()) {
+        } else if (!ticking) {
             recordingClock.stop();
         }
     }

@@ -76,6 +76,11 @@ public final class StreamManager {
     /** Name of the output device Program plays on ("" = the Windows default): the one whose sound is recorded. */
     private Supplier<String> programDevice = () -> "";
     private Session recording = Session.idle();
+    private FFmpegStreamEncoder streamer;
+    private LoopbackAudio liveLoopback;
+    private Session live = Session.idle();
+    private int liveRetries;
+    private long liveConnectedMillis;
 
     public StreamManager(AppConfig config, Path dataRoot, ProgramOutput program, SecretStore secrets,
                          Supplier<List<String>> cameras) {
@@ -295,6 +300,169 @@ public final class StreamManager {
         fire();
     }
 
+    // ------------------------------------------------------------------ livestream
+
+    public Session live() {
+        return live;
+    }
+
+    /**
+     * Sends Program to the configured platform (e.g. Facebook Live). The confirmation happens in the panel
+     * before this is called. Problems are reported through {@code onError}; a stream that drops after it
+     * was running reconnects by itself a few times.
+     */
+    public void startStream(Consumer<String> onError) {
+        if (live.active()) {
+            return;
+        }
+        FFmpeg.Capabilities caps = capabilities;
+        StreamSettings s = settings();
+        String encoder = caps == null ? null : caps.encoderFor(s.encoder());
+        if (caps == null || !caps.available() || encoder == null) {
+            onError.accept(ffmpegMissingMessage());
+            return;
+        }
+        String url = ingestUrl(s);
+        if (url == null) {
+            onError.accept("Enter the stream key first (Stream page → Destination → Change…).");
+            return;
+        }
+        liveRetries = 0;
+        live = new Session(State.STARTING, "Connecting…", null, System.currentTimeMillis(), null);
+        fire();
+        launchStream(s, caps, encoder, url, onError);
+    }
+
+    private void launchStream(StreamSettings s, FFmpeg.Capabilities caps, String encoder, String url, Consumer<String> onError) {
+        long started = live.startedMillis();
+        FFmpegStreamEncoder enc = new FFmpegStreamEncoder(caps.executable(), s, encoder, FFmpegStreamEncoder.Target.STREAM,
+                url, new StreamEncoder.Listener() {
+            @Override
+            public void stats(StreamEncoder.Stats stats) {
+                SwingUtilities.invokeLater(() -> {
+                    if (streamer != null && live.active() && !live.finishing() && stats.frames() > 0) {
+                        live = new Session(State.ACTIVE, null, stats, started, null);
+                        liveConnectedMillis = liveConnectedMillis == 0 ? System.currentTimeMillis() : liveConnectedMillis;
+                        fire();
+                    }
+                });
+            }
+
+            @Override
+            public void ended(String error) {
+                SwingUtilities.invokeLater(() -> streamEnded(error, s, caps, encoder, url, onError));
+            }
+        });
+        streamer = enc;
+        liveConnectedMillis = 0;
+        Thread.ofVirtual().name("stream-start").start(() -> {
+            try {
+                if (s.usesAppAudio()) {
+                    try {
+                        LoopbackAudio a = LoopbackAudio.start(toolsDir, programDevice.get());
+                        enc.setAppAudio(a.input());
+                        SwingUtilities.invokeLater(() -> {
+                            if (streamer == enc) liveLoopback = a; else a.close();
+                        });
+                    } catch (IOException e) {
+                        log.warn("Streaming without this app's sound: {}", e.getMessage());
+                    }
+                }
+                enc.start();
+                SwingUtilities.invokeLater(() -> {
+                    if (streamer == enc) {
+                        tap.addSink(enc, s.width(), s.height(), s.fps());
+                        log.info("Streaming Program to {} ({}x{} {} fps, {} kbps, {})", s.provider().displayName(),
+                                s.width(), s.height(), s.fps(), s.videoKbps(), encoder);
+                    }
+                });
+            } catch (IOException e) {
+                SwingUtilities.invokeLater(() -> streamEnded("FFmpeg could not be started: " + e.getMessage(), s, caps, encoder, url, onError));
+            }
+        });
+    }
+
+    public void stopStream() {
+        FFmpegStreamEncoder enc = streamer;
+        if (enc == null) {
+            return;
+        }
+        tap.removeSink(enc);
+        enc.stop();
+        live = new Session(State.STARTING, FINISHING, live.stats(), live.startedMillis(), null);
+        fire();
+    }
+
+    private void streamEnded(String error, StreamSettings s, FFmpeg.Capabilities caps, String encoder, String url,
+                             Consumer<String> onError) {
+        if (liveLoopback != null) {
+            liveLoopback.close();
+            liveLoopback = null;
+        }
+        if (streamer != null) {
+            tap.removeSink(streamer);
+        }
+        streamer = null;
+        boolean wasRunning = liveConnectedMillis > 0 && System.currentTimeMillis() - liveConnectedMillis > 15_000;
+        if (error != null && wasRunning && liveRetries < 5) {
+            // the internet or the platform dropped a running stream: reconnect instead of ending the service's stream
+            liveRetries++;
+            log.warn("Livestream dropped; reconnecting ({}/5)", liveRetries);
+            live = new Session(State.STARTING, "Reconnecting (" + liveRetries + "/5)…", null, live.startedMillis(), null);
+            fire();
+            javax.swing.Timer t = new javax.swing.Timer(3000, e -> {
+                if (live.active() && !live.finishing() && streamer == null) {
+                    launchStream(s, caps, encoder, url, onError);
+                }
+            });
+            t.setRepeats(false);
+            t.start();
+            return;
+        }
+        live = error == null ? Session.idle() : new Session(State.ERROR, explainStreamError(error), null, 0, null);
+        if (error != null) {
+            onError.accept("The livestream stopped: " + explainStreamError(error));
+        } else {
+            log.info("Livestream ended");
+        }
+        fire();
+    }
+
+    /** The FFmpeg ingest URL: server + key. A key pasted together with the server is used as it is. Never logged. */
+    String ingestUrl(StreamSettings s) {
+        String key = streamKey(s.provider());
+        if (key == null) {
+            return null;
+        }
+        key = key.replaceAll("\\s+", ""); // copied keys often carry a line break or spaces
+        if (key.isEmpty()) {
+            return null;
+        }
+        if (key.startsWith("rtmp://") || key.startsWith("rtmps://")) {
+            return key;
+        }
+        return s.provider().ingestUrl(s.server(), key);
+    }
+
+    /** FFmpeg's messages in words the operator can act on. */
+    static String explainStreamError(String error) {
+        String e = error.toLowerCase(java.util.Locale.ROOT);
+        if (e.contains("i/o error") || e.contains("error number -10053") || e.contains("connection reset")
+                || e.contains("end of file") || e.contains("broken pipe")) {
+            return "Facebook (or the server) closed the connection. Check that the stream key is the current one "
+                    + "(copy it again from Live Producer, or turn on \"Use persistent stream key\"), and that the live video "
+                    + "is not already ended. (" + error + ")";
+        }
+        if (e.contains("failed to resolve") || e.contains("timed out") || e.contains("connection refused")
+                || e.contains("network is unreachable")) {
+            return "Cannot reach the streaming server. Check the internet connection and the Server URL. (" + error + ")";
+        }
+        if (e.contains("tls") || e.contains("ssl") || e.contains("schannel")) {
+            return "The secure connection (RTMPS) failed. Check the computer's date and time and the Server URL. (" + error + ")";
+        }
+        return error;
+    }
+
     // ------------------------------------------------------------------ livestream checks
 
     /**
@@ -360,6 +528,10 @@ public final class StreamManager {
         if (recorder != null) {
             tap.removeSink(recorder);
             recorder.stop();
+        }
+        if (streamer != null) {
+            tap.removeSink(streamer);
+            streamer.stop();
         }
     }
 

@@ -109,6 +109,26 @@ class Phase4to8IntegrationTest {
     }
 
     @Test
+    void serviceItemTagsSaveAndCarryIntoTemplates() {
+        Song fast = new Song();
+        fast.setTitle("Shout");
+        fast.setTags("praise, fast");
+        fast.setId(99L);
+        assertEquals("Fast", ServiceItem.ofSong(fast).getTag());
+
+        Service s = plans.create("Tagged");
+        ServiceItem slow = new ServiceItem(ServiceItem.Type.BLANK, "Blank", null);
+        slow.setTag("  Slow ");
+        s.getItems().add(slow);
+        s.getItems().add(new ServiceItem(ServiceItem.Type.BLANK, "Untagged", null));
+        Service reopened = plans.load(plans.save(s).getId()).orElseThrow();
+        assertEquals("Slow", reopened.getItems().getFirst().getTag());
+        assertNull(reopened.getItems().get(1).getTag());
+        Service template = plans.saveAsTemplate(reopened, "Tagged Template");
+        assertEquals("Slow", plans.createFromTemplate(template.getId()).getItems().getFirst().getTag());
+    }
+
+    @Test
     void mediaImportCopyLinkRenameFavoriteDelete() throws Exception {
         BufferedImage img = new BufferedImage(64, 32, BufferedImage.TYPE_INT_RGB);
         Path original = tempDir.resolve("outside").resolve("Cross.png");

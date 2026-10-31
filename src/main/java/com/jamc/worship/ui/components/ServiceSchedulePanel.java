@@ -16,9 +16,11 @@ import javax.swing.BorderFactory;
 import javax.swing.DefaultListModel;
 import javax.swing.DropMode;
 import javax.swing.JButton;
+import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
 import javax.swing.JList;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
@@ -523,12 +525,65 @@ public class ServiceSchedulePanel extends JPanel {
         ServiceItem it = has ? model.get(i) : null;
         boolean text = has && (it.getType() == ServiceItem.Type.ANNOUNCEMENT || it.getType() == ServiceItem.Type.SERMON);
         menu.add(item(text ? "Edit Text…" : "Rename…", "edit", () -> editItem(i))).setEnabled(has);
+        menu.add(tagMenu(it)).setEnabled(has);
         menu.add(item("Duplicate", "copy", this::duplicateSelected)).setEnabled(has);
         menu.add(item("Move Up", "arrow-up", () -> move(-1))).setEnabled(has && i > 0);
         menu.add(item("Move Down", "arrow-down", () -> move(1))).setEnabled(has && i < model.size() - 1);
         menu.addSeparator();
         menu.add(item("Remove…", "trash", this::removeSelected)).setEnabled(has);
         menu.show(list, e.getX(), e.getY());
+    }
+
+    /** Tag ▸ Fast / Slow / ... / Custom… / No Tag: a short label shown on the item's row. */
+    private JMenu tagMenu(ServiceItem it) {
+        JMenu menu = new JMenu("Tag");
+        menu.setIcon(Icons.get("tag", Icons.SMALL));
+        if (it == null) {
+            return menu;
+        }
+        List<String> choices = new ArrayList<>(ServiceItem.COMMON_TAGS);
+        if (it.getTag() != null && choices.stream().noneMatch(t -> t.equalsIgnoreCase(it.getTag()))) {
+            choices.add(it.getTag());
+        }
+        for (String t : choices) {
+            JCheckBoxMenuItem choice = new JCheckBoxMenuItem(t, t.equalsIgnoreCase(String.valueOf(it.getTag())));
+            choice.addActionListener(e -> setTag(it, t));
+            menu.add(choice);
+        }
+        menu.addSeparator();
+        JMenuItem custom = new JMenuItem("Custom…");
+        custom.addActionListener(e -> {
+            Object v = JOptionPane.showInputDialog(this, "Tag for \"" + it.getTitle() + "\" (e.g. Fast, Slow, Special Number):",
+                    "Tag", JOptionPane.PLAIN_MESSAGE, null, null, it.getTag() == null ? "" : it.getTag());
+            if (v != null) {
+                setTag(it, v.toString().length() > 24 ? v.toString().strip().substring(0, 24) : v.toString());
+            }
+        });
+        menu.add(custom);
+        JMenuItem none = new JMenuItem("No Tag");
+        none.setEnabled(it.getTag() != null);
+        none.addActionListener(e -> setTag(it, null));
+        menu.add(none);
+        return menu;
+    }
+
+    private void setTag(ServiceItem it, String tag) {
+        it.setTag(tag);
+        list.repaint();
+        changed();
+    }
+
+    /** A steady color per tag: Fast warm, Slow cool, others from the tag's text. */
+    static Color tagColor(String tag) {
+        return switch (tag.toLowerCase(java.util.Locale.ROOT)) {
+            case "fast" -> new Color(0xF97316);
+            case "slow" -> new Color(0x3B82F6);
+            case "opening" -> new Color(0x16A34A);
+            case "worship" -> new Color(0x8B5CF6);
+            case "offering" -> new Color(0xEAB308);
+            case "closing" -> new Color(0xEF4444);
+            default -> Color.getHSBColor((tag.toLowerCase(java.util.Locale.ROOT).hashCode() & 0xFFFF) / 65536f, 0.55f, 0.85f);
+        };
     }
 
     private static JMenuItem item(String text, String icon, Runnable action) {
@@ -627,11 +682,12 @@ public class ServiceSchedulePanel extends JPanel {
         }
     }
 
-    /** Numbered row with a type icon, title and type label. */
+    /** Numbered row with a type icon, title, type label and (when set) a colored tag chip. */
     private static final class ItemRenderer extends JPanel implements ListCellRenderer<ServiceItem> {
         private final JLabel number = new JLabel();
         private final JLabel title = new JLabel();
         private final JLabel type = new JLabel();
+        private final TagChip tag = new TagChip();
 
         ItemRenderer() {
             super(new BorderLayout(10, 0));
@@ -647,6 +703,10 @@ public class ServiceSchedulePanel extends JPanel {
             text.add(type, BorderLayout.SOUTH);
             add(number, BorderLayout.WEST);
             add(text, BorderLayout.CENTER);
+            JPanel tagHolder = new JPanel(new java.awt.GridBagLayout()); // keeps the chip vertically centered
+            tagHolder.setOpaque(false);
+            tagHolder.add(tag);
+            add(tagHolder, BorderLayout.EAST);
         }
 
         @Override
@@ -661,9 +721,39 @@ public class ServiceSchedulePanel extends JPanel {
             number.setForeground(selected ? fg : Palette.mutedText());
             title.setForeground(fg);
             type.setForeground(selected ? new Color(255, 255, 255, 200) : Palette.secondaryText());
+            tag.setTag(item.getTag());
             setBackground(selected ? list.getSelectionBackground() : list.getBackground());
             setOpaque(selected);
             return this;
+        }
+    }
+
+    /** A small rounded label in the tag's color. */
+    private static final class TagChip extends JLabel {
+        private Color color = Color.GRAY;
+
+        TagChip() {
+            setForeground(Color.WHITE);
+            putClientProperty(FlatClientProperties.STYLE, "font: bold -2");
+            setBorder(BorderFactory.createEmptyBorder(2, 8, 2, 8));
+        }
+
+        void setTag(String tag) {
+            setVisible(tag != null);
+            setText(tag == null ? "" : tag.toUpperCase(java.util.Locale.ROOT));
+            if (tag != null) {
+                color = tagColor(tag);
+            }
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g) {
+            java.awt.Graphics2D g2 = (java.awt.Graphics2D) g.create();
+            g2.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g2.setColor(color);
+            g2.fillRoundRect(0, 0, getWidth(), getHeight(), getHeight(), getHeight());
+            g2.dispose();
+            super.paintComponent(g);
         }
     }
 }

@@ -211,6 +211,25 @@ class StreamFoundationTest {
                 "the stream key is never in settings.properties");
     }
 
+    @Test
+    void pastedKeysBecomeAWorkingIngestUrl() {
+        AppPaths paths = new AppPaths(tempDir.resolve("live"));
+        paths.ensureDirectories();
+        StreamManager m = new StreamManager(new AppConfig(paths), paths.root(), new com.jamc.worship.output.ProgramOutput(),
+                new SecretStore(tempDir.resolve("live/secrets.properties")), List::of);
+        StreamSettings s = settings(null, null, false);
+        assertNull(m.ingestUrl(s), "no key yet");
+        m.setStreamKey(StreamingProviders.FACEBOOK, "  " + KEY + "\r\n");
+        assertEquals("rtmps://live-api-s.facebook.com:443/rtmp/" + KEY, m.ingestUrl(s), "spaces / line breaks from copying removed");
+        m.setStreamKey(StreamingProviders.FACEBOOK, "rtmps://live-api-s.facebook.com:443/rtmp/" + KEY + "?s_bl=1&a=b");
+        assertEquals("rtmps://live-api-s.facebook.com:443/rtmp/" + KEY + "?s_bl=1&a=b", m.ingestUrl(s),
+                "server + key pasted together is used as it is");
+
+        List<String> cmd = FFmpegStreamEncoder.command("ffmpeg", s, "libx264", FFmpegStreamEncoder.Target.STREAM, "rtmps://x/k");
+        assertEquals(List.of("-flvflags", "no_duration_filesize", "-f", "flv", "rtmps://x/k"), cmd.subList(cmd.size() - 5, cmd.size()));
+        assertTrue(StreamManager.explainStreamError("rtmps://x/•••: I/O error").contains("stream key"));
+    }
+
     private static String readQuietly(Path p) {
         try {
             return Files.readString(p);

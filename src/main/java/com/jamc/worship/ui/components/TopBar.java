@@ -200,6 +200,16 @@ public class TopBar extends JPanel {
                 : "Start recording Program as MP4 (folder: Stream page)");
     }
 
+    /** "■ LIVE 00:21:15" (red: click to stop) while streaming, "CONNECTING…", or null = not live. */
+    public void setStreaming(String text, boolean live) {
+        streamButton.setText(text == null ? "START STREAM" : text);
+        streamButton.putClientProperty(com.formdev.flatlaf.FlatClientProperties.STYLE, text == null
+                ? "font: bold -1; margin: 3,10,3,10"
+                : "font: bold -1; margin: 3,10,3,10; background: " + (live ? "#DC2626" : "#B45309") + "; foreground: #FFFFFF");
+        streamButton.setToolTipText(text == null ? "Start the livestream: checks camera, microphone, encoder and internet first"
+                : "Livestreaming Program. Click to stop");
+    }
+
     public void setLive(boolean live) {
         livePill.update("LIVE", live ? Palette::live : Palette::mutedText);
     }

@@ -314,7 +314,8 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             // fragmented MP4: a power cut or crash still leaves a playable file
             c.addAll(List.of("-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-y", destination));
         } else {
-            c.addAll(List.of("-f", "flv", destination));
+            // live: no duration / size rewrite at the end (a stream cannot seek back), RTMP(S) to the platform
+            c.addAll(List.of("-flvflags", "no_duration_filesize", "-f", "flv", destination));
         }
         return c;
     }

@@ -75,9 +75,6 @@ import java.util.Optional;
  */
 public class SongEditorDialog extends JDialog {
 
-    private static final String DEFAULT_OPTION = "Theme default";
-    private static final String[] FONT_SIZES = {DEFAULT_OPTION, "36", "44", "48", "56", "64", "72", "84", "96", "120"};
-
     private final SongService songService;
     private final Song original;
 
@@ -87,8 +84,6 @@ public class SongEditorDialog extends JDialog {
     private final JTextField ccliField = new JTextField();
     private final JTextField tagsField = new JTextField();
     private final JCheckBox favoriteBox = new JCheckBox("Favorite");
-    private final JComboBox<String> fontFamilyCombo = new JComboBox<>();
-    private final JComboBox<String> fontSizeCombo = new JComboBox<>(FONT_SIZES);
     private final JTextArea lyricsArea = new JTextArea();
     private final Context context;
     private final JComboBox<ThemeChoice> themeCombo = new JComboBox<>();
@@ -235,14 +230,6 @@ public class SongEditorDialog extends JDialog {
         form.add(Ui.caption("Appearance (optional)"), c);
         c.gridy++;
 
-        fontFamilyCombo.addItem(DEFAULT_OPTION);
-        for (String family : GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()) {
-            fontFamilyCombo.addItem(family);
-        }
-        fontFamilyCombo.setMaximumRowCount(16);
-        // Without a prototype the combo sizes itself to the longest installed font name.
-        fontFamilyCombo.setPrototypeDisplayValue("Theme default");
-        fontSizeCombo.setEditable(true);
         String defaultName = context.defaultTheme().getName();
         themeCombo.addItem(new ThemeChoice(null, "Default theme (" + defaultName + ")"));
         for (Theme t : context.themes()) {
@@ -250,8 +237,6 @@ public class SongEditorDialog extends JDialog {
         }
         themeCombo.setPrototypeDisplayValue(new ThemeChoice(null, "Default theme"));
         addField(form, c, "Theme", themeCombo);
-        addField(form, c, "Font", fontFamilyCombo);
-        addField(form, c, "Font size", fontSizeCombo);
 
         JButton chooseBackground = Ui.button("Choose…", "image");
         chooseBackground.addActionListener(e -> chooseBackground());
@@ -276,8 +261,6 @@ public class SongEditorDialog extends JDialog {
             }
         };
         themeCombo.addActionListener(e -> restyle.run());
-        fontFamilyCombo.addActionListener(e -> restyle.run());
-        fontSizeCombo.addActionListener(e -> restyle.run());
 
         c.weighty = 1;
         form.add(Ui.transparent(new BorderLayout()), c);
@@ -395,12 +378,6 @@ public class SongEditorDialog extends JDialog {
             tagsField.setText(nz(song.getTags()));
             favoriteBox.setSelected(song.isFavorite());
             lyricsArea.setText(LyricsParser.format(song.getSections()));
-            if (song.getFontFamily() != null) {
-                fontFamilyCombo.setSelectedItem(song.getFontFamily());
-            }
-            if (song.getFontSize() != null) {
-                fontSizeCombo.setSelectedItem(String.valueOf(song.getFontSize()));
-            }
             for (int i = 0; i < themeCombo.getItemCount(); i++) {
                 if (java.util.Objects.equals(themeCombo.getItemAt(i).id(), song.getThemeId())) {
                     themeCombo.setSelectedIndex(i);
@@ -420,12 +397,9 @@ public class SongEditorDialog extends JDialog {
         List<SongSection> parsed = LyricsParser.parse(lyricsArea.getText());
         Song preview = new Song();
         preview.setSections(parsed);
-        preview.setFontFamily(selectedFontFamily());
-        try {
-            preview.setFontSize(parseFontSize());
-        } catch (ValidationException e) {
-            preview.setFontSize(null);
-        }
+        // fonts are set in Settings → Lyrics Typography
+        preview.setFontFamily(original == null ? null : original.getFontFamily());
+        preview.setFontSize(original == null ? null : original.getFontSize());
         preview.setBackground(backgroundPath);
         preview.setTypography(original == null ? null : original.getTypography());
         previewStyle = StyleOverrides.forSong(preview).applyTo(selectedThemeStyle());
@@ -452,11 +426,6 @@ public class SongEditorDialog extends JDialog {
             }
         }
         return context.lyricsStyle().apply(context.defaultTheme());
-    }
-
-    private String selectedFontFamily() {
-        String family = (String) fontFamilyCombo.getSelectedItem();
-        return family == null || DEFAULT_OPTION.equals(family) ? null : family;
     }
 
     private void chooseBackground() {
@@ -567,28 +536,14 @@ public class SongEditorDialog extends JDialog {
         s.setCcliNumber(ccliField.getText());
         s.setTags(normalizeTags(tagsField.getText()));
         s.setFavorite(favoriteBox.isSelected());
-        String family = (String) fontFamilyCombo.getSelectedItem();
-        s.setFontFamily(family == null || DEFAULT_OPTION.equals(family) ? null : family);
-        s.setFontSize(parseFontSize());
+        s.setFontFamily(original == null ? null : original.getFontFamily());
+        s.setFontSize(original == null ? null : original.getFontSize());
         s.setTypography(original == null || original.getTypography() == null ? null : original.getTypography().copy());
         s.setSections(LyricsParser.parse(lyricsArea.getText()));
         s.setSourceType(original != null && original.getSourceType() != null ? original.getSourceType() : com.jamc.worship.model.LyricsSourceType.MANUAL);
         s.setSourceProvider(original == null ? null : original.getSourceProvider());
         s.setSourceReference(original == null ? null : original.getSourceReference());
         return s;
-    }
-
-    private Integer parseFontSize() {
-        Object v = fontSizeCombo.getEditor().getItem();
-        String text = v == null ? "" : v.toString().strip();
-        if (text.isEmpty() || DEFAULT_OPTION.equals(text)) {
-            return null;
-        }
-        try {
-            return Integer.valueOf(text);
-        } catch (NumberFormatException e) {
-            throw new ValidationException("Font size must be a whole number, or \"" + DEFAULT_OPTION + "\".");
-        }
     }
 
     private void save() {
@@ -664,7 +619,6 @@ public class SongEditorDialog extends JDialog {
     private String snapshot() {
         return String.join("\u0000", titleField.getText(), authorField.getText(), copyrightField.getText(),
                 ccliField.getText(), tagsField.getText(), String.valueOf(favoriteBox.isSelected()),
-                String.valueOf(fontFamilyCombo.getSelectedItem()), String.valueOf(fontSizeCombo.getEditor().getItem()),
                 lyricsArea.getText(), String.valueOf(selectedThemeId()), String.valueOf(backgroundPath));
     }
 
