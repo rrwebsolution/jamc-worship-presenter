@@ -134,6 +134,15 @@ public class LiveDock extends JPanel {
         c.weighty = 0;
         c.insets = new Insets(4, 0, 0, 8);
         programMediaRow.add(programMediaLabel, BorderLayout.WEST);
+        programMediaLabel.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (mediaTitle != null && !firstWords(mediaTitle, TITLE_WORDS).equals(mediaTitle.strip())) {
+                    mediaTitleExpanded = !mediaTitleExpanded;
+                    showProgramMediaLabel();
+                }
+            }
+        });
         mixerButton.setToolTipText("Program audio mixer: microphone, camera audio, media, master");
         mixerButton.setFocusable(false);
         mixerButton.putClientProperty(FlatClientProperties.STYLE, "font: bold -2; margin: 2,6,2,6");
@@ -489,9 +498,42 @@ public class LiveDock extends JPanel {
 
     /** Updates the PROGRAM MEDIA title and note without rebinding the controls. */
     public void bindProgramMediaLabel(String title, String note) {
-        programMediaLabel.setText("<html><b>PROGRAM MEDIA</b>" + (title == null ? "" : "<br>" + escape(title))
-                + (note == null ? "" : "<br><font color='#F59E0B'>" + escape(note) + "</font>") + "</html>");
+        if (!java.util.Objects.equals(title, mediaTitle)) {
+            mediaTitleExpanded = false; // a new video starts folded
+        }
+        mediaTitle = title;
+        mediaNote = note;
+        showProgramMediaLabel();
+    }
+
+    /**
+     * Long names (YouTube titles) show their first three words and "▸ more" so the play / pause / stop /
+     * volume controls keep their room; clicking the title unfolds the full name (wrapped), "▾ less" folds it.
+     */
+    private void showProgramMediaLabel() {
+        String title = mediaTitle;
+        boolean long_ = title != null && !firstWords(title, TITLE_WORDS).equals(title.strip());
+        String shown = title == null ? "" : mediaTitleExpanded || !long_ ? escape(title.strip())
+                : escape(firstWords(title, TITLE_WORDS)) + "…";
+        String toggle = !long_ ? "" : " <font color='#60A5FA'>" + (mediaTitleExpanded ? "▾ less" : "▸ more") + "</font>";
+        String width = mediaTitleExpanded ? "<body style='width:240px'>" : "";
+        programMediaLabel.setText("<html>" + width + "<b>PROGRAM MEDIA</b>" + (title == null ? "" : "<br>" + shown + toggle)
+                + (mediaNote == null ? "" : "<br><font color='#F59E0B'>" + escape(mediaNote) + "</font>") + "</html>");
+        programMediaLabel.setToolTipText(long_ ? (mediaTitleExpanded ? "Click to fold the title" : "Click to see the full title") : null);
+        programMediaLabel.setCursor(long_ ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR) : null);
         revalidate();
+        repaint();
+    }
+
+    private static final int TITLE_WORDS = 3;
+    private String mediaTitle;
+    private String mediaNote;
+    private boolean mediaTitleExpanded;
+
+    /** The first {@code n} words of {@code s}. */
+    static String firstWords(String s, int n) {
+        String[] words = s.strip().split("\\s+");
+        return words.length <= n ? s.strip() : String.join(" ", java.util.Arrays.copyOf(words, n));
     }
 
     private static String escape(String s) {
@@ -571,7 +613,9 @@ public class LiveDock extends JPanel {
             FontMetrics lf = g.getFontMetrics(getFont().deriveFont(Font.BOLD, 9f));
             int bottom = r.y + r.height - lf.getHeight() - 8;
             if (previewNote != null) {
-                ProgramMonitor.pill(g, this, previewNote, previewNoteScene ? new java.awt.Color(0xB45309) : Palette.accent(),
+                // a long YouTube / file name must stay inside the monitor
+                String note = ProgramMonitor.fit(previewNote, lf, r.width - 24);
+                ProgramMonitor.pill(g, this, note, previewNoteScene ? new java.awt.Color(0xB45309) : Palette.accent(),
                         r.x + 6, bottom, true);
                 bottom -= lf.getHeight() + 8;
             }
@@ -660,12 +704,21 @@ public class LiveDock extends JPanel {
             }
             g.setFont(c.getFont().deriveFont(Font.PLAIN, 10f));
             FontMetrics tfm = g.getFontMetrics();
-            String title = p.content().title() + " · " + p.content().slide().getLabel();
-            while (title.length() > 4 && tfm.stringWidth(title) > r.width / 2) {
-                title = title.substring(0, title.length() - 2) + "…";
-            }
+            String title = fit(p.content().title() + " · " + p.content().slide().getLabel(), tfm, r.width / 2);
             g.setColor(new Color(255, 255, 255, 170));
             g.drawString(title, r.x + r.width - tfm.stringWidth(title) - 8, r.y + 6 + tfm.getAscent() + 2);
+        }
+
+        /** {@code text} cut with "…" so it is at most {@code width} pixels wide. */
+        static String fit(String text, FontMetrics fm, int width) {
+            if (fm.stringWidth(text) <= width) {
+                return text;
+            }
+            String t = text;
+            while (t.length() > 1 && fm.stringWidth(t + "…") > width) {
+                t = t.substring(0, t.length() - 1);
+            }
+            return t.stripTrailing() + "…";
         }
 
         static void pill(Graphics2D g, JComponent c, String text, Color color, int x, int y, boolean small) {
