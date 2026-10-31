@@ -177,8 +177,29 @@ public class TopBar extends JPanel {
     public void setBackgroundState(String text, Supplier<Color> color) {
         backgroundPill.setVisible(text != null);
         if (text != null) {
-            backgroundPill.update(text, color);
+            // a long file name must never push the main navigation aside: shortened, full name in the tooltip
+            backgroundPill.update(shorten(text, 26), color);
+            backgroundPill.setToolTipText("<html>" + text.replace("&", "&amp;").replace("<", "&lt;")
+                    + "<br>The global background under Preview and Program. Click for its controls.</html>");
         }
+        revalidate();
+    }
+
+    /**
+     * "BG: Very Long Worship Loop Background 4K.mp4 (paused)" → "BG: Very Long Worship Lo… (paused)":
+     * at most {@code max} characters of the name; a "(paused)"-style ending is kept.
+     */
+    static String shorten(String text, int max) {
+        String suffix = "";
+        int open = text.lastIndexOf(" (");
+        if (open > 0 && text.endsWith(")")) {
+            suffix = text.substring(open);
+            text = text.substring(0, open);
+        }
+        if (text.length() > max) {
+            text = text.substring(0, max - 1).stripTrailing() + "…";
+        }
+        return text + suffix;
     }
 
     /** The REC and STREAM buttons' actions (the Stream page does the work). */
