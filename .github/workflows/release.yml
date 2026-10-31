@@ -59,7 +59,7 @@ jobs:
             --name "JAMC Worship Presenter" --app-version $v --vendor "JAMC" `
             --description "Worship presentation and live production" `
             --input staging --main-jar "jamc-worship-presenter-$v-all.jar" --main-class com.jamc.worship.app.Main `
-            --runtime-image runtime `
+            --runtime-image runtime --icon packaging/app.ico `
             --java-options "--enable-native-access=ALL-UNNAMED" --java-options "-Dfile.encoding=UTF-8" `
             --win-menu --win-menu-group "JAMC" --win-shortcut --win-dir-chooser --win-per-user-install `
             --win-upgrade-uuid 2c7919e6-0df8-4da3-97ba-26bfd85c0057
