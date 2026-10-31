@@ -97,6 +97,15 @@ public final class StreamManager {
         this.programDevice = deviceName;
     }
 
+    /**
+     * Starts listening to an input for a mixer meter: a microphone / capture input by name, or
+     * {@link StreamSettings#APP_AUDIO} for this app's own sound. Blocking: call off the Swing thread.
+     */
+    public AudioLevels.Source openLevel(String device) throws IOException {
+        return StreamSettings.APP_AUDIO.equals(device) ? AudioLevels.appSound(toolsDir, programDevice.get())
+                : AudioLevels.device(device);
+    }
+
     public void addListener(Runnable l) {
         listeners.add(l);
     }

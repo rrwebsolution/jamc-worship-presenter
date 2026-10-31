@@ -97,11 +97,14 @@ public class StreamPanel extends JPanel {
     private final JLabel liveStatus = Ui.label("Not live", Palette::secondaryText, null);
 
     private boolean loading;
+    private final MixerMeters meters;
 
     public StreamPanel(StreamManager manager, Consumer<String> status) {
         super(new BorderLayout());
         this.manager = manager;
         this.status = status;
+        this.meters = new MixerMeters(manager);
+        meters.attach(this);
         setOpaque(false);
 
         JPanel content = Ui.transparent(new GridBagLayout());
@@ -654,6 +657,15 @@ public class StreamPanel extends JPanel {
         p.add(volume);
         p.add(value);
         p.add(mute);
+        // the wave: what this channel adds to the stream / recording (its volume and mute applied)
+        LevelMeter meter = new LevelMeter();
+        java.util.function.DoubleSupplier gain = () -> mute.isSelected() ? 0 : volume.getValue() / 100.0;
+        if (device == null) {
+            meters.addMaster(meter, gain);
+        } else {
+            meters.add(meter, () -> device(device), gain);
+        }
+        p.add(meter);
         return p;
     }
 

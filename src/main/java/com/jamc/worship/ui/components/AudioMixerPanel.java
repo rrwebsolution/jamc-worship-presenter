@@ -27,18 +27,22 @@ public class AudioMixerPanel extends JPanel {
 
     private final AudioRouting routing;
     private final StreamManager stream;
+    private final MixerMeters meters;
     private boolean loading;
 
     public AudioMixerPanel(AudioRouting routing, StreamManager stream) {
         super(new GridBagLayout());
         this.routing = routing;
         this.stream = stream;
+        this.meters = new MixerMeters(stream);
+        meters.attach(this);
         setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
         build();
     }
 
     private void build() {
         removeAll();
+        meters.clearMeters();
         loading = true;
         StreamSettings s = stream.settings();
         GridBagConstraints g = new GridBagConstraints();
@@ -46,19 +50,22 @@ public class AudioMixerPanel extends JPanel {
         g.anchor = GridBagConstraints.WEST;
         g.insets = new Insets(0, 0, 10, 8);
         g.gridx = 0;
-        g.gridwidth = 4;
+        g.gridwidth = 5;
         add(Ui.label("AUDIO MIXER", Palette::text, "h4"), g);
         g.gridwidth = 1;
         g.gridy++;
 
         channel(g, "MICROPHONE", deviceBox(s.micDevice(), s.auxDevice(), true),
                 s.micVolume(), s.micMuted(), v -> saveStream(st -> with(st, v, null, null, null, null, null, null, null)),
-                m -> saveStream(st -> with(st, null, m, null, null, null, null, null, null)), s.micDevice() != null);
+                m -> saveStream(st -> with(st, null, m, null, null, null, null, null, null)), s.micDevice() != null,
+                s.micDevice(), true);
         channel(g, "CAMERA AUDIO", deviceBox(s.auxDevice(), s.micDevice(), false),
                 s.auxVolume(), s.auxMuted(), v -> saveStream(st -> with(st, null, null, v, null, null, null, null, null)),
-                m -> saveStream(st -> with(st, null, null, null, m, null, null, null, null)), s.auxDevice() != null);
+                m -> saveStream(st -> with(st, null, null, null, m, null, null, null, null)), s.auxDevice() != null,
+                s.auxDevice(), true);
+        // the app's own sound is heard after its volume is applied, so the wave needs no extra gain
         channel(g, "MEDIA", Ui.label("Videos, scene videos and music from this app", Palette::mutedText, "small"), routing.mediaVolume(), routing.mediaMuted(),
-                routing::setMediaVolume, routing::setMediaMuted, true);
+                routing::setMediaVolume, routing::setMediaMuted, true, StreamSettings.APP_AUDIO, false);
         channel(g, "MASTER", Ui.label("Church media and everything online", Palette::mutedText, "small"), routing.masterVolume(), routing.masterMuted(),
                 v -> {
                     routing.setMasterVolume(v);
@@ -67,10 +74,10 @@ public class AudioMixerPanel extends JPanel {
                 m -> {
                     routing.setMasterMuted(m);
                     saveStream(st -> with(st, null, null, null, null, null, m, null, null));
-                }, true);
+                }, true, null, true);
 
         g.gridx = 0;
-        g.gridwidth = 4;
+        g.gridwidth = 5;
         g.insets = new Insets(4, 0, 0, 0);
         add(Ui.label("<html><body style='width:420px'>Choose the MICROPHONE and CAMERA AUDIO inputs above; they go into "
                 + "the livestream and recordings (changes apply when recording or streaming starts). MEDIA is what the "
@@ -84,8 +91,12 @@ public class AudioMixerPanel extends JPanel {
         repaint();
     }
 
+    /**
+     * One mixer row. {@code input} is what its wave listens to (null on MASTER, which shows the loudest
+     * channel); {@code applyGain} scales the wave by this row's volume and mute.
+     */
     private void channel(GridBagConstraints g, String name, javax.swing.JComponent detail, int volume, boolean muted,
-                         IntConsumer onVolume, Consumer<Boolean> onMute, boolean enabled) {
+                         IntConsumer onVolume, Consumer<Boolean> onMute, boolean enabled, String input, boolean applyGain) {
         JToggleButton speaker = Ui.muteToggle(name.toLowerCase());
         speaker.setSelected(muted);
         JSlider slider = new JSlider(0, 150, Math.clamp(volume, 0, 150));
@@ -115,6 +126,15 @@ public class AudioMixerPanel extends JPanel {
         add(slider, g);
         g.gridx = 3;
         add(percent, g);
+        LevelMeter meter = new LevelMeter();
+        java.util.function.DoubleSupplier gain = () -> speaker.isSelected() ? 0 : applyGain ? slider.getValue() / 100.0 : 1;
+        if ("MASTER".equals(name)) {
+            meters.addMaster(meter, gain);
+        } else {
+            meters.add(meter, () -> input, gain);
+        }
+        g.gridx = 4;
+        add(meter, g);
         g.gridy++;
     }
 
