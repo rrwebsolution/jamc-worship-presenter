@@ -166,7 +166,7 @@ public class SongEditorDialog extends JDialog {
     /** Shows the editor and returns the saved song, or empty if the user cancelled. */
     public static Optional<Song> showDialog(Window owner, SongService songService, Song song, Context context) {
         SongEditorDialog dialog = new SongEditorDialog(owner, songService, song, context);
-        dialog.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(dialog); // minimizing it lets the app be used meanwhile
         return Optional.ofNullable(dialog.result);
     }
 
@@ -439,7 +439,7 @@ public class SongEditorDialog extends JDialog {
         chooser.addChoosableFileFilter(new FileNameExtensionFilter("Image Files (JPG, PNG, WebP, GIF, BMP)",
                 FileUtils.IMAGE_EXTENSIONS.toArray(String[]::new)));
         chooser.setFileFilter(backgrounds);
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         java.nio.file.Path file = chooser.getSelectedFile().toPath();

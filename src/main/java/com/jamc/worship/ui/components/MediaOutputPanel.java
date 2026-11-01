@@ -21,9 +21,7 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JLabel;
-import javax.swing.JMenuItem;
 import javax.swing.JPanel;
-import javax.swing.JPopupMenu;
 import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
@@ -45,8 +43,9 @@ import java.util.Objects;
  * <ul>
  *   <li>SEND TO PREVIEW puts it on the main Preview (TAKE then sends it to Program);</li>
  *   <li>ADD TO SERVICE adds it to the schedule and nothing else;</li>
- *   <li>OUTPUT AS chooses a special role, such as TAKE AS BACKGROUND, which changes only the shared
- *       global background under Preview and Program and never a scene.</li>
+ *   <li>FULLSCREEN VIDEO / IMAGE fills the whole screen (through Preview, like SEND TO PREVIEW);</li>
+ *   <li>TAKE AS BACKGROUND changes only the shared global background under Preview and Program and
+ *       never a scene.</li>
  * </ul>
  * The global background's own controls (pause, restart, change, off) sit underneath.
  */
@@ -76,7 +75,7 @@ public class MediaOutputPanel extends JPanel {
     private final TransportControls transport = new TransportControls(false);
     private final JButton sendToPreview = Ui.primaryButton("SEND TO PREVIEW", "monitor");
     private final JButton addToService = Ui.button("ADD TO SERVICE", "list-plus");
-    private final JButton outputAs = Ui.button("OUTPUT AS", "chevron-down");
+    private final JButton fullscreen = Ui.button("FULLSCREEN VIDEO", "video");
     private final JButton takeAsBackground = Ui.button("TAKE AS BACKGROUND", "landscape");
     private final JButton favorite = Ui.button("ADD TO FAVORITES", "star");
     private final JButton playAudio = Ui.primaryButton("PLAY AS AUDIO", "play");
@@ -109,9 +108,10 @@ public class MediaOutputPanel extends JPanel {
             ServiceItem s = item == null ? null : MediaLibraryPanel.serviceItem(item);
             if (s != null) actions.addToService(s);
         });
-        outputAs.setHorizontalTextPosition(JButton.LEFT);
-        outputAs.setToolTipText("Choose a special output role for this media");
-        outputAs.addActionListener(e -> showOutputAsMenu());
+        fullscreen.setToolTipText("Fills the whole screen; goes to the main Preview first, TAKE puts it on Program");
+        fullscreen.addActionListener(e -> {
+            if (item != null) actions.sendToPreview(item);
+        });
         takeAsBackground.setToolTipText("Make this the global background under Preview and Program. Scenes do not change.");
         takeAsBackground.addActionListener(e -> takeAsBackground());
         favorite.addActionListener(e -> {
@@ -222,18 +222,23 @@ public class MediaOutputPanel extends JPanel {
         playAudio.setVisible(!visual);
         addToService.setVisible(!backgroundItem);
         favorite.setVisible(backgroundItem);
-        takeAsBackground.setVisible(backgroundItem);
-        outputAs.setVisible(visual && !backgroundItem);
+        // a video or image: four actions, two per row (FULLSCREEN and TAKE AS BACKGROUND side by side)
+        fullscreen.setVisible(visual);
+        fullscreen.setText(kind == MediaKind.VIDEO ? "FULLSCREEN VIDEO" : "FULLSCREEN IMAGE");
+        fullscreen.setIcon(Icons.get(kind == MediaKind.VIDEO ? "video" : "image", Icons.SMALL));
+        takeAsBackground.setVisible(visual);
+        takeAsBackground.setToolTipText("Make this the global background under Preview and Program. Scenes do not change.");
         favorite.setEnabled(!preset);
         favorite.setText(m.isFavorite() ? "REMOVE FROM FAVORITES" : "ADD TO FAVORITES");
         favorite.setIcon(Icons.get(m.isFavorite() ? "star-filled" : "star", Icons.SMALL));
         actionRow.removeAll();
-        for (JButton b : new JButton[]{sendToPreview, playAudio, addToService, favorite, takeAsBackground, outputAs}) {
+        for (JButton b : new JButton[]{sendToPreview, playAudio, addToService, favorite, fullscreen, takeAsBackground}) {
             if (b.isVisible()) {
                 actionRow.add(b);
             }
         }
-        Ui.setEnabled(exists, sendToPreview, addToService, outputAs, takeAsBackground);
+        Ui.setEnabled(exists, sendToPreview, addToService, fullscreen);
+        takeAsBackground.setEnabled(exists && (kind != MediaKind.VIDEO || hub.available()));
         playAudio.setEnabled(exists && hub.available());
         updateBackgroundState();
 
@@ -245,12 +250,10 @@ public class MediaOutputPanel extends JPanel {
                         previewPlayer = new VideoPlayer();
                         previewPlayer.addStateListener(this::recordDuration);
                     }
-                    // this video's own mute / volume / loop from last time, set before it loads
+                    // this video's loop from last time; it opens with its own sound (100 %, unmuted)
                     var state = states == null ? null : states.get(stateKey(m), new com.jamc.worship.media.MediaStates.State(false, 100, false));
-                    if (state != null) {
-                        previewPlayer.setVolume(state.volume());
-                        previewPlayer.setMuted(state.muted());
-                    }
+                    previewPlayer.setVolume(100);
+                    previewPlayer.setMuted(false);
                     previewPlayer.cue(file.toString(), state != null && state.loop());
                 } catch (RuntimeException e) {
                     Dialogs.showError(this, "The video could not be opened.", e);
@@ -288,13 +291,19 @@ public class MediaOutputPanel extends JPanel {
         playAudio.setVisible(false);
         addToService.setVisible(true);
         favorite.setVisible(false);
-        takeAsBackground.setVisible(false);
-        outputAs.setVisible(true);
+        fullscreen.setVisible(true);
+        fullscreen.setText("FULLSCREEN VIDEO");
+        fullscreen.setIcon(Icons.get("video", Icons.SMALL));
+        takeAsBackground.setVisible(true);
+        takeAsBackground.setEnabled(false);
+        takeAsBackground.setText("TAKE AS BACKGROUND");
+        takeAsBackground.setToolTipText("YouTube videos play as video content only (fullscreen or in a scene's Video source)");
         actionRow.removeAll();
         actionRow.add(sendToPreview);
         actionRow.add(addToService);
-        actionRow.add(outputAs);
-        Ui.setEnabled(engine.isUsable(), sendToPreview, outputAs);
+        actionRow.add(fullscreen);
+        actionRow.add(takeAsBackground);
+        Ui.setEnabled(engine.isUsable(), sendToPreview, fullscreen);
         addToService.setEnabled(true);
 
         transport.setVisible(true);
@@ -305,10 +314,8 @@ public class MediaOutputPanel extends JPanel {
                 youtubePlayer.addStateListener(monitor::repaint);
             }
             var state = states == null ? null : states.get(stateKey(m), new com.jamc.worship.media.MediaStates.State(false, 100, false));
-            if (state != null) {
-                youtubePlayer.setVolume(state.volume());
-                youtubePlayer.setMuted(state.muted());
-            }
+            youtubePlayer.setVolume(100); // its own sound: 100 %, unmuted
+            youtubePlayer.setMuted(false);
             youtubePlayer.cue(m.getPath(), state != null && state.loop());
         }
         transport.bind(states == null ? youtubePlayer : states.remember(youtubePlayer, stateKey(m)));
@@ -339,7 +346,7 @@ public class MediaOutputPanel extends JPanel {
                 ? "OFFLINE: YouTube cannot be reached. Local videos and saved lyrics still work."
                 : availability == com.jamc.worship.youtube.YouTubeClient.Availability.UNAVAILABLE
                 ? "UNAVAILABLE: YouTube no longer plays this video (removed, private or not embeddable)." : " ");
-        Ui.setEnabled(engine.isUsable(), sendToPreview, outputAs);
+        Ui.setEnabled(engine.isUsable(), sendToPreview, fullscreen);
     }
 
     private void stopYouTube() {
@@ -374,27 +381,6 @@ public class MediaOutputPanel extends JPanel {
         }
         s.append("  ·  ").append(m.isCopied() ? "stored in library" : "linked: " + file);
         return s.toString();
-    }
-
-    /** OUTPUT AS ▼: only the roles this kind of media supports. */
-    private void showOutputAsMenu() {
-        MediaItem m = item;
-        if (m == null) {
-            return;
-        }
-        JPopupMenu menu = new JPopupMenu();
-        boolean video = m.getKind() == MediaKind.VIDEO;
-        JMenuItem fullscreen = new JMenuItem(video ? "Fullscreen Video" : "Fullscreen Image", Icons.get(video ? "video" : "image", Icons.SMALL));
-        fullscreen.setToolTipText("Fills the whole screen; goes to the main Preview first, TAKE puts it on Program");
-        fullscreen.addActionListener(e -> actions.sendToPreview(m));
-        JMenuItem bg = new JMenuItem("TAKE AS BACKGROUND", Icons.get("landscape", Icons.SMALL));
-        bg.setToolTipText(m.isYouTube() ? "YouTube videos play as video content only (fullscreen or in a scene's Video source)"
-                : "Shared background under Preview and Program; scenes and lyrics stay as they are");
-        bg.setEnabled(!m.isYouTube() && (video ? hub.available() : true));
-        bg.addActionListener(e -> takeAsBackground());
-        menu.add(fullscreen);
-        menu.add(bg);
-        menu.show(outputAs, 0, outputAs.getHeight());
     }
 
     private void takeAsBackground() {

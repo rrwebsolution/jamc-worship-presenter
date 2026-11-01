@@ -262,14 +262,14 @@ public final class SyncEditorDialog extends JDialog {
             }
         }
         SyncEditorDialog d = new SyncEditorDialog(owner, song, songs, ref, initial);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return d.saved;
     }
 
     /** Opens the editor directly on a reference (e.g. after importing timed lyrics: review, test, save). */
     public static boolean edit(Window owner, Song song, SongService songs, Reference ref) {
         SyncEditorDialog d = new SyncEditorDialog(owner, song, songs, ref, null);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return d.saved;
     }
 
@@ -287,7 +287,7 @@ public final class SyncEditorDialog extends JDialog {
         FileNameExtensionFilter filter = new FileNameExtensionFilter(what, ext);
         chooser.addChoosableFileFilter(filter);
         chooser.setFileFilter(filter);
-        return chooser.showOpenDialog(owner) == JFileChooser.APPROVE_OPTION ? chooser.getSelectedFile() : null;
+        return com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, owner) == JFileChooser.APPROVE_OPTION ? chooser.getSelectedFile() : null;
     }
 
     // ------------------------------------------------------------------ layout

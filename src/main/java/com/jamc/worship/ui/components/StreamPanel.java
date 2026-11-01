@@ -83,6 +83,9 @@ public class StreamPanel extends JPanel {
     private final JToggleButton masterMute = Ui.muteToggle("the whole stream");
 
     private final JButton recordButton = new JButton("● START RECORDING");
+    private final javax.swing.JCheckBox muteMicsForMedia =
+            new javax.swing.JCheckBox("Mute the microphones while a video or music plays on Program");
+    private final JLabel micsMutedNow = Ui.label(" ", Palette::warning, "semibold");
     private final JLabel recordStatus = Ui.label("Not recording", Palette::secondaryText, null);
     private final JButton openFolder = Ui.button("Open Recordings Folder", "folder");
     private final JLabel saveFolder = Ui.label("", Palette::text, null);
@@ -144,6 +147,7 @@ public class StreamPanel extends JPanel {
                         mixerRow("CAMERA / CAPTURE AUDIO", aux, auxVolume, auxMute),
                         mixerRow("MEDIA (videos, music)", mediaIn, mediaVolume, mediaMute),
                         mixerRow("MASTER", null, masterVolume, masterMute),
+                        flow(muteMicsForMedia, micsMutedNow),
                         Ui.label("<html>MEDIA: \"This app (Program sound)\" records the videos, scene videos and music this app plays, "
                                 + "straight from the Program output device (Settings → Audio), with no extra software. Other sounds "
                                 + "playing on that device are recorded too. Never choose the same device twice: that doubles the sound.</html>", Palette::mutedText, "small"))), c);
@@ -175,6 +179,11 @@ public class StreamPanel extends JPanel {
         }
         preset.addItem("Custom");
         wire();
+        muteMicsForMedia.setToolTipText("On (recommended): while a video, scene video or music plays on Program, the MICROPHONE "
+                + "and CAMERA / CAPTURE AUDIO inputs are muted in the recording and livestream, so people talking in the room "
+                + "are not mixed into the video's sound. They come back by themselves when it stops.");
+        muteMicsForMedia.setSelected(manager.muteMicsDuringMedia());
+        muteMicsForMedia.addActionListener(e -> manager.setMuteMicsDuringMedia(muteMicsForMedia.isSelected()));
         manager.addListener(() -> SwingUtilities.invokeLater(this::sync));
         new Timer(1000, e -> syncRecording()).start();
         load();
@@ -195,7 +204,7 @@ public class StreamPanel extends JPanel {
         locate.addActionListener(e -> {
             JFileChooser chooser = new JFileChooser();
             chooser.setDialogTitle("Locate ffmpeg.exe");
-            if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+            if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) == JFileChooser.APPROVE_OPTION) {
                 manager.setFFmpegPath(chooser.getSelectedFile().getAbsolutePath());
             }
         });
@@ -262,7 +271,7 @@ public class StreamPanel extends JPanel {
             chooser.setDialogTitle("Save recordings to");
             chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
             chooser.setAcceptAllFileFilterUsed(false);
-            if (chooser.showDialog(this, "Use This Folder") == javax.swing.JFileChooser.APPROVE_OPTION) {
+            if (com.jamc.worship.ui.NativeFileDialogs.showDialog(chooser, this, "Use This Folder") == javax.swing.JFileChooser.APPROVE_OPTION) {
                 java.nio.file.Path folder = chooser.getSelectedFile().toPath();
                 if (!Files.isDirectory(folder) || !Files.isWritable(folder)) {
                     Dialogs.showInfo(this, "Recordings folder", "Recordings cannot be saved in \"" + folder
@@ -518,6 +527,7 @@ public class StreamPanel extends JPanel {
     }
 
     private void sync() {
+        micsMutedNow.setText(manager.micsMutedForMedia() ? "● MICS MUTED (video playing)" : " ");
         FFmpeg.Capabilities caps = manager.capabilities();
         if (manager.isProbing()) {
             ffmpegLabel.setText("Looking for FFmpeg and testing encoders…");

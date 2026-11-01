@@ -150,7 +150,7 @@ public final class LibraryPickerDialog<T> extends JDialog {
     /** Shows the picker and returns the chosen library item, or null when cancelled. */
     public static <T> T pick(Component parent, Spec<T> spec) {
         LibraryPickerDialog<T> d = new LibraryPickerDialog<>(SwingUtilities.getWindowAncestor(parent), spec, false);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return d.chosen;
     }
 
@@ -162,7 +162,7 @@ public final class LibraryPickerDialog<T> extends JDialog {
         LibraryPickerDialog<T> d = new LibraryPickerDialog<>(SwingUtilities.getWindowAncestor(parent), spec, true);
         d.noun = noun;
         d.updateAddButton();
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return d.chosenMany;
     }
 

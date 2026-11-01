@@ -5,42 +5,100 @@ import com.jamc.worship.media.VideoPlayer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiFunction;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
- * Detects cameras and provides live camera frames to scenes.
+ * Every physical camera in one place: detection, one shared session per device, status, hot plug and audio.
  *
- * <p>Capture uses VLC's DirectShow input. The {@link CameraProvider} seam keeps the capture method
- * replaceable (NDI, capture cards, OBS virtual camera...) without touching scenes or the compositor.
- * Feeds start when a visible camera source is painted and stop when no scene has shown them for a
- * few seconds, so an unused camera never stays switched on.
+ * <p>A session is opened once per device and shared by every scene, Preview, Program, the multiview and the
+ * scene editor that show that camera, so switching scenes never closes and reopens a camera (no black frames,
+ * no re-initialising). Cameras used by the Preview or Program scene are kept open ({@link #keepOpen}) even while
+ * their source is hidden; other sessions close after a few seconds unseen, so an unused camera never stays on.
+ *
+ * <p>One camera failing never affects another: each session has its own VLC player. A camera that stops
+ * sending pictures is re-detected; if it was unplugged it shows as DISCONNECTED and is reopened by itself
+ * when it comes back.
+ *
+ * <p>Capture uses VLC's DirectShow input. The {@link CameraProvider} seam keeps the capture method replaceable
+ * (PTZ / network cameras, NDI...) without touching scenes or the compositor. EDT only, except {@link #detect()}.
  */
 public final class CameraManager {
 
     private static final Logger log = LoggerFactory.getLogger(CameraManager.class);
-    private static final long IDLE_MS = 5_000;
+    /** A session nobody has shown for this long closes (unless Preview / Program keeps it open). */
+    static final long IDLE_MS = 10_000;
+    /** A camera that sent pictures and then none for this long is checked for being unplugged. */
+    static final long STALL_MS = 3_000;
+    /** A failed camera is tried again after this long while something still wants it. */
+    static final long RETRY_MS = 10_000;
+    /** How often detection runs while a wanted camera is missing (hot plug). */
+    static final long RECHECK_MS = 8_000;
 
     /** A way of turning a camera name into a running video feed. */
     public interface CameraProvider {
         VideoPlayer open(String cameraName);
     }
 
-    private final Map<String, Feed> feeds = new HashMap<>();
-    private final Timer sweeper = new Timer(2_000, e -> sweep());
-    private volatile List<String> cameras = List.of();
+    /** A running picture from one device: a VLC player in the app, a fake in tests. */
+    interface Feed {
+        BufferedImage frame();
+
+        /** Frames received so far. */
+        long frames();
+
+        boolean failed();
+
+        void release();
+
+        static Feed of(VideoPlayer p) {
+            return new Feed() {
+                @Override public BufferedImage frame() { return p.currentFrame(); }
+                @Override public long frames() { return p.frameCount(); }
+                @Override public boolean failed() { return p.hasError(); }
+                @Override public void release() { p.release(); }
+            };
+        }
+    }
 
     /** One way of opening a camera: a capture size ("1280x720", null = the driver's default) and frame rate (0 = default). */
     record Format(String size, int fps) {
+    }
+
+    /** What detection found: camera / capture devices and audio capture inputs (microphones, HDMI audio). */
+    public record Detection(List<String> video, List<String> audio) {
+    }
+
+    /** The sizes ("1920x1080", largest first) and frame rates a camera reports. */
+    public record Capabilities(List<String> sizes, List<Integer> rates) {
     }
 
     /**
@@ -52,36 +110,79 @@ public final class CameraManager {
     /** How long a format may take to show its first picture before the next one is tried. */
     static final long FALLBACK_MS = 3_500;
 
-    private static final class Feed {
-        VideoPlayer player;
+    /** One open camera device. */
+    private static final class Session {
+        Feed feed;
         long lastUsed;
         long started;
         final List<Format> formats;
         int attempt;
+        /** Frame count last seen, and when it last went up. */
+        long seenFrames;
+        long lastFrameAt;
+        boolean gotFrame;
+        /** Every format was tried without a picture: the camera shows ERROR until the next retry. */
+        boolean failed;
+        String problem;
+        long fpsFrames;
+        long fpsAt;
+        int fps;
 
-        Feed(VideoPlayer player, List<Format> formats) {
-            this.player = player;
+        Session(Feed feed, List<Format> formats, long now) {
+            this.feed = feed;
             this.formats = formats;
-            this.started = System.currentTimeMillis();
+            this.started = now;
+            this.fpsAt = now;
         }
     }
 
+    private final Map<String, Session> sessions = new HashMap<>();
+    private final Map<String, Set<String>> kept = new HashMap<>();
+    /** Cameras something asked for while they were missing, and when (they are looked for again). */
+    private final Map<String, Long> wanted = new HashMap<>();
+    /** Wanted cameras the last detection did not find. */
+    private final Set<String> missing = new HashSet<>();
     /** Requested capture format per camera (null size = Auto). */
-    private final Map<String, Format> requested = new java.util.concurrent.ConcurrentHashMap<>();
+    private final Map<String, Format> requested = new ConcurrentHashMap<>();
     /** The format that actually gave a picture, per camera, so a restart opens it straight away. */
-    private final Map<String, Format> working = new java.util.concurrent.ConcurrentHashMap<>();
-    private final java.util.function.BiFunction<String, Format, VideoPlayer> opener;
+    private final Map<String, Format> working = new ConcurrentHashMap<>();
+    private final Map<String, Capabilities> capabilities = new ConcurrentHashMap<>();
+    private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
+    private final Timer sweeper = new Timer(2_000, e -> sweep());
+    private final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "camera-detect");
+        t.setDaemon(true);
+        return t;
+    });
+    private final AtomicBoolean detecting = new AtomicBoolean();
+    private final BiFunction<String, Format, Feed> opener;
+    private final Supplier<Detection> detector;
+    private final BooleanSupplier available;
     private final boolean fallback;
+    private volatile List<String> cameras = List.of();
+    private volatile List<String> audioInputs = List.of();
+    private volatile boolean detected;
+    private volatile long lastDetect;
+    private volatile Function<String, String> audioOverride = name -> null;
+    private boolean watching;
 
     public CameraManager() {
-        this.opener = CameraManager::openDirectShow;
-        this.fallback = true;
-        sweeper.start();
+        this((name, format) -> Feed.of(openDirectShow(name, format)), CameraManager::detectWindows,
+                () -> MediaEngine.get().isAvailable(), true);
     }
 
     public CameraManager(CameraProvider provider) {
-        this.opener = (name, format) -> provider.open(name);
-        this.fallback = false;
+        this((name, format) -> Feed.of(provider.open(name)), CameraManager::detectWindows,
+                () -> MediaEngine.get().isAvailable(), false);
+    }
+
+    /** For tests: fake feeds and detection. */
+    CameraManager(BiFunction<String, Format, Feed> opener, Supplier<Detection> detector, BooleanSupplier available,
+                  boolean fallback) {
+        this.opener = opener;
+        this.detector = detector;
+        this.available = available;
+        this.fallback = fallback;
         sweeper.start();
     }
 
@@ -109,7 +210,7 @@ public final class CameraManager {
      * camera always shows something.
      */
     static String chroma(String name, Format format) {
-        boolean iriun = name != null && name.toLowerCase(java.util.Locale.ROOT).contains("iriun");
+        boolean iriun = name != null && name.toLowerCase(Locale.ROOT).contains("iriun");
         boolean lastResort = format.size() == null && format.fps() == 0;
         return iriun && !lastResort ? "YUY2" : null;
     }
@@ -134,12 +235,209 @@ public final class CameraManager {
         return out.stream().distinct().toList();
     }
 
+    // ------------------------------------------------------------------ devices
+
+    /** Last detected camera names (call {@link #detect()} to refresh). */
+    public List<String> cameras() {
+        return cameras;
+    }
+
+    /** Last detected audio capture inputs (microphones, capture-card HDMI audio). */
+    public List<String> audioInputs() {
+        return audioInputs;
+    }
+
+    /**
+     * Lists connected cameras and audio inputs. Blocking (runs PowerShell on Windows): call from a background
+     * thread. Printers and scanners that Windows files under "Image" devices are excluded. Cameras that were
+     * in use and are now missing show as DISCONNECTED; cameras that came back are reopened.
+     */
+    public List<String> detect() {
+        Detection d;
+        try {
+            d = detector.get();
+        } catch (RuntimeException e) {
+            log.warn("Camera detection failed", e);
+            d = new Detection(cameras, audioInputs);
+        }
+        List<String> before = cameras;
+        cameras = List.copyOf(d.video());
+        audioInputs = List.copyOf(d.audio());
+        detected = true;
+        lastDetect = System.currentTimeMillis();
+        if (!before.equals(cameras)) {
+            log.info("Cameras detected: {}", cameras);
+        }
+        onEdt(this::detectionChanged);
+        return cameras;
+    }
+
+    /** Detection in the background (at most one at a time); listeners hear about any change. */
+    public void detectAsync() {
+        if (!detecting.compareAndSet(false, true)) {
+            return;
+        }
+        worker.execute(() -> {
+            try {
+                detect();
+            } finally {
+                detecting.set(false);
+            }
+        });
+    }
+
+    /** EDT: works out which wanted cameras are gone or back. */
+    private void detectionChanged() {
+        Set<String> nowMissing = new HashSet<>();
+        for (String cam : wantedNames()) {
+            if (!cameras.contains(cam)) {
+                nowMissing.add(cam);
+            }
+        }
+        for (String cam : nowMissing) {
+            Session s = sessions.remove(cam);
+            if (s != null) {
+                s.feed.release();
+            }
+            if (!missing.contains(cam)) {
+                log.warn("Camera disconnected: {}", cam);
+            }
+        }
+        for (String cam : missing) {
+            if (!nowMissing.contains(cam)) {
+                log.info("Camera reconnected: {}", cam);
+                Session s = sessions.remove(cam); // a stale session from before the unplug
+                if (s != null) {
+                    s.feed.release();
+                }
+            }
+        }
+        missing.clear();
+        missing.addAll(nowMissing);
+        prewarm();
+        fire();
+    }
+
+    private Set<String> wantedNames() {
+        Set<String> out = new LinkedHashSet<>(sessions.keySet());
+        kept.values().forEach(out::addAll);
+        out.addAll(wanted.keySet());
+        return out;
+    }
+
+    /** The microphone / HDMI audio input that belongs to this camera, or null when it has none. */
+    public String audioDevice(String name) {
+        String cam = resolve(name);
+        if (cam == null) {
+            return null;
+        }
+        String chosen = audioOverride.apply(cam);
+        if (chosen != null) {
+            return chosen.isBlank() ? null : chosen;
+        }
+        return matchAudio(cam, audioInputs);
+    }
+
+    /**
+     * The operator's audio input per camera: returns a device name, "" for none, or null for automatic.
+     */
+    public void setAudioOverride(Function<String, String> override) {
+        this.audioOverride = override == null ? name -> null : override;
+    }
+
+    /**
+     * The audio input whose name carries the camera's name, e.g. "Digital Audio Interface (USB Capture HDMI)"
+     * for "USB Capture HDMI". A laptop's built-in camera usually has no match (its microphone is separate).
+     */
+    static String matchAudio(String camera, List<String> inputs) {
+        String c = camera.toLowerCase(Locale.ROOT);
+        for (String a : inputs) {
+            String l = a.toLowerCase(Locale.ROOT);
+            int open = l.indexOf('(');
+            int close = l.lastIndexOf(')');
+            String inner = open >= 0 && close > open ? l.substring(open + 1, close).strip() : l;
+            if (inner.equals(c) || inner.contains(c) || (inner.length() >= 6 && c.contains(inner))) {
+                return a;
+            }
+        }
+        return null;
+    }
+
+    // ------------------------------------------------------------------ status
+
+    /** The device state: INITIALIZING, READY, DISCONNECTED or ERROR (the UI adds PREVIEW / LIVE). */
+    public CameraStatus status(String name) {
+        String cam = resolve(name);
+        if (cam == null) {
+            return detected ? CameraStatus.DISCONNECTED : CameraStatus.INITIALIZING;
+        }
+        if (missing.contains(cam) || (detected && !cameras.contains(cam))) {
+            return CameraStatus.DISCONNECTED;
+        }
+        Session s = sessions.get(cam);
+        if (s == null) {
+            return CameraStatus.READY;
+        }
+        if (s.failed) {
+            return CameraStatus.ERROR;
+        }
+        if (!s.gotFrame || System.currentTimeMillis() - s.lastFrameAt > STALL_MS) {
+            return CameraStatus.INITIALIZING;
+        }
+        return CameraStatus.READY;
+    }
+
+    /** Why a camera shows ERROR or DISCONNECTED, in words for the operator; null when it is fine. */
+    public String problem(String name) {
+        String cam = resolve(name);
+        CameraStatus st = status(name);
+        if (st == CameraStatus.DISCONNECTED) {
+            return cam == null ? "No camera is connected."
+                    : "\"" + cam + "\" is not connected. Check its cable; it is reopened by itself when it comes back.";
+        }
+        Session s = cam == null ? null : sessions.get(cam);
+        return st == CameraStatus.ERROR && s != null ? s.problem : null;
+    }
+
+    /** True when a camera's failure looks like too many cameras on one USB controller. */
+    public boolean bandwidthWarning(String name) {
+        String cam = resolve(name);
+        Session s = cam == null ? null : sessions.get(cam);
+        return s != null && s.failed && s.problem != null && s.problem.startsWith(BANDWIDTH);
+    }
+
+    static final String BANDWIDTH = "CAMERA BANDWIDTH WARNING";
+
     /** The picture size the camera is delivering now, e.g. "1280×720", or null while it starts. */
     public String liveSize(String name) {
-        Feed f = feeds.get(name);
-        BufferedImage img = f == null ? null : f.player.currentFrame();
+        String cam = resolve(name);
+        Session s = cam == null ? null : sessions.get(cam);
+        BufferedImage img = s == null ? null : s.feed.frame();
         return img == null ? null : img.getWidth() + "×" + img.getHeight();
     }
+
+    /** Frames per second the camera is delivering now (measured), or 0 while it starts or is closed. */
+    public int liveFps(String name) {
+        String cam = resolve(name);
+        Session s = cam == null ? null : sessions.get(cam);
+        return s == null || !s.gotFrame ? 0 : s.fps;
+    }
+
+    /** True while the camera has an open session (its picture is flowing or starting). */
+    public boolean isOpen(String name) {
+        String cam = resolve(name);
+        return cam != null && sessions.containsKey(cam);
+    }
+
+    public void addListener(Runnable l) {
+        listeners.add(l);
+    }
+
+    public void removeListener(Runnable l) {
+        listeners.remove(l);
+    }
+
+    // ------------------------------------------------------------------ format / capabilities
 
     /**
      * Asks the camera for a resolution ("1920x1080", null = Auto: the best size it supports) and frame
@@ -156,116 +454,357 @@ public final class CameraManager {
             return;
         }
         working.remove(name);
-        Feed f = feeds.remove(name);
-        if (f != null) {
-            f.player.release(); // reopened with the new format on the next frame request
+        Session s = sessions.remove(name);
+        if (s != null) {
+            s.feed.release(); // reopened with the new format on the next frame request
             log.info("Camera {} restarting at {} / {} fps", name, size == null ? "Auto" : size, fps == 0 ? "default" : fps);
         }
     }
 
-    /** Last detected camera names (call {@link #detect()} to refresh). */
-    public List<String> cameras() {
-        return cameras;
+    /** What the camera reported it supports, or null when not known (yet). */
+    public Capabilities capabilities(String name) {
+        return name == null ? null : capabilities.get(name);
     }
 
     /**
-     * Lists connected cameras. Blocking (runs PowerShell on Windows): call from a background thread.
-     * Printers and scanners that Windows files under "Image" devices are excluded.
+     * Asks the camera which sizes and frame rates it supports (through FFmpeg, when installed) and hands the
+     * answer to {@code done} on the EDT; null when it cannot be found out.
      */
-    public List<String> detect() {
-        List<String> found = new ArrayList<>();
-        if (System.getProperty("os.name", "").toLowerCase().contains("win")) {
+    public void queryCapabilities(String name, Consumer<Capabilities> done) {
+        if (name == null) {
+            done.accept(null);
+            return;
+        }
+        Capabilities known = capabilities.get(name);
+        if (known != null) {
+            done.accept(known);
+            return;
+        }
+        worker.execute(() -> {
+            Capabilities caps = null;
             try {
-                Process p = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-                        "Get-CimInstance Win32_PnPEntity | Where-Object { $_.PNPClass -eq 'Camera' -or "
-                                + "($_.PNPClass -eq 'Image' -and $_.Service -eq 'usbvideo') } | "
-                                + "Where-Object { $_.Status -eq 'OK' } | ForEach-Object { $_.Name }")
-                        .redirectErrorStream(true).start();
-                try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = r.readLine()) != null) {
-                        if (!line.isBlank() && !found.contains(line.strip())) {
-                            found.add(line.strip());
-                        }
-                    }
-                }
-                if (!p.waitFor(15, TimeUnit.SECONDS)) {
-                    p.destroyForcibly();
+                Path ffmpeg = com.jamc.worship.stream.FFmpeg.locate(null);
+                if (ffmpeg != null) {
+                    caps = listOptions(ffmpeg, name);
                 }
             } catch (Exception e) {
-                log.warn("Camera detection failed", e);
-            } catch (Error e) {
-                log.warn("Camera detection failed", e);
+                log.debug("Could not read the formats of {}", name, e);
+            }
+            if (caps != null) {
+                capabilities.put(name, caps);
+            }
+            Capabilities result = caps;
+            onEdt(() -> done.accept(result));
+        });
+    }
+
+    private static Capabilities listOptions(Path ffmpeg, String name) throws Exception {
+        Process p = new ProcessBuilder(ffmpeg.toString(), "-hide_banner", "-f", "dshow", "-list_options", "true",
+                "-i", "video=" + name).redirectErrorStream(true).start();
+        StringBuilder out = new StringBuilder();
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = r.readLine()) != null) {
+                out.append(line).append('\n');
             }
         }
-        cameras = List.copyOf(found);
-        log.info("Cameras detected: {}", cameras);
-        return cameras;
+        if (!p.waitFor(10, TimeUnit.SECONDS)) {
+            p.destroyForcibly();
+        }
+        return parseOptions(out.toString());
+    }
+
+    private static final Pattern MAX_OPTION = Pattern.compile("max s=(\\d+)x(\\d+) fps=([\\d.]+)");
+    private static final int[] RATES = {60, 50, 30, 25, 24, 15};
+
+    /** Reads FFmpeg's "-list_options" output ("... max s=1920x1080 fps=30") into sizes and rates. */
+    static Capabilities parseOptions(String text) {
+        Map<String, Double> best = new HashMap<>();
+        Matcher m = MAX_OPTION.matcher(text);
+        while (m.find()) {
+            String size = m.group(1) + "x" + m.group(2);
+            best.merge(size, Double.parseDouble(m.group(3)), Math::max);
+        }
+        if (best.isEmpty()) {
+            return null;
+        }
+        List<String> sizes = best.keySet().stream().sorted((a, b) -> Long.compare(area(b), area(a))).toList();
+        double top = best.values().stream().mapToDouble(Double::doubleValue).max().orElse(30);
+        List<Integer> rates = new ArrayList<>();
+        for (int r : RATES) {
+            if (r <= top + 0.5) {
+                rates.add(r);
+            }
+        }
+        return new Capabilities(sizes, rates);
+    }
+
+    private static long area(String size) {
+        String[] p = size.split("x");
+        return Long.parseLong(p[0]) * Long.parseLong(p[1]);
+    }
+
+    // ------------------------------------------------------------------ sessions
+
+    /**
+     * Keeps these cameras open for {@code owner} ("program", "preview"...), even while their sources are
+     * hidden, and opens them now so a TAKE never waits for a camera to start. Replaces the owner's last set.
+     */
+    public void keepOpen(String owner, Collection<String> names) {
+        Set<String> set = new HashSet<>();
+        for (String n : names) {
+            String cam = resolve(n);
+            if (cam != null) {
+                set.add(cam);
+            }
+        }
+        if (set.isEmpty()) {
+            kept.remove(owner);
+        } else {
+            kept.put(owner, set);
+        }
+        prewarm();
+    }
+
+    private boolean isKept(String cam) {
+        return kept.values().stream().anyMatch(s -> s.contains(cam));
+    }
+
+    private void prewarm() {
+        if (kept.isEmpty() || !available.getAsBoolean()) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        for (Set<String> set : kept.values()) {
+            for (String cam : set) {
+                if (!sessions.containsKey(cam) && !missing.contains(cam) && (!detected || cameras.contains(cam))) {
+                    open(cam, now);
+                }
+            }
+        }
+    }
+
+    private Session open(String cam, long now) {
+        List<Format> tries = fallback ? candidates(requested.get(cam), working.get(cam)) : List.of(new Format(null, 0));
+        try {
+            Session s = new Session(opener.apply(cam, tries.getFirst()), tries, now);
+            s.lastUsed = now;
+            sessions.put(cam, s);
+            log.info("Camera started: {} ({})", cam, describe(tries.getFirst()));
+            fire();
+            return s;
+        } catch (RuntimeException e) {
+            log.warn("Could not open camera {}", cam, e);
+            return null;
+        }
+    }
+
+    /** The named camera, or the first camera for a blank name; null when there is none. */
+    private String resolve(String name) {
+        if (name != null && !name.isBlank()) {
+            return name;
+        }
+        List<String> list = cameras;
+        return list.isEmpty() ? null : list.getFirst();
     }
 
     /**
      * Latest frame from the named camera (or the first camera when the name is blank), starting the
-     * feed if needed. Returns null until frames arrive or when no camera/VLC is available. EDT only.
+     * session if needed. Returns null until frames arrive, or when the camera is missing / failed or VLC is
+     * not available. EDT only.
      */
     public BufferedImage frame(String name) {
-        String cam = name == null || name.isBlank() ? (cameras.isEmpty() ? null : cameras.getFirst()) : name;
-        if (cam == null || !MediaEngine.get().isAvailable()) {
+        String cam = resolve(name);
+        if (cam == null || !available.getAsBoolean()) {
             return null;
         }
-        Feed f = feeds.get(cam);
         long now = System.currentTimeMillis();
-        if (f == null) {
-            List<Format> tries = fallback ? candidates(requested.get(cam), working.get(cam)) : List.of(new Format(null, 0));
-            try {
-                f = new Feed(opener.apply(cam, tries.getFirst()), tries);
-                feeds.put(cam, f);
-                log.info("Camera started: {} ({})", cam, describe(tries.getFirst()));
-            } catch (RuntimeException e) {
-                log.warn("Could not open camera {}", cam, e);
+        if (missing.contains(cam) || (detected && !cameras.contains(cam))) {
+            wanted.put(cam, now); // looked for again by the sweeper (hot plug)
+            missing.add(cam);
+            return null;
+        }
+        Session s = sessions.get(cam);
+        if (s == null) {
+            s = open(cam, now);
+            if (s == null) {
                 return null;
             }
         }
-        f.lastUsed = now;
-        BufferedImage img = f.player.currentFrame();
-        if (img != null) {
-            working.putIfAbsent(cam, f.formats.get(f.attempt));
-        } else if (fallback && f.attempt < f.formats.size() - 1 && (f.player.hasError() || now - f.started > FALLBACK_MS)) {
-            // this camera cannot deliver that size / rate: try the next one instead of staying black
-            Format next = f.formats.get(f.attempt + 1);
-            log.info("Camera {} gave no picture at {}; trying {}", cam, describe(f.formats.get(f.attempt)), describe(next));
-            f.player.release();
-            try {
-                f.player = opener.apply(cam, next);
-            } catch (RuntimeException e) {
-                log.warn("Could not reopen camera {}", cam, e);
-                feeds.remove(cam);
-                return null;
+        s.lastUsed = now;
+        if (s.failed) {
+            return null; // retried by the sweeper
+        }
+        BufferedImage img = s.feed.frame();
+        long count = s.feed.frames();
+        if (count != s.seenFrames) {
+            s.seenFrames = count;
+            s.lastFrameAt = now;
+            if (!s.gotFrame) {
+                s.gotFrame = true;
+                working.putIfAbsent(cam, s.formats.get(s.attempt));
+                fire();
             }
-            f.attempt++;
-            f.started = now;
+        }
+        if (!s.gotFrame) {
+            boolean timedOut = s.feed.failed() || now - s.started > FALLBACK_MS;
+            if (timedOut && fallback && s.attempt < s.formats.size() - 1) {
+                // this camera cannot deliver that size / rate: try the next one instead of staying black
+                Format next = s.formats.get(s.attempt + 1);
+                log.info("Camera {} gave no picture at {}; trying {}", cam, describe(s.formats.get(s.attempt)), describe(next));
+                s.feed.release();
+                try {
+                    s.feed = opener.apply(cam, next);
+                } catch (RuntimeException e) {
+                    log.warn("Could not reopen camera {}", cam, e);
+                    fail(cam, s, now);
+                    return null;
+                }
+                s.attempt++;
+                s.started = now;
+            } else if (timedOut && now - s.started > FALLBACK_MS) {
+                fail(cam, s, now);
+            }
+            return null;
+        }
+        if (s.feed.failed() || now - s.lastFrameAt > STALL_MS) {
+            // it was sending and stopped: unplugged, or the driver hung. Close it and look for it again.
+            log.warn("Camera {} stopped sending pictures; checking whether it is still connected", cam);
+            sessions.remove(cam).feed.release();
+            wanted.put(cam, now);
+            fire();
+            detectAsync();
+            return null;
         }
         return img;
+    }
+
+    /** Every format was tried without a picture: ERROR, with the likely reason, until the next retry. */
+    private void fail(String cam, Session s, long now) {
+        s.failed = true;
+        s.started = now;
+        boolean othersRunning = sessions.entrySet().stream()
+                .anyMatch(e -> !e.getKey().equals(cam) && e.getValue().gotFrame && !e.getValue().failed);
+        s.problem = othersRunning
+                ? BANDWIDTH + ": \"" + cam + "\" gives no picture while other cameras run. Connect it to another USB "
+                        + "port or controller (USB 3.x), lower its resolution or frame rate, or close unused camera previews."
+                : "\"" + cam + "\" gives no picture. It may be in use by another program (Zoom, Teams, OBS), or need "
+                        + "reconnecting. It is tried again by itself.";
+        log.warn("Camera {} failed: {}", cam, s.problem);
+        s.feed.release();
+        fire();
     }
 
     private static String describe(Format f) {
         return (f.size() == null ? "driver default size" : f.size()) + (f.fps() > 0 ? " @ " + f.fps() + " fps" : "");
     }
 
-    public void stopAll() {
-        feeds.values().forEach(f -> f.player.release());
-        feeds.clear();
+    /**
+     * While true (Library → Camera is open) detection also runs now and then, so a newly plugged camera
+     * appears by itself.
+     */
+    public void setWatching(boolean on) {
+        watching = on;
     }
 
-    private void sweep() {
+    public void stopAll() {
+        sessions.values().forEach(s -> s.feed.release());
+        sessions.clear();
+    }
+
+    /** Every 2 s: closes unused sessions, retries failed ones, measures frame rates, looks for missing cameras. */
+    void sweep() {
         long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, Feed>> it = feeds.entrySet().iterator();
+        boolean changed = false;
+        Iterator<Map.Entry<String, Session>> it = sessions.entrySet().iterator();
         while (it.hasNext()) {
-            Map.Entry<String, Feed> e = it.next();
-            if (now - e.getValue().lastUsed > IDLE_MS) {
-                e.getValue().player.release();
+            Map.Entry<String, Session> e = it.next();
+            Session s = e.getValue();
+            String cam = e.getKey();
+            if (now - s.lastUsed > IDLE_MS && !isKept(cam)) {
+                s.feed.release();
                 it.remove();
-                log.info("Camera stopped (not in use): {}", e.getKey());
+                changed = true;
+                log.info("Camera stopped (not in use): {}", cam);
+                continue;
+            }
+            if (s.failed && now - s.started > RETRY_MS && (isKept(cam) || now - s.lastUsed < IDLE_MS)) {
+                it.remove(); // the next frame request (or prewarm) opens it from the first format again
+                changed = true;
+                log.info("Retrying camera {}", cam);
+                continue;
+            }
+            if (!s.failed && now - s.fpsAt >= 1_000) {
+                long count = s.feed.frames();
+                s.fps = (int) Math.round((count - s.fpsFrames) * 1000.0 / (now - s.fpsAt));
+                s.fpsFrames = count;
+                s.fpsAt = now;
+                if (count != s.seenFrames) {
+                    s.seenFrames = count;
+                    s.lastFrameAt = now; // pictures are flowing even when nothing painted them
+                    s.gotFrame = true;
+                }
             }
         }
+        wanted.entrySet().removeIf(e -> now - e.getValue() > 60_000 && !isKept(e.getKey()));
+        boolean anyMissing = !missing.isEmpty() || wanted.keySet().stream().anyMatch(c -> !cameras.contains(c));
+        if ((anyMissing && now - lastDetect > RECHECK_MS) || (watching && now - lastDetect > 3 * RECHECK_MS)) {
+            detectAsync();
+        }
+        prewarm();
+        if (changed) {
+            fire();
+        }
+    }
+
+    private void fire() {
+        onEdt(() -> listeners.forEach(Runnable::run));
+    }
+
+    private static void onEdt(Runnable r) {
+        if (SwingUtilities.isEventDispatchThread()) {
+            r.run();
+        } else {
+            SwingUtilities.invokeLater(r);
+        }
+    }
+
+    // ------------------------------------------------------------------ Windows detection
+
+    private static Detection detectWindows() {
+        List<String> video = new ArrayList<>();
+        List<String> audio = new ArrayList<>();
+        if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
+            return new Detection(video, audio);
+        }
+        try {
+            // cameras: Camera class, or usbvideo Image devices (not printers / scanners). Audio capture inputs are
+            // the AudioEndpoint devices whose id has {0.0.1.} (capture; {0.0.0.} is playback).
+            Process p = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
+                    "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { "
+                            + "if ($_.PNPClass -eq 'Camera' -or ($_.PNPClass -eq 'Image' -and $_.Service -eq 'usbvideo')) "
+                            + "{ 'V|' + $_.Name } elseif ($_.PNPClass -eq 'AudioEndpoint' -and $_.DeviceID -like '*{0.0.1.*') "
+                            + "{ 'A|' + $_.Name } }")
+                    .redirectErrorStream(true).start();
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    String v = line.strip();
+                    if (v.length() > 2 && v.charAt(1) == '|') {
+                        List<String> into = v.charAt(0) == 'V' ? video : audio;
+                        String name = v.substring(2).strip();
+                        if (!name.isEmpty() && !into.contains(name)) {
+                            into.add(name);
+                        }
+                    }
+                }
+            }
+            if (!p.waitFor(15, TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+            }
+        } catch (Exception | Error e) {
+            log.warn("Camera detection failed", e);
+        }
+        return new Detection(video, audio);
     }
 }

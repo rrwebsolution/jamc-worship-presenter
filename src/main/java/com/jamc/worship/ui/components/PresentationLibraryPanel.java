@@ -344,9 +344,8 @@ public class PresentationLibraryPanel extends JPanel {
         chooser.setAcceptAllFileFilterUsed(true);
         chooser.setFileFilter(new FileNameExtensionFilter("PowerPoint presentations (*.pptx, *.ppt)",
                 "pptx", "ppt", "pptm", "ppsx", "pps"));
-        chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
-        chooser.setApproveButtonToolTipText("Import the presentation, or a folder of exported slide images");
-        if (chooser.showDialog(SwingUtilities.getWindowAncestor(this), "Import") != JFileChooser.APPROVE_OPTION) {
+        chooser.setFileSelectionMode(JFileChooser.FILES_ONLY); // straight to the file dialog (no file / folder question)
+        if (com.jamc.worship.ui.NativeFileDialogs.showDialog(chooser, SwingUtilities.getWindowAncestor(this), "Import") != JFileChooser.APPROVE_OPTION) {
             return;
         }
         List<Path> files = new ArrayList<>();
@@ -411,8 +410,10 @@ public class PresentationLibraryPanel extends JPanel {
         chooser.setDialogTitle("Locate \"" + p.sourceFileName() + "\"");
         chooser.setFileFilter(new FileNameExtensionFilter("PowerPoint presentations (*.pptx, *.ppt)",
                 "pptx", "ppt", "pptm", "ppsx", "pps"));
-        chooser.setFileSelectionMode(JFileChooser.FILES_AND_DIRECTORIES);
-        if (chooser.showDialog(SwingUtilities.getWindowAncestor(this), "Use This File") == JFileChooser.APPROVE_OPTION) {
+        // a presentation imported from a folder of slide images is located as a folder; a PowerPoint file as a file
+        boolean powerPoint = p.sourceFileName().toLowerCase(java.util.Locale.ROOT).matches(".*\\.(pptx|ppt|pptm|ppsx|pps)$");
+        chooser.setFileSelectionMode(powerPoint ? JFileChooser.FILES_ONLY : JFileChooser.DIRECTORIES_ONLY);
+        if (com.jamc.worship.ui.NativeFileDialogs.showDialog(chooser, SwingUtilities.getWindowAncestor(this), "Use This File") == JFileChooser.APPROVE_OPTION) {
             refreshSelected(chooser.getSelectedFile().toPath());
         }
     }

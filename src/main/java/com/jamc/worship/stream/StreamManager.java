@@ -97,6 +97,81 @@ public final class StreamManager {
         this.programDevice = deviceName;
     }
 
+    // ------------------------------------------------------------------ microphones during videos
+
+    /** Setting: mute MIC and AUX in recordings / the livestream while a video or music plays on Program [on]. */
+    public static final String KEY_MUTE_MICS_FOR_MEDIA = "stream.muteMicsDuringMedia";
+    /** Media must be silent this long before the microphones come back (no flapping between two videos). */
+    private static final long MICS_BACK_AFTER_MS = 800;
+    private java.util.function.BooleanSupplier programMediaPlaying = () -> false;
+    private boolean micsMuted;
+    private long mediaLastHeard;
+    private final javax.swing.Timer micWatch = new javax.swing.Timer(250, e -> updateMics());
+
+    /** Whether a video or music is heard on Program now (fullscreen video, scene video, audio player). */
+    public void setProgramMediaPlaying(java.util.function.BooleanSupplier playing) {
+        programMediaPlaying = playing == null ? () -> false : playing;
+        micWatch.start();
+    }
+
+    public boolean muteMicsDuringMedia() {
+        return config.getBoolean(KEY_MUTE_MICS_FOR_MEDIA, true);
+    }
+
+    public void setMuteMicsDuringMedia(boolean on) {
+        config.set(KEY_MUTE_MICS_FOR_MEDIA, String.valueOf(on));
+        config.save();
+        updateMics();
+    }
+
+    /** True while the microphones are muted in the recording / stream because media plays on Program. */
+    public boolean micsMutedForMedia() {
+        return micsMuted;
+    }
+
+    /**
+     * While a video or music plays on Program, the room microphones (MIC, AUX) are muted in the recording and the
+     * livestream, so people talking are not mixed into the video's sound; they come back when it stops.
+     */
+    private void updateMics() {
+        long now = System.currentTimeMillis();
+        boolean encoding = recorder != null || streamer != null;
+        boolean media = encoding && muteMicsDuringMedia() && programMediaPlaying.getAsBoolean();
+        if (media) {
+            mediaLastHeard = now;
+        }
+        boolean want = media || (micsMuted && encoding && muteMicsDuringMedia() && now - mediaLastHeard < MICS_BACK_AFTER_MS);
+        if (want == micsMuted) {
+            return;
+        }
+        micsMuted = want;
+        applyMics();
+        log.info(want ? "Microphones muted in the recording / stream: a video or music plays on Program"
+                : "Microphones back in the recording / stream");
+        fire();
+    }
+
+    private void applyMics() {
+        for (FFmpegStreamEncoder enc : new FFmpegStreamEncoder[]{recorder, streamer}) {
+            if (enc != null) {
+                enc.setMicsMuted(micsMuted);
+            }
+        }
+    }
+
+    /** A new encoder starts with the microphones at their levels: sends the current state once FFmpeg runs. */
+    private void micsForNewEncoder(FFmpegStreamEncoder enc) {
+        for (int delay : new int[]{1500, 5000}) {
+            javax.swing.Timer t = new javax.swing.Timer(delay, e -> {
+                if (micsMuted && (enc == recorder || enc == streamer)) {
+                    enc.setMicsMuted(true);
+                }
+            });
+            t.setRepeats(false);
+            t.start();
+        }
+    }
+
     /**
      * Starts listening to an input for a mixer meter: a microphone / capture input by name, or
      * {@link StreamSettings#APP_AUDIO} for this app's own sound. Blocking: call off the Swing thread.
@@ -269,6 +344,7 @@ public final class StreamManager {
                 enc.start();
                 SwingUtilities.invokeLater(() -> {
                     if (recorder == enc) {
+                        micsForNewEncoder(enc);
                         tap.addSink(enc, s.width(), s.height(), s.fps());
                         log.info("Recording Program to {} ({}x{} {} fps, {})", file.getFileName(), s.width(), s.height(), s.fps(), encoder);
                     }
@@ -380,6 +456,7 @@ public final class StreamManager {
                 enc.start();
                 SwingUtilities.invokeLater(() -> {
                     if (streamer == enc) {
+                        micsForNewEncoder(enc);
                         tap.addSink(enc, s.width(), s.height(), s.fps());
                         log.info("Streaming Program to {} ({}x{} {} fps, {} kbps, {})", s.provider().displayName(),
                                 s.width(), s.height(), s.fps(), s.videoKbps(), encoder);
@@ -534,6 +611,7 @@ public final class StreamManager {
 
     /** Stops everything (application exit). */
     public void shutdown() {
+        micWatch.stop();
         if (recorder != null) {
             tap.removeSink(recorder);
             recorder.stop();

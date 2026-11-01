@@ -17,6 +17,7 @@ import javax.swing.BorderFactory;
 import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComponent;
+import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
@@ -78,6 +79,60 @@ public class ScenesDock extends JPanel {
         /** A card was clicked (selected only): TAKE puts the selected scene live. */
         default void sceneSelected(Scene scene) {
         }
+
+        /** Cards were dragged into a new order: save it (Preview and Program do not change). */
+        default void reorderScenes(List<Scene> order) {
+        }
+
+        /** Right-click → Display on Projector: this scene on Program (what the projector shows) at once. */
+        default void showOnProjector(Scene scene) {
+            sendToProgram(scene);
+        }
+
+        /** Projectors and TVs the scene can be sent to (the operator's own screen is left out). */
+        default List<Screen> projectorScreens() {
+            return List.of();
+        }
+
+        /** Display on Projector → one screen ({@link #ALL_SCREENS} = every projector and TV). */
+        default void showOnProjector(Scene scene, String screenId) {
+            showOnProjector(scene);
+        }
+    }
+
+    /** A projector or TV in the Display on Projector menu; {@code showing} = it already shows Program. */
+    public record Screen(String id, String label, boolean showing) {
+    }
+
+    public static final String ALL_SCREENS = "*";
+
+    /**
+     * Display on Projector: a submenu listing every connected projector and TV (even just one), with
+     * "All Projectors / TVs" on top.
+     */
+    static JMenuItem projectorMenu(Host host, Scene scene) {
+        List<Screen> screens = host.projectorScreens();
+        JMenu menu = new JMenu("Display on Projector");
+        menu.setIcon(Icons.get("monitor", Icons.SMALL));
+        if (screens.isEmpty()) {
+            JMenuItem none = new JMenuItem("No projector or TV connected");
+            none.setEnabled(false);
+            menu.add(none);
+            JMenuItem window = new JMenuItem("Show in a Window");
+            window.addActionListener(e -> host.showOnProjector(scene));
+            menu.add(window);
+            return menu;
+        }
+        JMenuItem all = new JMenuItem("All Projectors / TVs (" + screens.size() + ")");
+        all.addActionListener(e -> host.showOnProjector(scene, ALL_SCREENS));
+        menu.add(all);
+        menu.addSeparator();
+        for (Screen s : screens) {
+            JMenuItem i = new JMenuItem(s.label() + (s.showing() ? "   ● ON" : ""));
+            i.addActionListener(e -> host.showOnProjector(scene, s.id()));
+            menu.add(i);
+        }
+        return menu;
     }
 
     private static final int THUMB_W = 100;
@@ -85,7 +140,7 @@ public class ScenesDock extends JPanel {
 
     private final Host host;
     private final JPanel grid = Ui.transparent(new GridLayout(0, 2, 6, 6));
-    private final JCheckBox separate = new JCheckBox("Separate Preview layout (sync lyrics)");
+    private final JCheckBox separate = new JCheckBox("Separate Layouts");
     private final Compositor compositor = new Compositor(Rendering.renderer(), true);
     private final LiveContent sample = LiveContent.snapshot(new Slide("Sample", "Amazing grace\nHow sweet the sound", null),
             SlideStyle.fallback().withTextTransform(TextTransform.UPPERCASE), "Sample");
@@ -162,7 +217,9 @@ public class ScenesDock extends JPanel {
         grid.removeAll();
         Scene keep = null;
         for (Scene s : scenes) {
-            grid.add(new SceneCard(s));
+            SceneCard card = new SceneCard(s);
+            SceneCardDrag.install(card, grid, c -> c instanceof SceneCard sc ? sc.scene : null, host::reorderScenes);
+            grid.add(card);
             if (actions.scene() != null && Objects.equals(actions.scene().getId(), s.getId())) {
                 keep = s; // the selection survives a reload (rename, edit, another scene deleted)
             }
@@ -238,7 +295,7 @@ public class ScenesDock extends JPanel {
 
             setToolTipText("<html><b>" + scene.getName() + "</b><br>Click: select (Preview and Program stay)<br>"
                     + "Double-click or PREVIEW: Send to Preview · LIVE: Take Scene Live<br>"
-                    + "Right-click: Edit Scene, Duplicate, Rename…</html>");
+                    + "Drag: change the order · Right-click: Display on Projector, Edit Scene, Duplicate, Rename…</html>");
             addMouseListener(new MouseAdapter() {
                 @Override
                 public void mousePressed(MouseEvent e) {
@@ -270,6 +327,7 @@ public class ScenesDock extends JPanel {
             JPopupMenu m = new JPopupMenu();
             m.add(item("Send to Preview", "monitor", () -> host.sceneClicked(scene)));
             m.add(item("Take Scene Live", "play", () -> host.sendToProgram(scene)));
+            m.add(projectorMenu(host, scene));
             m.addSeparator();
             m.add(item("Edit Scene…", "layers", () -> host.editLayout(scene)));
             m.add(item("Duplicate", "copy", () -> host.duplicateScene(scene)));

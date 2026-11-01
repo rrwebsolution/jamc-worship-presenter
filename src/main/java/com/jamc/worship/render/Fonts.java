@@ -111,6 +111,82 @@ public final class Fonts {
         return new ArrayList<>(added);
     }
 
+    // ------------------------------------------------------------------ every font Windows has
+
+    private static final String FONTS_KEY = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts";
+    private static final java.util.Set<String> seenWindowsFonts = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Makes every font installed in Windows available, including the ones Java's own list misses: fonts
+     * installed "for this user only" and fonts that apps install (Windows Terminal's Cascadia Code…).
+     * Called again later it also picks up fonts installed while the app runs. Returns true when fonts were added.
+     */
+    public static synchronized boolean loadWindowsFonts() {
+        if (!com.sun.jna.Platform.isWindows()) {
+            return false;
+        }
+        boolean first = seenWindowsFonts.isEmpty();
+        java.nio.file.Path windowsFonts = java.nio.file.Path.of(System.getenv().getOrDefault("WINDIR", "C:\\Windows"), "Fonts");
+        List<java.nio.file.Path> files = new ArrayList<>();
+        // the machine's fonts: Java read these itself at startup, so only later installs are new
+        for (String file : registryFonts(com.sun.jna.platform.win32.WinReg.HKEY_LOCAL_MACHINE, FONTS_KEY)) {
+            java.nio.file.Path p = windowsFonts.resolve(file);
+            if (seenWindowsFonts.add(p.toString().toLowerCase(Locale.ROOT)) && !first) {
+                files.add(p);
+            }
+        }
+        // this user's fonts and the fonts apps install (one sub-key per app)
+        List<String> userFiles = new ArrayList<>(registryFonts(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, FONTS_KEY));
+        try {
+            for (String app : com.sun.jna.platform.win32.Advapi32Util.registryGetKeys(
+                    com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, FONTS_KEY)) {
+                userFiles.addAll(registryFonts(com.sun.jna.platform.win32.WinReg.HKEY_CURRENT_USER, FONTS_KEY + "\\" + app));
+            }
+        } catch (RuntimeException e) {
+            // no per-app fonts
+        }
+        for (String file : userFiles) {
+            java.nio.file.Path p = windowsFonts.resolve(file); // absolute paths stay as they are
+            if (seenWindowsFonts.add(p.toString().toLowerCase(Locale.ROOT))) {
+                files.add(p);
+            }
+        }
+        boolean added = false;
+        for (java.nio.file.Path p : files) {
+            if (!isFontFile(p)) {
+                continue;
+            }
+            try {
+                for (Font font : Font.createFonts(p.toFile())) {
+                    if (!isInstalled(font.getFamily(Locale.ROOT)) || !isInstalled(font.getFontName(Locale.ROOT))) {
+                        GraphicsEnvironment.getLocalGraphicsEnvironment().registerFont(font);
+                        added = true;
+                    }
+                }
+            } catch (Exception e) {
+                org.slf4j.LoggerFactory.getLogger(Fonts.class).debug("Could not load the Windows font {}", p, e);
+            }
+        }
+        if (added) {
+            reset();
+        }
+        return added;
+    }
+
+    private static List<String> registryFonts(com.sun.jna.platform.win32.WinReg.HKEY root, String key) {
+        List<String> out = new ArrayList<>();
+        try {
+            for (Object v : com.sun.jna.platform.win32.Advapi32Util.registryGetValues(root, key).values()) {
+                if (v instanceof String s && !s.isBlank()) {
+                    out.add(s.strip());
+                }
+            }
+        } catch (RuntimeException e) {
+            // the key is not there
+        }
+        return out;
+    }
+
     /** Told (on the caller's thread) when fonts were added, so font pickers can refill. */
     public static void addListener(Runnable l) {
         listeners.add(l);

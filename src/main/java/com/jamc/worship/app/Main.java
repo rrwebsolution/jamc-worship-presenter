@@ -73,6 +73,8 @@ public final class Main {
 
         try {
             SwingUtilities.invokeAndWait(() -> Themes.install(config.uiTheme()));
+            // every dialog gets Minimize / Maximize next to Close
+            com.jamc.worship.ui.DialogWindowButtons.install();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             return;
@@ -93,6 +95,7 @@ public final class Main {
 
         // fonts the church added in the app (Add Font…), before anything measures text
         com.jamc.worship.render.Fonts.loadUserFonts(paths.dataDir().resolve("fonts"));
+        com.jamc.worship.render.Fonts.loadWindowsFonts(); // every Windows font, also per-user and app-installed ones
         Rendering.install(new SlideRenderer(new ImageCache(paths.root())));
         SongService songService = new SongService(new SongRepository(database));
         ThemeService themeService = new ThemeService(new ThemeRepository(database), new SettingsRepository(database),

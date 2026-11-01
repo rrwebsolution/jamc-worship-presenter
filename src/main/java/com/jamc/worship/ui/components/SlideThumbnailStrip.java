@@ -80,6 +80,13 @@ public class SlideThumbnailStrip extends JPanel {
     private SlideStyle style;
     private int selectedIndex = -1;
     private int liveIndex = -1;
+    /**
+     * True (lyrics, Bible...): the selected slide is the one in Preview. False (presentations): a click only
+     * selects (white ring, like a scene card); the slide in Preview is {@link #previewIndex}, sent by double-click.
+     */
+    private java.util.function.BooleanSupplier selectionIsPreview = () -> true;
+    private int previewIndex = -1;
+    private int hoverIndex = -1;
     private String sourceKey;
     private final List<Runnable> slidesChangedListeners = new ArrayList<>();
     private final List<Runnable> liveListeners = new ArrayList<>();
@@ -298,6 +305,8 @@ public class SlideThumbnailStrip extends JPanel {
         this.style = style;
         this.sourceKey = null;
         this.liveIndex = -1;
+        this.previewIndex = -1;
+        this.hoverIndex = -1;
         tiles.removeAll();
         tileList.clear();
         for (int i = 0; i < this.slides.size(); i++) {
@@ -407,6 +416,37 @@ public class SlideThumbnailStrip extends JPanel {
     private void updateTileStates() {
         for (Tile t : tileList) {
             t.applyState();
+        }
+    }
+
+    /** Whether a click on a slide also means "this slide is in Preview" (see {@link #selectionIsPreview}). */
+    public void setSelectionIsPreview(java.util.function.BooleanSupplier rule) {
+        selectionIsPreview = rule == null ? () -> true : rule;
+        updateTileStates();
+    }
+
+    /** Marks the slide that is in Preview when selecting and previewing are separate (-1 = none). */
+    public void setPreviewIndex(int index) {
+        if (index != previewIndex) {
+            previewIndex = index;
+            updateTileStates();
+        }
+    }
+
+    /** The slide marked PREVIEW: the selected one, or the one sent by double-click when they are separate. */
+    private int previewMark() {
+        return selectionIsPreview.getAsBoolean() ? selectedIndex : previewIndex;
+    }
+
+    /** Selected only (not in Preview): a white ring, like a selected scene card. */
+    private boolean selectedOnly(int index) {
+        return !selectionIsPreview.getAsBoolean() && index >= 0 && index == selectedIndex && index != previewIndex;
+    }
+
+    private void setHover(int index) {
+        if (index != hoverIndex) {
+            hoverIndex = index;
+            updateTileStates();
         }
     }
 
@@ -612,6 +652,18 @@ public class SlideThumbnailStrip extends JPanel {
                     }
                 }
 
+                @Override
+                public void mouseEntered(MouseEvent e) {
+                    setHover(Tile.this.index);
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    if (hoverIndex == Tile.this.index) {
+                        setHover(-1);
+                    }
+                }
+
                 private void maybePopup(MouseEvent e) {
                     if (e.isPopupTrigger() && editable && editHandler != null) {
                         showMenu(Tile.this, e);
@@ -639,9 +691,15 @@ public class SlideThumbnailStrip extends JPanel {
             if (index == liveIndex) {
                 canvas.setFrameColor(Palette::danger);
                 canvas.setBadge("LIVE", Palette::danger);
-            } else if (index == selectedIndex) {
+            } else if (index == previewMark()) {
                 canvas.setFrameColor(Palette::accent);
                 canvas.setBadge("PREVIEW", Palette::accent);
+            } else if (selectedOnly(index)) {
+                canvas.setFrameColor(Palette::text); // selected: double-click sends it to Preview
+                canvas.setBadge(null, null);
+            } else if (index == hoverIndex && !selectionIsPreview.getAsBoolean()) {
+                canvas.setFrameColor(() -> Palette.withAlpha(Palette.text(), 120));
+                canvas.setBadge(null, null);
             } else {
                 canvas.setFrameColor(null);
                 canvas.setBadge(null, null);
@@ -714,13 +772,14 @@ public class SlideThumbnailStrip extends JPanel {
             int h = getHeight();
             int index = tileList.indexOf(SwingUtilities.getAncestorOfClass(Tile.class, this));
             boolean live = index >= 0 && index == liveIndex;
-            boolean preview = !live && index >= 0 && index == selectedIndex;
-            java.awt.Color frame = live ? Palette.danger() : preview ? Palette.accent() : Palette.border();
+            boolean preview = !live && index >= 0 && index == previewMark();
+            boolean selected = !live && !preview && selectedOnly(index);
+            java.awt.Color frame = live ? Palette.danger() : preview ? Palette.accent() : selected ? Palette.text() : Palette.border();
             g2.setColor(live ? Palette.withAlpha(Palette.danger(), 38) : preview ? Palette.withAlpha(Palette.accent(), 34)
                     : Palette.secondaryBackground());
             g2.fillRoundRect(0, 0, w - 1, h - 1, 12, 12);
             g2.setColor(frame);
-            g2.setStroke(new java.awt.BasicStroke(live || preview ? 2f : 1f));
+            g2.setStroke(new java.awt.BasicStroke(live || preview || selected ? 2f : 1f));
             g2.drawRoundRect(1, 1, w - 3, h - 3, 12, 12);
 
             // section label (secondary) and state badge on one top row

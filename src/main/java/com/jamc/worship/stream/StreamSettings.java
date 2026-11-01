@@ -131,6 +131,12 @@ public record StreamSettings(
                 mediaDevice, mediaVolume, mediaMuted);
     }
 
+    public StreamSettings withEncoder(EncoderChoice e) {
+        return new StreamSettings(providerId, server, destinationName, width, height, fps, videoKbps, audioKbps,
+                e, micDevice, micVolume, micMuted, auxDevice, auxVolume, auxMuted, masterVolume, masterMuted,
+                mediaDevice, mediaVolume, mediaMuted);
+    }
+
     public static StreamSettings load(AppConfig c) {
         return new StreamSettings(
                 c.get("stream.provider", StreamingProviders.FACEBOOK.id()),

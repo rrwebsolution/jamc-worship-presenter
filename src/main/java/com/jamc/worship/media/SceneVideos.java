@@ -58,6 +58,15 @@ public final class SceneVideos {
         Boolean liveLoop;
         /** Where the operator's mute / volume / loop for this source is remembered (MediaStates). */
         String stateKey;
+        /** VLC's audio counters at the last sound check: decoded blocks, buffers played on the speakers. */
+        int lastDecoded = -1;
+        int lastPlayed = -1;
+        /** Sound checks in a row that found sound decoded but none played. */
+        int silentChecks;
+        /** Times the sound output was reopened for this video. */
+        int reroutes;
+        /** The last sound state logged ("heard on …" / "silent (why)"). */
+        String soundState;
 
         Slot(String key, String path, VideoPlayback player, SourceConfig config, String name) {
             this.key = key;
@@ -110,8 +119,10 @@ public final class SceneVideos {
         slot.stateKey = "scene:" + programSceneId + ":" + slot.key;
         if (states != null && states.has(slot.stateKey)) {
             MediaStates.State st = states.get(slot.stateKey, null);
-            slot.liveVolume = st.volume();
-            slot.liveMuted = st.muted();
+            // VOLUME and MUTE changed in Program Media last while the video is on Program: brought live again it has
+            // its own sound at the scene source's volume (a remembered mute made a scene's video silent "sometimes")
+            slot.liveVolume = null;
+            slot.liveMuted = null;
             slot.liveLoop = st.loop();
         }
     }
@@ -232,6 +243,20 @@ public final class SceneVideos {
                 } else {
                     slot.player.pause();
                 }
+                // the Preview player was muted on the monitor device: when VLC switches its sound output to the
+                // Program device the new output can miss the unmute / volume just set, so set them again once it settled
+                for (int delay : new int[]{400, 1500}) {
+                    Timer t = new Timer(delay, e -> {
+                        if (program.get(key) == slot) {
+                            applyProgramAudio(slot);
+                            if (slot.player instanceof VideoPlayer vp) {
+                                vp.reapplyAudio(false);
+                            }
+                        }
+                    });
+                    t.setRepeats(false);
+                    t.start();
+                }
                 log.info("Scene video on Program: {} ({})", s.getName(), restart ? "from the beginning" : "continuing from Preview");
                 return slot;
             }
@@ -277,6 +302,16 @@ public final class SceneVideos {
     }
 
     /** The videos playing on Program now (for the Program Media controls). */
+    /** True while a Program scene video plays with its sound heard (not muted / audio off / quieted). */
+    public boolean anyHeard() {
+        for (Slot s : program.values()) {
+            if (s.player.isPlaying() && !programMuted(s) && !Boolean.TRUE.equals(s.config.monitorOnly)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     public List<Slot> programSlots() {
         return new ArrayList<>(program.values());
     }
@@ -358,9 +393,36 @@ public final class SceneVideos {
 
     private void applyProgramAudio(Slot s) {
         SourceConfig c = s.config;
-        s.player.setOutputDevice(Boolean.TRUE.equals(c.monitorOnly) ? routing.monitorDeviceInUse() : routing.programDeviceInUse());
-        s.player.setVolume(routing.programVolume(effectiveVolume(s)));
+        String device = Boolean.TRUE.equals(c.monitorOnly) ? routing.monitorDeviceInUse() : routing.programDeviceInUse();
+        int volume = routing.programVolume(effectiveVolume(s));
+        s.player.setOutputDevice(device);
+        s.player.setVolume(volume);
         s.player.setMuted(programMuted(s));
+        // one log line whenever this video's sound changes, saying why (for "the scene video had no sound")
+        String why = soundState(s, device, volume);
+        if (!why.equals(s.soundState)) {
+            s.soundState = why;
+            log.info("Scene video {} on Program: {}", s.name, why);
+        }
+    }
+
+    /** Whether the Program scene video is heard, and if not, why. */
+    private String soundState(Slot s, String device, int volume) {
+        if (Boolean.FALSE.equals(s.config.audioEnabled)) {
+            return "silent (Audio is switched off in the scene's video source)";
+        }
+        if (s.liveMuted != null ? s.liveMuted : Boolean.TRUE.equals(s.config.muted)) {
+            return s.liveMuted != null ? "silent (muted in Program Media)" : "silent (Muted is on in the scene's video source)";
+        }
+        if (routing.mediaGain() <= 0) {
+            return "silent (the MEDIA or MASTER channel is muted or at 0 in the mixer)";
+        }
+        if (operatorMediaPlaying.getAsBoolean()) {
+            return "silent while the operator's own Program video or audio player plays";
+        }
+        String where = device == null || device.isEmpty() ? "Windows default output" : routing.nameOf(device);
+        return "heard on " + where + " at volume " + volume
+                + (Boolean.TRUE.equals(s.config.monitorOnly) ? " (Preview monitor only)" : "");
     }
 
     /** The one mute state a Program player has: set before it starts, so its sound never goes on-off-on. */
@@ -404,6 +466,7 @@ public final class SceneVideos {
     }
 
     private void sweep() {
+        program.values().forEach(this::checkSound);
         long now = System.currentTimeMillis();
         Iterator<Map.Entry<String, Slot>> it = preview.entrySet().iterator();
         while (it.hasNext()) {
@@ -412,6 +475,40 @@ public final class SceneVideos {
                 e.getValue().player.release();
                 it.remove();
             }
+        }
+    }
+
+    /**
+     * SOUND CHECK (every 2 s) for a Program scene video that should be heard: VLC muted although nothing asks for
+     * it, or sound decoded but none reaching the speakers for two checks in a row, reopens its sound output on
+     * the Program device. Videos meant to be silent (muted, audio off, the operator's own media playing, the
+     * media channel at 0) are left alone.
+     */
+    private void checkSound(Slot s) {
+        if (!(s.player instanceof VideoPlayer vp) || !vp.isPlaying() || programMuted(s)
+                || Boolean.TRUE.equals(s.config.monitorOnly)) {
+            s.silentChecks = 0;
+            s.lastDecoded = -1;
+            return;
+        }
+        if (vp.outputMuted()) {
+            log.warn("Scene video {} was muted in VLC although it should be heard; unmuting", s.name);
+            applyProgramAudio(s);
+            vp.reapplyAudio(false);
+        }
+        int[] st = vp.audioStats();
+        boolean decoding = s.lastDecoded >= 0 && st[0] > s.lastDecoded;
+        boolean playing = st[1] > s.lastPlayed;
+        s.silentChecks = decoding && !playing ? s.silentChecks + 1 : 0;
+        s.lastDecoded = st[0];
+        s.lastPlayed = st[1];
+        if (s.silentChecks >= 2 && s.reroutes < 2) {
+            // at most twice per video: reopening the output is itself a short dropout
+            log.warn("Scene video {} decodes sound but none reaches the speakers; reopening its sound output", s.name);
+            s.silentChecks = 0;
+            s.reroutes++;
+            vp.setOutputDevice(routing.programDeviceInUse());
+            vp.reapplyAudio(true);
         }
     }
 

@@ -239,7 +239,7 @@ public class LowerThirdEditorPanel extends JPanel {
         }
         JFileChooser chooser = new JFileChooser();
         chooser.setFileFilter(new FileNameExtensionFilter("Images", FileUtils.IMAGE_EXTENSIONS.toArray(String[]::new)));
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         java.nio.file.Path file = chooser.getSelectedFile().toPath();

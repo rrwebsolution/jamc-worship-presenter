@@ -20,6 +20,8 @@ var wantLoop = q.get('loop') === '1';
 var wantMuted = q.get('muted') === '1';
 var wantVolume = parseInt(q.get('volume') || '100', 10);
 var player = null, ready = false, pending = [];
+// UP NEXT: after the first video the player continues with YouTube's own Mix for it (like youtube.com autoplay)
+var upNext = false;
 
 function send(o) { console.log('JAMC:' + JSON.stringify(o)); }
 
@@ -28,6 +30,7 @@ function call(fn) { if (ready) { try { fn(); } catch (e) { send({e: 'jserror', m
 window.jamc = {
   load: function (id, autoplay) {
     videoId = id;
+    upNext = false; // a new video starts on its own again
     call(function () { autoplay ? player.loadVideoById(id) : player.cueVideoById(id); });
   },
   play: function () { call(function () { player.playVideo(); }); },
@@ -36,8 +39,21 @@ window.jamc = {
   seek: function (sec) { call(function () { player.seekTo(sec, true); }); },
   volume: function (v) { wantVolume = v; call(function () { player.setVolume(v); }); },
   mute: function (m) { wantMuted = m; call(function () { m ? player.mute() : player.unMute(); }); },
-  loop: function (l) { wantLoop = l; }
+  loop: function (l) { wantLoop = l; },
+  // continue with YouTube's Mix of this video, from the video after it; YouTube then moves on by itself
+  upNext: function (id) {
+    upNext = true;
+    call(function () { player.loadPlaylist({list: 'RD' + id, listType: 'playlist', index: 1}); });
+  }
 };
+
+/** The video really playing now (it changes as the Mix moves on). */
+function now() {
+  try { var d = player.getVideoData() || {}; return {vid: d.video_id || '', ti: d.title || '', au: d.author || ''}; }
+  catch (e) { return {vid: '', ti: '', au: ''}; }
+}
+
+function withNow(o) { var n = now(); o.vid = n.vid; o.ti = n.ti; o.au = n.au; return o; }
 
 function onYouTubeIframeAPIReady() {
   player = new YT.Player('player', {
@@ -59,10 +75,18 @@ function onYouTubeIframeAPIReady() {
       },
       onStateChange: function (ev) {
         if (ev.data === YT.PlayerState.PLAYING) { try { player.unloadModule('captions'); } catch (e) { } }
-        if (ev.data === YT.PlayerState.ENDED && wantLoop) { player.seekTo(0, true); player.playVideo(); return; }
-        send({e: 'state', s: ev.data, t: player.getCurrentTime(), d: player.getDuration()});
+        if (ev.data === YT.PlayerState.ENDED && wantLoop) {
+          // LOOP: the same video again (in the Mix too, before YouTube moves to the next one)
+          if (upNext) { player.playVideoAt(player.getPlaylistIndex()); } else { player.seekTo(0, true); player.playVideo(); }
+          return;
+        }
+        send(withNow({e: 'state', s: ev.data, t: player.getCurrentTime(), d: player.getDuration()}));
       },
-      onError: function (ev) { send({e: 'error', code: ev.data}); }
+      onError: function (ev) {
+        // a Mix video its owner keeps off other sites: skip to the next one instead of stopping
+        if (upNext && (ev.data === 101 || ev.data === 150 || ev.data === 100)) { player.nextVideo(); return; }
+        send({e: 'error', code: ev.data});
+      }
     }
   });
   setInterval(function () {
@@ -70,8 +94,8 @@ function onYouTubeIframeAPIReady() {
       // keep the sound as the app wants it (YouTube may have muted the autoplay)
       if (!wantMuted && player.isMuted()) { player.unMute(); player.setVolume(wantVolume); }
       if (wantMuted && !player.isMuted()) { player.mute(); }
-      send({e: 'tick', s: player.getPlayerState(), t: player.getCurrentTime(), d: player.getDuration(),
-            m: player.isMuted(), v: player.getVolume()});
+      send(withNow({e: 'tick', s: player.getPlayerState(), t: player.getCurrentTime(), d: player.getDuration(),
+            m: player.isMuted(), v: player.getVolume()}));
     }
   }, 250);
 }

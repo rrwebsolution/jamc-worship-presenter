@@ -356,7 +356,7 @@ public class StyleForm extends JPanel {
         } else {
             MediaChoosers.imageFilters(chooser);
         }
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             revertType();
             return;
         }

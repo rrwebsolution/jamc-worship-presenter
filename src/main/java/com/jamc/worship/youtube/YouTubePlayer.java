@@ -61,6 +61,12 @@ public final class YouTubePlayer implements VideoPlayback {
     private volatile Boolean pageMuted;
     /** The last play / pause / stop asked for (kept after the page confirms it). */
     private volatile boolean intendPlaying;
+    /** Playing YouTube's Mix after the first video (UP NEXT); the video changes as YouTube moves on. */
+    private volatile boolean upNext;
+    /** The video really playing now, as the page reports it (changes during UP NEXT). */
+    private volatile String nowId;
+    private volatile String nowTitle;
+    private volatile String nowChannel;
 
     public YouTubePlayer() {
         this(1280, 720);
@@ -97,6 +103,8 @@ public final class YouTubePlayer implements VideoPlayback {
         this.ytState = -1;
         this.wantPlaying = autoplay;
         this.intendPlaying = autoplay;
+        this.upNext = false;
+        this.nowId = id;
         fireState();
         YouTubeEngine.get().whenReady(() -> {
             if (released || !id.equals(videoId)) {
@@ -179,6 +187,17 @@ public final class YouTubePlayer implements VideoPlayback {
             if (n.has("s")) {
                 ytState = n.path("s").asInt();
             }
+            String vid = n.path("vid").asText("");
+            boolean moved = !vid.isEmpty() && !vid.equals(nowId);
+            if (!vid.isEmpty()) {
+                nowId = vid;
+                nowTitle = n.path("ti").asText("");
+                nowChannel = n.path("au").asText("");
+            }
+            if (moved) {
+                lengthMs = -1; // the next video's length comes with its next report
+                fireState();
+            }
             switch (ev) {
                 case "error" -> {
                     error = errorText(n.path("code").asInt());
@@ -228,6 +247,40 @@ public final class YouTubePlayer implements VideoPlayback {
 
     public String videoId() {
         return videoId;
+    }
+
+    /**
+     * UP NEXT, like youtube.com: continues with YouTube's own Mix for the video that was played (from the video after
+     * it); YouTube then moves on by itself. Videos that may not play outside YouTube are skipped.
+     */
+    public void playUpNext() {
+        String seed = nowId != null ? nowId : videoId;
+        if (seed == null || released) {
+            return;
+        }
+        upNext = true;
+        wantPlaying = true;
+        intendPlaying = true;
+        js("jamc.upNext('" + seed.replaceAll("[^A-Za-z0-9_-]", "") + "')");
+        fireState();
+    }
+
+    /** True while UP NEXT plays YouTube's Mix (YouTube chooses each next video). */
+    public boolean isUpNext() {
+        return upNext;
+    }
+
+    /** The video playing now (it changes during UP NEXT): id, title and channel as YouTube reports them. */
+    public String nowPlayingId() {
+        return nowId;
+    }
+
+    public String nowPlayingTitle() {
+        return nowTitle;
+    }
+
+    public String nowPlayingChannel() {
+        return nowChannel;
     }
 
     // ------------------------------------------------------------------ controls

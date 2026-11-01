@@ -284,6 +284,15 @@ public class OutputPanel extends JPanel {
                     g2.setColor(Palette.warning());
                     String warn = "Operator screen";
                     g2.drawString(warn, x + (w - fm.stringWidth(warn)) / 2, y + fm.getAscent() + 6);
+                } else if (d.name() != null) {
+                    // the connected screen's own name ("EPSON PJ") across the top of its tile
+                    String name = d.name();
+                    while (name.length() > 1 && fm.stringWidth(name + "…") > w - 8) {
+                        name = name.substring(0, name.length() - 1);
+                    }
+                    name = name.equals(d.name()) ? name : name + "…";
+                    g2.setColor(target ? Color.WHITE : Palette.text());
+                    g2.drawString(name, x + (w - fm.stringWidth(name)) / 2, y + fm.getAscent() + 6);
                 }
             }
             g2.dispose();

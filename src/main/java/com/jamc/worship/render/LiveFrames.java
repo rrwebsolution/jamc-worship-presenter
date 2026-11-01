@@ -40,6 +40,11 @@ public interface LiveFrames {
     /** Frame from a camera (blank name = first camera). */
     BufferedImage camera(String name);
 
+    /** The camera's state, so a disconnected camera shows its offline image instead of a frozen or black box. */
+    default com.jamc.worship.camera.CameraStatus cameraStatus(String name) {
+        return com.jamc.worship.camera.CameraStatus.READY;
+    }
+
     LiveFrames NONE = new LiveFrames() {
         @Override
         public BufferedImage video(String path) {

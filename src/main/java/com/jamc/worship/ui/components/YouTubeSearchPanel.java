@@ -58,6 +58,8 @@ public class YouTubeSearchPanel extends JPanel {
     private final JButton searchButton = Ui.primaryButton("Search", "search");
     private final Runnable thumbnailsArrived = results::repaint;
     private long seq;
+    /** The video playing in the dialog's player (its card shows ▶ PLAYING), or null. */
+    private String playingId;
 
     /**
      * @param placeholder example search shown in the empty box
@@ -92,6 +94,7 @@ public class YouTubeSearchPanel extends JPanel {
         results.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         results.setCellRenderer(new ResultRenderer());
         results.setFixedCellHeight(78);
+        javax.swing.ToolTipManager.sharedInstance().registerComponent(results);
         results.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && results.getSelectedValue() != null) {
                 onSelect.accept(results.getSelectedValue());
@@ -118,6 +121,66 @@ public class YouTubeSearchPanel extends JPanel {
 
     public void focusSearch() {
         query.requestFocusInWindow();
+    }
+
+    /** Marks the result that is playing (▶ PLAYING on its card); null = none. */
+    public void setPlaying(String videoId) {
+        playingId = videoId;
+        results.repaint();
+    }
+
+    /** Selects the next result (auto-next); false at the end of the list. */
+    public boolean selectNext() {
+        int next = results.getSelectedIndex() + 1;
+        if (next <= 0 || next >= model.size()) {
+            return false;
+        }
+        results.setSelectedIndex(next);
+        results.ensureIndexIsVisible(next);
+        return true;
+    }
+
+    /**
+     * {@code text} word-wrapped into at most {@code lines} lines of {@code width} pixels, the last one ending in "…"
+     * when it does not fit, as HTML for a label (long YouTube titles stay inside their card).
+     */
+    public static String clampLines(String text, FontMetrics fm, int width, int lines) {
+        String rest = text == null ? "" : text.strip();
+        List<String> out = new java.util.ArrayList<>();
+        while (!rest.isEmpty() && out.size() < lines) {
+            boolean last = out.size() == lines - 1;
+            if (fm.stringWidth(rest) <= width) {
+                out.add(rest);
+                rest = "";
+                break;
+            }
+            if (last) {
+                String cut = rest;
+                while (cut.length() > 1 && fm.stringWidth(cut + "…") > width) {
+                    cut = cut.substring(0, cut.length() - 1);
+                }
+                out.add(cut.strip() + "…");
+                rest = "";
+                break;
+            }
+            // break at the last space that fits (or mid-word when one word is too long)
+            int end = 1;
+            int space = -1;
+            while (end <= rest.length() && fm.stringWidth(rest.substring(0, end)) <= width) {
+                if (rest.charAt(end - 1) == ' ') {
+                    space = end - 1;
+                }
+                end++;
+            }
+            int cut = space > 0 ? space : Math.max(1, end - 1);
+            out.add(rest.substring(0, cut).strip());
+            rest = rest.substring(cut).strip();
+        }
+        StringBuilder html = new StringBuilder("<html>");
+        for (int i = 0; i < out.size(); i++) {
+            html.append(i == 0 ? "" : "<br>").append(escape(out.get(i)));
+        }
+        return html.append("</html>").toString();
     }
 
     /** Runs a search for these words (used to start with the song title). */
@@ -196,8 +259,8 @@ public class YouTubeSearchPanel extends JPanel {
         return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
-    /** Thumbnail, title, "channel · duration" and a SELECT pill. */
-    private static final class ResultRenderer extends JPanel implements ListCellRenderer<YouTubeVideo> {
+    /** Thumbnail, title (two lines at most), "channel · duration" and a SELECT / ▶ PLAYING pill. */
+    private final class ResultRenderer extends JPanel implements ListCellRenderer<YouTubeVideo> {
         private final JLabel title = new JLabel();
         private final JLabel info = new JLabel();
         private final JLabel select = new JLabel("SELECT", SwingConstants.CENTER);
@@ -217,7 +280,7 @@ public class YouTubeSearchPanel extends JPanel {
             info.putClientProperty(FlatClientProperties.STYLE_CLASS, "small");
             select.putClientProperty(FlatClientProperties.STYLE_CLASS, "small");
             select.setOpaque(true);
-            select.setPreferredSize(new Dimension(58, 24));
+            select.setPreferredSize(new Dimension(72, 24));
             JPanel text = new JPanel(new BorderLayout(0, 4));
             text.setOpaque(false);
             text.add(title, BorderLayout.NORTH);
@@ -234,12 +297,16 @@ public class YouTubeSearchPanel extends JPanel {
         public Component getListCellRendererComponent(JList<? extends YouTubeVideo> list, YouTubeVideo v, int index,
                                                       boolean selected, boolean focused) {
             video = v;
-            title.setText("<html>" + escape(v.title()) + "</html>");
+            // the room left beside the thumbnail and the pill: long titles stop at two lines with "…"
+            int room = Math.max(80, list.getWidth() - 112 - 72 - 40);
+            title.setText(clampLines(v.title(), title.getFontMetrics(title.getFont()), room, 2));
             info.setText(v.channel() + (v.durationMs() == null ? "" : "  ·  " + TransportControls.format(v.durationMs())));
             title.setForeground(selected ? list.getSelectionForeground() : Palette.text());
             info.setForeground(selected ? new Color(255, 255, 255, 200) : Palette.secondaryText());
-            select.setText(selected ? "SELECTED" : "SELECT");
-            select.setBackground(selected ? Palette.live() : Palette.accent());
+            setToolTipText(v.title()); // the whole title on hover
+            boolean playing = v.id().equals(playingId);
+            select.setText(playing ? "▶ PLAYING" : selected ? "SELECTED" : "SELECT");
+            select.setBackground(playing ? Palette.danger() : selected ? Palette.live() : Palette.accent());
             select.setForeground(Color.WHITE);
             setBackground(selected ? list.getSelectionBackground() : list.getBackground());
             setOpaque(selected);

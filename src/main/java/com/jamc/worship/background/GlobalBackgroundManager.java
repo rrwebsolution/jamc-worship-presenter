@@ -309,6 +309,16 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         }
     }
 
+    /** Jumps the background video {@code ms} forward (or back when negative). */
+    public void skip(long ms) {
+        if (player == null || player.length() <= 0) {
+            return;
+        }
+        long to = Math.clamp(player.time() + ms, 0, Math.max(0, player.length() - 500));
+        player.seek((float) to / player.length());
+        fire();
+    }
+
     public void setPaused(boolean pause) {
         if (player == null || pause == paused) {
             return;

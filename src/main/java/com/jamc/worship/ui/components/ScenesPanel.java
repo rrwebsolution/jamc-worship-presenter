@@ -71,8 +71,10 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Scenes page: create and arrange scenes from layered sources, preview them with the current
- * Program content, and send a scene live. Edits to the live scene apply to Program immediately.
+ * Scene editor: create and arrange scenes from layered sources on the editor's own canvas (with the current
+ * Program content as sample lyrics). The editor is a third, independent state next to Preview and Program:
+ * edits change only its draft, SAVE SCENE writes the scene library, and nothing reaches Preview or Program
+ * until the scene is sent to Preview and taken.
  */
 public class ScenesPanel extends JPanel {
 
@@ -88,12 +90,23 @@ public class ScenesPanel extends JPanel {
     private final JList<Source> sourceList = new JList<>(sourceModel);
     private final ScenePreview preview = new ScenePreview();
     private final JLabel previewTitle = Ui.label(" ", Palette::text, "h3");
-    private final JButton liveButton = Ui.primaryButton("Make Live Scene", "monitor");
-    private final Timer saveTimer;
+    private final JButton saveButton = Ui.primaryButton("SAVE SCENE", null);
+    private final JButton revertButton = Ui.button("REVERT", "refresh");
+    private final JButton previewButton = Ui.button("SEND TO PREVIEW", "monitor");
+    private final JLabel draftState = Ui.label(" ", Palette::secondaryText, "small");
     private Consumer<List<Scene>> scenesChanged = l -> { };
-    private Consumer<Scene> liveSceneChosen = s -> { };
+    private Consumer<Scene> previewChosen = s -> { };
     private Consumer<String> statusHandler = s -> { };
+    /**
+     * The scene being edited: a private draft, never Preview's or Program's scene. Changes stay here (and on this
+     * canvas) until SAVE SCENE writes them to the scene library; even then Preview and Program keep what they show
+     * until the scene is sent to Preview and taken.
+     */
     private Scene editing;
+    /** The draft has changes that are not saved yet. */
+    private boolean dirty;
+    /** Counts edits, so a save that finishes after newer edits does not mark the draft as saved. */
+    private int editCount;
 
     // source properties
     private final JTextField nameField = new JTextField();
@@ -149,6 +162,17 @@ public class ScenesPanel extends JPanel {
     private final ColorButton colorButton = new ColorButton("Text color", Color.WHITE);
     private final JSpinner fontSpin = new JSpinner(new SpinnerNumberModel(48, 8, 300, 2));
     private final JComboBox<String> cameraCombo = new JComboBox<>();
+    private final JComboBox<String> songMode = new JComboBox<>(new String[]{"From library (any song sent)", "This song only"});
+    // CAMERA source: crop (% of the picture at each edge), rotation, mirror, offline picture
+    private final JSpinner cropLeft = percent();
+    private final JSpinner cropTop = percent();
+    private final JSpinner cropRight = percent();
+    private final JSpinner cropBottom = percent();
+    private final JComboBox<String> rotationCombo = new JComboBox<>(new String[]{"0°", "90°", "180°", "270°"});
+    private final JCheckBox mirrorBox = new JCheckBox("Mirror (flip left to right)");
+    private final JComboBox<String> offlineCombo = new JComboBox<>(new String[]{"\"Camera Offline\" card", "Black", "Image (e.g. church logo)"});
+    private final JButton offlineImageButton = Ui.button("Choose Image…", "image");
+    private com.jamc.worship.camera.CameraNames cameraNames;
     private final JSlider opacity = new JSlider(0, 100, 100);
     private final JComboBox<String> textPlace = new JComboBox<>(new String[]{"As the theme", "Top", "Middle", "Bottom"});
     private final JSlider textScale = new JSlider(30, 150, 100);
@@ -171,9 +195,6 @@ public class ScenesPanel extends JPanel {
         this.media = media;
         setOpaque(false);
 
-        saveTimer = new Timer(500, e -> saveEditing());
-        saveTimer.setRepeats(false);
-
         JSplitPane right = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, buildPreview(), buildSources());
         right.setResizeWeight(1);
         right.setBorder(null);
@@ -192,18 +213,72 @@ public class ScenesPanel extends JPanel {
         scenesChanged = l;
     }
 
-    public void setLiveSceneChosen(Consumer<Scene> l) {
-        liveSceneChosen = l;
+    /** SEND TO PREVIEW: the saved scene goes to Preview (Program changes only at TAKE). */
+    public void setPreviewChosen(Consumer<Scene> l) {
+        previewChosen = l;
+    }
+
+    /** True while the edited scene has changes that are not saved. */
+    public boolean hasUnsavedChanges() {
+        return dirty && editing != null;
+    }
+
+    /**
+     * Before leaving the edited scene: Save, Discard or Cancel when it has unsaved changes. Returns false when
+     * the operator cancels (stay in the editor).
+     */
+    public boolean confirmLeave() {
+        if (!hasUnsavedChanges()) {
+            return true;
+        }
+        int answer = JOptionPane.showOptionDialog(this, "Save the changes to the scene \"" + editing.getName() + "\"?\n"
+                        + "Saving does not change Preview or Program.", "Unsaved Scene", JOptionPane.YES_NO_CANCEL_OPTION,
+                JOptionPane.QUESTION_MESSAGE, null, new Object[]{"Save", "Discard", "Cancel"}, "Save");
+        if (answer == 0) {
+            saveEditing();
+            return true;
+        }
+        if (answer == 1) {
+            discardChanges();
+            return true;
+        }
+        return false;
+    }
+
+    /** On exit: offers to save a draft with unsaved changes (saved at once, before the database closes). */
+    public void saveOnExit() {
+        if (!hasUnsavedChanges() || editing.getId() == null) {
+            return;
+        }
+        int answer = JOptionPane.showConfirmDialog(this, "Save the changes to the scene \"" + editing.getName() + "\" before closing?",
+                "Unsaved Scene", JOptionPane.YES_NO_OPTION, JOptionPane.QUESTION_MESSAGE);
+        if (answer == JOptionPane.YES_OPTION) {
+            try {
+                if (scenes.scene(editing.getId()).isPresent()) {
+                    scenes.save(editing.copy());
+                }
+            } catch (Exception e) {
+                org.slf4j.LoggerFactory.getLogger(ScenesPanel.class).warn("Could not save the scene on exit", e);
+            }
+        }
+        dirty = false;
     }
 
     public void setStatusHandler(Consumer<String> h) {
         statusHandler = h;
     }
 
-    /** Opens the editor on one scene ("Edit Layout" from the Scenes dock). */
-    public void edit(long sceneId) {
+    /**
+     * Opens the editor on one scene ("Edit Layout" from the Scenes dock). Returns false when another scene has
+     * unsaved changes and the operator chose Cancel.
+     */
+    public boolean edit(long sceneId) {
+        if (editing != null && !Objects.equals(editing.getId(), sceneId) && !confirmLeave()) {
+            return false;
+        }
         selectAfterRefresh = sceneId;
         refresh();
+        return true;
     }
 
     public void refresh() {
@@ -248,12 +323,20 @@ public class ScenesPanel extends JPanel {
             }
         });
         sceneList.addListSelectionListener(e -> {
-            if (!e.getValueIsAdjusting()) {
-                saveEditing();
-                Scene s = sceneList.getSelectedValue();
-                editing = s == null ? null : s.copy();
-                showEditing();
+            if (e.getValueIsAdjusting() || reselecting) {
+                return;
             }
+            Scene s = sceneList.getSelectedValue();
+            if (s != null && editing != null && Objects.equals(s.getId(), editing.getId()) && dirty) {
+                return; // the list was reloaded: keep the unsaved draft of this scene
+            }
+            if (editing != null && (s == null || !Objects.equals(s.getId(), editing.getId())) && !confirmLeave()) {
+                reselect(editing.getId()); // Cancel: stay on the scene with unsaved changes
+                return;
+            }
+            editing = s == null ? null : s.copy();
+            dirty = false;
+            showEditing();
         });
         program.addListener(sceneList::repaint);
         JScrollPane sp = new JScrollPane(sceneList);
@@ -285,21 +368,37 @@ public class ScenesPanel extends JPanel {
     private JComponent buildPreview() {
         JPanel p = Ui.panel(new BorderLayout(0, 10), Palette::panelBackground);
         p.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
-        liveButton.addActionListener(e -> {
-            if (editing != null) {
-                saveEditing();
-                liveSceneChosen.accept(editing.copy());
-                sceneList.repaint();
+        saveButton.setToolTipText("Save this scene to the scene library. Preview and Program do not change.");
+        saveButton.addActionListener(e -> saveEditing());
+        revertButton.setToolTipText("Throw away the unsaved changes and go back to the saved scene");
+        revertButton.addActionListener(e -> {
+            if (hasUnsavedChanges() && Dialogs.confirmDestructive(this, "Revert scene",
+                    "Throw away the unsaved changes to \"" + editing.getName() + "\"?", "Revert")) {
+                discardChanges();
             }
         });
+        previewButton.setToolTipText("Send the saved scene to Preview. Program changes only at TAKE.");
+        previewButton.addActionListener(e -> {
+            Scene saved = savedScene();
+            if (saved != null && !hasUnsavedChanges()) {
+                previewChosen.accept(saved);
+            }
+        });
+        JPanel buttons = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        buttons.add(draftState);
+        buttons.add(revertButton);
+        buttons.add(saveButton);
+        buttons.add(previewButton);
         JPanel head = Ui.transparent(new BorderLayout());
         head.add(previewTitle, BorderLayout.WEST);
-        head.add(liveButton, BorderLayout.EAST);
+        head.add(buttons, BorderLayout.EAST);
         p.add(head, BorderLayout.NORTH);
         p.add(preview, BorderLayout.CENTER);
-        p.add(Ui.label("<html>The preview uses what is currently on Program. Layers are drawn from the bottom of the "
-                + "Sources list upwards. Edits to the live scene appear on the projector immediately.</html>",
+        p.add(Ui.label("<html>SCENE EDITOR: changes here never touch Preview or Program. SAVE SCENE stores the scene; "
+                + "to use it, double-click it in the scene library (Preview), then TAKE (Program). Layers are drawn from the "
+                + "bottom of the Sources list upwards; lyrics show what is on Program.</html>",
                 Palette::mutedText, "small"), BorderLayout.SOUTH);
+        updateDraftState();
         p.setMinimumSize(new Dimension(300, 0));
         return p;
     }
@@ -404,6 +503,7 @@ public class ScenesPanel extends JPanel {
         }
         loadProps();
         preview.repaint();
+        updateDraftState();
     }
 
     /** Called after any change to the edited scene. */
@@ -417,26 +517,87 @@ public class ScenesPanel extends JPanel {
         }
         editing.setSources(list);
         preview.repaint();
-        if (program.scene() != null && Objects.equals(program.scene().getId(), editing.getId())) {
-            program.setScene(editing, false); // live scene: apply instantly
-        }
-        saveTimer.restart();
+        // only the draft changes: Preview and Program keep their own copies until SAVE → Preview → TAKE
+        dirty = true;
+        editCount++;
+        updateDraftState();
     }
 
+    private void updateDraftState() {
+        boolean has = editing != null;
+        saveButton.setEnabled(has && dirty);
+        revertButton.setEnabled(has && dirty);
+        previewButton.setEnabled(has && !dirty);
+        previewButton.setToolTipText(dirty ? "Save the scene first; then it can go to Preview."
+                : "Send the saved scene to Preview. Program changes only at TAKE.");
+        draftState.setText(!has ? " " : dirty ? "Unsaved changes" : "Saved");
+        draftState.setForeground(dirty ? Palette.warning() : Palette.secondaryText());
+        preview.repaint();
+    }
+
+    /** The edited scene as saved in the library (what SEND TO PREVIEW sends), or null. */
+    private Scene savedScene() {
+        if (editing == null) {
+            return null;
+        }
+        for (int i = 0; i < sceneModel.size(); i++) {
+            if (Objects.equals(sceneModel.get(i).getId(), editing.getId())) {
+                return sceneModel.get(i);
+            }
+        }
+        return null;
+    }
+
+    /** Back to the saved version of the edited scene. */
+    private void discardChanges() {
+        Scene saved = savedScene();
+        editing = saved == null ? null : saved.copy();
+        dirty = false;
+        showEditing();
+    }
+
+    private boolean reselecting;
+
+    private void reselect(Long id) {
+        reselecting = true;
+        try {
+            for (int i = 0; i < sceneModel.size(); i++) {
+                if (Objects.equals(sceneModel.get(i).getId(), id)) {
+                    sceneList.setSelectedIndex(i);
+                }
+            }
+        } finally {
+            reselecting = false;
+        }
+    }
+
+    /**
+     * SAVE SCENE: writes the draft to the scene library. Only the library changes: Preview and Program keep the
+     * scene they show (a saved scene goes live only through Preview and TAKE).
+     */
     private void saveEditing() {
-        saveTimer.stop();
         if (editing == null || editing.getId() == null) {
             return;
         }
         Scene snapshot = editing.copy();
+        int version = editCount;
         // a scene deleted meanwhile (Scenes list, right-click → Delete) is not saved back
         BackgroundTask.run("Save scene", () -> scenes.scene(snapshot.getId()).isPresent() ? scenes.save(snapshot) : null, saved -> {
             if (saved == null) {
                 if (editing != null && Objects.equals(editing.getId(), snapshot.getId())) {
                     editing = null;
+                    dirty = false;
+                    showEditing();
                 }
+                statusHandler.accept("The scene was deleted meanwhile; it was not saved.");
                 return;
             }
+            if (editing != null && Objects.equals(editing.getId(), saved.getId()) && editCount == version) {
+                dirty = false;
+                updateDraftState();
+            }
+            statusHandler.accept("Scene \"" + saved.getName() + "\" saved. Preview and Program are unchanged; "
+                    + "double-click it in the scene library to send it to Preview.");
             for (int i = 0; i < sceneModel.size(); i++) {
                 if (Objects.equals(sceneModel.get(i).getId(), saved.getId())) {
                     sceneModel.set(i, saved);
@@ -451,12 +612,16 @@ public class ScenesPanel extends JPanel {
     }
 
     private void createScene() {
+        if (!confirmLeave()) {
+            return;
+        }
         Object name = JOptionPane.showInputDialog(this, "Scene name:", "New Scene", JOptionPane.PLAIN_MESSAGE, null, null, "New Scene");
         if (name == null || name.toString().isBlank()) {
             return;
         }
         BackgroundTask.run("Create scene", () -> scenes.create(name.toString()), s -> {
             editing = s.copy();
+            dirty = false;
             refresh();
             statusHandler.accept("Created scene \"" + s.getName() + "\"");
         }, err -> Dialogs.showError(this, "Could not create the scene.", err));
@@ -469,9 +634,28 @@ public class ScenesPanel extends JPanel {
         Object name = JOptionPane.showInputDialog(this, "Scene name:", "Rename Scene", JOptionPane.PLAIN_MESSAGE, null, null,
                 editing.getName());
         if (name != null && !name.toString().isBlank()) {
-            editing.setName(name.toString().strip());
-            previewTitle.setText(editing.getName());
-            saveEditing();
+            String newName = name.toString().strip();
+            editing.setName(newName);
+            previewTitle.setText(newName);
+            long id = editing.getId();
+            // only the name is saved: unsaved layout changes stay a draft until SAVE SCENE
+            BackgroundTask.run("Rename scene", () -> scenes.scene(id).map(stored -> {
+                stored.setName(newName);
+                return scenes.save(stored);
+            }).orElse(null), saved -> {
+                if (saved != null) {
+                    for (int i = 0; i < sceneModel.size(); i++) {
+                        if (Objects.equals(sceneModel.get(i).getId(), id)) {
+                            sceneModel.set(i, saved);
+                        }
+                    }
+                    List<Scene> all = new ArrayList<>();
+                    for (int i = 0; i < sceneModel.size(); i++) {
+                        all.add(sceneModel.get(i));
+                    }
+                    scenesChanged.accept(all);
+                }
+            }, err -> Dialogs.showError(this, "The scene could not be renamed.", err));
         }
     }
 
@@ -479,10 +663,27 @@ public class ScenesPanel extends JPanel {
         if (editing == null) {
             return;
         }
-        saveEditing();
+        Scene unsaved = null;
+        if (hasUnsavedChanges()) {
+            int answer = JOptionPane.showOptionDialog(this, "\"" + editing.getName() + "\" has unsaved changes. Save them "
+                            + "before duplicating?", "Unsaved Scene", JOptionPane.YES_NO_CANCEL_OPTION,
+                    JOptionPane.QUESTION_MESSAGE, null, new Object[]{"Save", "Discard", "Cancel"}, "Save");
+            if (answer != 0 && answer != 1) {
+                return;
+            }
+            unsaved = answer == 0 ? editing.copy() : null;
+        }
         long id = editing.getId();
-        BackgroundTask.run("Duplicate scene", () -> scenes.duplicate(id), s -> {
+        Scene toSave = unsaved;
+        // save first (when asked) and duplicate in one task, so the copy has the saved changes
+        BackgroundTask.run("Duplicate scene", () -> {
+            if (toSave != null) {
+                scenes.save(toSave);
+            }
+            return scenes.duplicate(id);
+        }, s -> {
             editing = s.copy();
+            dirty = false;
             refresh();
         }, err -> Dialogs.showError(this, "Could not duplicate the scene.", err));
     }
@@ -500,6 +701,7 @@ public class ScenesPanel extends JPanel {
         }
         long id = editing.getId();
         editing = null;
+        dirty = false;
         BackgroundTask.run("Delete scene", () -> {
             scenes.delete(id);
             return true;
@@ -537,7 +739,7 @@ public class ScenesPanel extends JPanel {
         menu.add(menuItem("Bible (dynamic)", "book", () -> addNamed(SourceType.BIBLE, "Bible (dynamic)")));
         menu.add(menuItem("Presentations…", "presentation", this::addPresentationFromLibrary));
         menu.add(menuItem("Images…", "image", this::addImages));
-        menu.add(menuItem("Videos…", "video", () -> addMediaFromLibrary(MediaKind.VIDEO)));
+        menu.add(menuItem("Videos…", "video", this::addVideos));
         menu.add(menuItem("Audio…", "audio", () -> addMediaFromLibrary(MediaKind.AUDIO)));
         menu.add(menuItem("Media", "layers", () -> addSource(SourceType.BACKGROUND)));
         menu.add(menuItem("Camera…", "video", this::addCameraSource));
@@ -577,27 +779,63 @@ public class ScenesPanel extends JPanel {
         this.slideshows = slideshows;
     }
 
-    /** ADD SOURCE → Images: two clear choices, SINGLE IMAGE or IMAGE SLIDESHOW. */
+    /**
+     * The two ways to add library content: FROM LIBRARY (dynamic: whatever of that kind is sent to Preview / TAKE
+     * shows here) or SPECIFIC FILE (only the chosen one, whatever else is clicked). Returns 0 (dynamic),
+     * 1 (specific) or the index of an extra option, -1 for cancel.
+     */
+    private int askLibraryMode(String title, String what, String dynamicText, String specificText, String icon,
+                               String... extra) {
+        List<Object> options = new ArrayList<>(List.of("FROM LIBRARY", "SPECIFIC FILE"));
+        options.addAll(List.of(extra));
+        options.add("CANCEL");
+        JPanel ask = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 8));
+        ask.add(Ui.label("How should this " + what + " source work?", Palette::text, "semibold"));
+        JLabel dyn = Ui.label("<html><b>FROM LIBRARY</b>: " + dynamicText + "</html>", Palette::secondaryText, null);
+        dyn.setIcon(Icons.get("library", Icons.MEDIUM, Palette::secondaryText));
+        JLabel one = Ui.label("<html><b>SPECIFIC FILE</b>: " + specificText + "</html>", Palette::secondaryText, null);
+        one.setIcon(Icons.get(icon, Icons.MEDIUM, Palette::secondaryText));
+        ask.add(dyn);
+        ask.add(one);
+        int choice = javax.swing.JOptionPane.showOptionDialog(this, ask, title, javax.swing.JOptionPane.DEFAULT_OPTION,
+                javax.swing.JOptionPane.PLAIN_MESSAGE, null, options.toArray(), options.get(1));
+        return choice < 0 || choice == options.size() - 1 ? -1 : choice;
+    }
+
+    /** A source that shows whatever picture or video is sent (the slide / media background of what is on Program). */
+    private void addDynamicMedia(String name) {
+        addNamed(SourceType.BACKGROUND, name);
+    }
+
+    /** ADD SOURCE → Images: FROM LIBRARY (any image sent), SPECIFIC FILE (one image) or IMAGE SLIDESHOW. */
     private void addImages() {
         if (editing == null) {
             return;
         }
-        Object[] options = {"SINGLE IMAGE", "IMAGE SLIDESHOW", "CANCEL"};
-        JPanel ask = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 8));
-        ask.add(Ui.label("How do you want to use the images?", Palette::text, "semibold"));
-        JLabel single = Ui.label("SINGLE IMAGE: one image from the library as a scene source.", Palette::secondaryText, null);
-        single.setIcon(Icons.get("image", Icons.MEDIUM, Palette::secondaryText));
-        JLabel show = Ui.label("IMAGE SLIDESHOW: several images that play one after another, by themselves or with "
-                + "Previous / Next.", Palette::secondaryText, null);
-        show.setIcon(Icons.get("slides", Icons.MEDIUM, Palette::secondaryText));
-        ask.add(single);
-        ask.add(show);
-        int choice = javax.swing.JOptionPane.showOptionDialog(this, ask, "Add Image Source",
-                javax.swing.JOptionPane.DEFAULT_OPTION, javax.swing.JOptionPane.PLAIN_MESSAGE, null, options, options[0]);
+        int choice = askLibraryMode("Add Image Source", "image",
+                "shows whatever image or media you send to Preview / TAKE.",
+                "choose one image; only that image shows here, whatever else you click.", "image", "IMAGE SLIDESHOW");
         if (choice == 0) {
-            addMediaFromLibrary(MediaKind.IMAGE);
+            addDynamicMedia("Media (from library)");
         } else if (choice == 1) {
+            addMediaFromLibrary(MediaKind.IMAGE);
+        } else if (choice == 2) {
             addSlideshow();
+        }
+    }
+
+    /** ADD SOURCE → Videos: FROM LIBRARY (any video sent) or SPECIFIC FILE (one video, played by the scene). */
+    private void addVideos() {
+        if (editing == null) {
+            return;
+        }
+        int choice = askLibraryMode("Add Video Source", "video",
+                "shows whatever video or media you send to Preview / TAKE.",
+                "choose one video; only that video plays here, whatever else you click.", "video");
+        if (choice == 0) {
+            addDynamicMedia("Media (from library)");
+        } else if (choice == 1) {
+            addMediaFromLibrary(MediaKind.VIDEO);
         }
     }
 
@@ -693,11 +931,21 @@ public class ScenesPanel extends JPanel {
     }
 
     /**
-     * Songs / Lyrics: a lyrics source that refers to a library song (nothing is copied). The lyrics
-     * stay dynamic: whatever song slide is sent shows here, so one scene serves every song.
+     * Songs / Lyrics. FROM LIBRARY: whatever lyrics are sent show here, so one scene serves every song. SPECIFIC
+     * FILE: a library song (referenced, not copied); only its lyrics show here, whatever other song is clicked.
      */
     private void addSongFromLibrary() {
         if (editing == null || songs == null) {
+            return;
+        }
+        int mode = askLibraryMode("Add Lyrics Source", "lyrics",
+                "shows the lyrics of whatever song you send to Preview / TAKE (one scene for every song).",
+                "choose one song; only that song's lyrics show here, even when you click another song.", "music");
+        if (mode < 0) {
+            return;
+        }
+        if (mode == 0) {
+            addNamed(SourceType.LYRICS, "Lyrics (from library)");
             return;
         }
         com.jamc.worship.model.Song song = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<com.jamc.worship.model.Song>(
@@ -710,8 +958,9 @@ public class ScenesPanel extends JPanel {
         }
         Source s = new Source("Lyrics: " + song.getTitle(), SourceType.LYRICS);
         s.getConfig().songId = song.getId();
+        s.getConfig().fixedSong = Boolean.TRUE;
         insertSource(s);
-        statusHandler.accept("Lyrics source added for \"" + song.getTitle() + "\" (from the library, not copied).");
+        statusHandler.accept("Lyrics source for \"" + song.getTitle() + "\" only: other songs never show in it.");
     }
 
     /** Camera: pick one of the connected devices. */
@@ -720,17 +969,26 @@ public class ScenesPanel extends JPanel {
             return;
         }
         List<String> devices = cameras.cameras();
+        java.util.function.Function<String, String> label = d -> cameraNames == null ? d : cameraNames.full(d);
         String cam = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<String>(
                 "Select Camera", "Search cameras…", "video",
                 "No camera detected.<br>Connect a webcam or HDMI capture device, then open Library → Camera to detect it.",
-                text -> devices.stream().filter(d -> d.toLowerCase().contains(text.strip().toLowerCase())).toList(),
-                d -> d, d -> "Camera / capture device", d -> null));
+                text -> devices.stream().filter(d -> label.apply(d).toLowerCase().contains(text.strip().toLowerCase())).toList(),
+                label::apply, d -> d + " · " + cameras.status(d).label(), d -> null));
         if (cam == null) {
             return;
         }
-        Source s = new Source(cam, SourceType.CAMERA);
+        Source s = new Source(cameraNames == null ? cam : cameraNames.label(cam), SourceType.CAMERA);
         s.getConfig().camera = cam;
         s.getConfig().fit = FitMode.FILL;
+        // a second camera in the scene starts as picture-in-picture (bottom right) over the first
+        if (editing.getSources().stream().anyMatch(x -> x.getType() == SourceType.CAMERA)) {
+            s.getConfig().x = 0.68;
+            s.getConfig().y = 0.64;
+            s.getConfig().w = 0.28;
+            s.getConfig().h = 0.28;
+        }
+        // camera audio stays off: switched on per source, so several camera mics never echo
         insertSource(s);
     }
 
@@ -758,6 +1016,7 @@ public class ScenesPanel extends JPanel {
             case SONG -> {
                 s = new Source("Lyrics: " + item.getTitle(), SourceType.LYRICS);
                 s.getConfig().songId = ref;
+                s.getConfig().fixedSong = ref == null ? null : Boolean.TRUE; // this service song only
             }
             case BIBLE -> s = new Source("Bible: " + item.getTitle(), SourceType.BIBLE);
             case PRESENTATION -> {
@@ -847,18 +1106,30 @@ public class ScenesPanel extends JPanel {
         if (editing == null) {
             return;
         }
-        Presentation p = pickPresentation();
-        if (p == null) {
+        int mode = askLibraryMode("Add Presentation Source", "presentation",
+                "shows the slide of whatever presentation you send to Preview / TAKE.",
+                "choose one presentation; only its slides show here, even when you click another presentation.",
+                "presentation");
+        if (mode < 0) {
             return;
         }
-        Source s = new Source("Presentation: " + p.name(), SourceType.PRESENTATION);
-        SourceConfig c = s.getConfig();
-        c.fit = FitMode.FIT;
-        c.presentationId = p.id();
-        c.slideIndex = 0;
-        c.presentationMode = SourceConfig.PresentationMode.DYNAMIC;
+        Source s;
+        if (mode == 0) {
+            s = new Source("Presentation (from library)", SourceType.PRESENTATION);
+            s.getConfig().presentationMode = SourceConfig.PresentationMode.DYNAMIC;
+        } else {
+            Presentation p = pickPresentation();
+            if (p == null) {
+                return;
+            }
+            s = new Source("Presentation: " + p.name(), SourceType.PRESENTATION);
+            s.getConfig().presentationId = p.id();
+            s.getConfig().slideIndex = 0;
+            s.getConfig().presentationMode = SourceConfig.PresentationMode.FIXED; // only this file, whatever is clicked
+            statusHandler.accept("\"" + p.name() + "\" only: other presentations never show in this source.");
+        }
+        s.getConfig().fit = FitMode.FIT;
         insertSource(s);
-        statusHandler.accept("\"" + p.name() + "\" added to the scene from the library (not imported again).");
     }
 
     /** + ADD SOURCE → Image / Video from Library: references the library item and its stored file. */
@@ -979,6 +1250,14 @@ public class ScenesPanel extends JPanel {
         }
         fitCombo.addActionListener(e -> apply.run());
         cameraCombo.addActionListener(e -> apply.run());
+        songMode.addActionListener(e -> apply.run());
+        for (JSpinner s : List.of(cropLeft, cropTop, cropRight, cropBottom)) {
+            s.addChangeListener(e -> apply.run());
+        }
+        rotationCombo.addActionListener(e -> apply.run());
+        mirrorBox.addActionListener(e -> apply.run());
+        offlineCombo.addActionListener(e -> apply.run());
+        offlineImageButton.addActionListener(e -> chooseOfflineImage());
         colorButton.addColorListener(c -> apply.run());
         opacity.addChangeListener(e -> apply.run());
         textPlace.addActionListener(e -> apply.run());
@@ -1085,8 +1364,10 @@ public class ScenesPanel extends JPanel {
         JMenuItem fill = menuItem("Fit to Canvas", "monitor", () -> setBox(0, 0, 1, 1));
         JMenuItem center = menuItem("Center", "grid", () -> setBox((1 - cfg.w) / 2, (1 - cfg.h) / 2, cfg.w, cfg.h));
         JMenuItem pip = menuItem("Bottom-right corner (picture in picture)", "video", () -> setBox(0.68, 0.64, 0.28, 0.28));
+        JMenuItem left = menuItem("Left half (split screen)", "grid", () -> setBox(0, 0, 0.5, 1));
+        JMenuItem right = menuItem("Right half (split screen)", "grid", () -> setBox(0.5, 0, 0.5, 1));
         JMenuItem reset = menuItem("Reset Position", "refresh", () -> resetPosition.doClick());
-        for (JMenuItem i : List.of(fill, center, pip, reset)) {
+        for (JMenuItem i : List.of(fill, center, pip, left, right, reset)) {
             i.setEnabled(!locked);
             menu.add(i);
         }
@@ -1243,6 +1524,8 @@ public class ScenesPanel extends JPanel {
         loadingProps = true;
         try {
             SourceConfig c = s.getConfig();
+            audioBox.setEnabled(true); // a camera without an audio input disables it; other sources need it back
+            audioOut.setEnabled(true);
             GridBagConstraints g = new GridBagConstraints();
             g.gridx = 0;
             g.gridy = 0;
@@ -1309,6 +1592,10 @@ public class ScenesPanel extends JPanel {
                 Long id = c.songId;
                 open.addActionListener(e -> openSong.accept(id));
                 row(g, "Song", open);
+                songMode.setSelectedIndex(c.isFixedSong() ? 1 : 0);
+                songMode.setToolTipText("From library: any song you send shows here. This song only: other songs never "
+                        + "show here (it keeps this song's last slide).");
+                row(g, "Shows", songMode);
             }
             if (t == SourceType.LYRICS || t == SourceType.BIBLE) {
                 textPlace.setSelectedIndex(c.textPosition == null ? 0 : c.textPosition.ordinal() + 1);
@@ -1351,14 +1638,7 @@ public class ScenesPanel extends JPanel {
                 loadVideoProps(g, s);
             }
             if (t == SourceType.CAMERA) {
-                cameraCombo.removeAllItems();
-                cameraCombo.addItem("First available camera");
-                cameras.cameras().forEach(cameraCombo::addItem);
-                cameraCombo.setSelectedItem(c.camera == null ? "First available camera" : c.camera);
-                row(g, "Camera", cameraCombo);
-                if (cameras.cameras().isEmpty()) {
-                    row(g, "", Ui.label("No camera detected.", Palette::warning, "small"));
-                }
+                loadCameraProps(g, s);
             }
             if (t == SourceType.TEXT || t == SourceType.CLOCK) {
                 textField.setText(c.text == null ? "" : c.text);
@@ -1553,9 +1833,15 @@ public class ScenesPanel extends JPanel {
     private void loadPresentationProps(GridBagConstraints g, Source s) {
         SourceConfig c = s.getConfig();
         modeCombo.setSelectedItem(c.isDynamicPresentation() ? SourceConfig.PresentationMode.DYNAMIC : SourceConfig.PresentationMode.FIXED);
-        modeCombo.setToolTipText("Dynamic: any presentation slide you send to Preview shows here (one Sermon scene for every sermon). "
-                + "Fixed: always this presentation.");
+        modeCombo.setToolTipText("From library (dynamic): any presentation slide you send to Preview shows here (one Sermon "
+                + "scene for every sermon). Specific file only: only this presentation, whatever else you click.");
         row(g, "Source mode", modeCombo);
+        if (!c.isDynamicPresentation() && editing != null && editing.getSources().stream().anyMatch(o -> o != s
+                && o.isVisible() && o.getType() == SourceType.PRESENTATION && o.getConfig().isDynamicPresentation())) {
+            row(g, "", Ui.label("<html><body style='width:190px'>This scene also has a FROM LIBRARY presentation source: "
+                    + "other presentations still show in that one. Remove it or set it to Specific file only.</html>",
+                    Palette::warning, "small"));
+        }
         String name = c.presentationId == null ? null : Rendering.presentations().name(c.presentationId);
         boolean missing = c.presentationId != null && (name == null || Rendering.presentations().slideCount(c.presentationId) == 0);
         presentationLabel.setText(missing ? "⚠ Presentation unavailable" : name != null ? name
@@ -1579,9 +1865,10 @@ public class ScenesPanel extends JPanel {
             loadSlideThumbs(s);
         }
         String help = c.isDynamicPresentation()
-                ? "SEND TO PREVIEW from Library → Presentations shows that slide here; the scene itself stays. "
+                ? "A slide double-clicked in Library → Presentations (Preview, then TAKE) shows here; the scene itself stays. "
                 + "The slide above is shown while no presentation is being sent."
-                : "Always this presentation. Sending one of its slides from the library moves this source to that slide.";
+                : "Only this presentation. Its slides sent from the library show here; other presentations never do "
+                + "(this box keeps its last slide).";
         row(g, "", Ui.label("<html><body style='width:190px'>" + help + "</html>", Palette::mutedText, "small"));
     }
 
@@ -1665,6 +1952,9 @@ public class ScenesPanel extends JPanel {
             int place = textPlace.getSelectedIndex();
             c.textPosition = place <= 0 ? null : com.jamc.worship.model.TextPosition.values()[place - 1];
             c.textScale = textScale.getValue() == 100 ? null : textScale.getValue() / 100.0;
+            if (t == SourceType.LYRICS && c.songId != null) {
+                c.fixedSong = songMode.getSelectedIndex() == 1 ? Boolean.TRUE : null;
+            }
         }
         if (t == SourceType.OVERLAY) {
             c.opacity = opacity.getValue() / 100.0;
@@ -1686,8 +1976,7 @@ public class ScenesPanel extends JPanel {
             srcMute.setEnabled(audioBox.isSelected());
         }
         if (t == SourceType.CAMERA) {
-            Object cam = cameraCombo.getSelectedItem();
-            c.camera = cam == null || cameraCombo.getSelectedIndex() == 0 ? null : cam.toString();
+            applyCameraProps(c);
         }
         if (t == SourceType.TEXT || t == SourceType.CLOCK) {
             c.text = textField.getText().isBlank() ? null : textField.getText();
@@ -1710,7 +1999,7 @@ public class ScenesPanel extends JPanel {
         } else {
             com.jamc.worship.ui.MediaChoosers.imageFilters(chooser);
         }
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         java.nio.file.Path file = chooser.getSelectedFile().toPath();
@@ -1727,6 +2016,162 @@ public class ScenesPanel extends JPanel {
             loadProps();
             sceneEdited();
         }, err -> Dialogs.showError(this, "The file could not be added.", err));
+    }
+
+    private static JSpinner percent() {
+        JSpinner s = new JSpinner(new SpinnerNumberModel(0, 0, 45, 1));
+        ((JSpinner.DefaultEditor) s.getEditor()).getTextField().setColumns(2);
+        return s;
+    }
+
+    /** Camera numbers and nicknames ("CAM 2 · PREACHER CAMERA") for the camera pickers. */
+    public void setCameraNames(com.jamc.worship.camera.CameraNames names) {
+        this.cameraNames = names;
+        cameraCombo.setRenderer(new javax.swing.DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> l, Object v, int i, boolean sel, boolean f) {
+                String device = v == null ? null : v.toString();
+                String text = device == null || FIRST_CAMERA.equals(device) ? FIRST_CAMERA : names.full(device);
+                return super.getListCellRendererComponent(l, text, i, sel, f);
+            }
+        });
+    }
+
+    private static final String FIRST_CAMERA = "First available camera";
+
+    /** CAMERA source: device, its live state, crop, rotation, mirror, sound and what shows while it is offline. */
+    private void loadCameraProps(GridBagConstraints g, Source s) {
+        SourceConfig c = s.getConfig();
+        cameraCombo.removeAllItems();
+        cameraCombo.addItem(FIRST_CAMERA);
+        List<String> devices = new ArrayList<>(cameras.cameras());
+        if (c.camera != null && !devices.contains(c.camera)) {
+            devices.add(c.camera); // a camera that is unplugged now stays chosen (it shows DISCONNECTED)
+        }
+        devices.forEach(cameraCombo::addItem);
+        cameraCombo.setSelectedItem(c.camera == null ? FIRST_CAMERA : c.camera);
+        cameraCombo.setToolTipText("The physical camera this source shows. Each camera is opened once and shared by every "
+                + "scene, so switching scenes never restarts it.");
+        row(g, "Camera", cameraCombo);
+        com.jamc.worship.camera.CameraStatus st = cameras.status(c.camera);
+        String size = cameras.liveSize(c.camera);
+        int fps = cameras.liveFps(c.camera);
+        String state = st.label() + (size == null ? "" : " · " + size) + (fps > 0 ? " · " + fps + " FPS" : "");
+        JLabel stateLabel = Ui.label(state, st.isOffline() ? Palette::warning : Palette::text, "semibold");
+        stateLabel.setToolTipText(cameras.problem(c.camera));
+        row(g, "Status", stateLabel);
+        row(g, "", Ui.label("<html><body style='width:190px'>Resolution and frame rate belong to the camera itself "
+                + "(Library → Camera → Configure), so every scene shows the same picture.</html>", Palette::mutedText, "small"));
+        if (cameras.cameras().isEmpty()) {
+            row(g, "", Ui.label("No camera detected.", Palette::warning, "small"));
+        }
+        JPanel crop = Ui.transparent(new java.awt.GridLayout(2, 4, 4, 4));
+        crop.add(Ui.small("Left"));
+        crop.add(cropLeft);
+        crop.add(Ui.small("Right"));
+        crop.add(cropRight);
+        crop.add(Ui.small("Top"));
+        crop.add(cropTop);
+        crop.add(Ui.small("Bottom"));
+        crop.add(cropBottom);
+        cropLeft.setValue(pct(c.cropLeft));
+        cropTop.setValue(pct(c.cropTop));
+        cropRight.setValue(pct(c.cropRight));
+        cropBottom.setValue(pct(c.cropBottom));
+        crop.setToolTipText("Cut off part of the picture at each edge (% of the camera picture)");
+        row(g, "Crop %", crop);
+        int rot = c.rotation == null ? 0 : Math.floorMod(c.rotation, 360) / 90;
+        rotationCombo.setSelectedIndex(Math.min(3, rot));
+        row(g, "Rotation", rotationCombo);
+        mirrorBox.setSelected(Boolean.TRUE.equals(c.mirror));
+        row(g, "", mirrorBox);
+        // AUDIO: off by default; one camera mic at a time (several give echo and feedback)
+        String input = cameras.audioDevice(c.camera);
+        audioBox.setSelected(Boolean.TRUE.equals(c.audioEnabled));
+        audioBox.setEnabled(input != null || Boolean.TRUE.equals(c.audioEnabled));
+        audioBox.setToolTipText("Play this camera's own microphone / HDMI sound on Program. Off by default: the church "
+                + "mixer is the main sound, and several camera mics together cause echo and feedback.");
+        row(g, "Audio", audioBox);
+        row(g, "", Ui.label("<html><body style='width:190px'>" + (input == null
+                ? "No audio input found for this camera." : "Input: " + input) + "</html>", Palette::mutedText, "small"));
+        srcMute.setSelected(Boolean.TRUE.equals(c.muted));
+        srcVolume.setValue(c.volume == null ? 100 : c.volume);
+        srcVolumeLabel.setText(srcVolume.getValue() + "%");
+        JPanel vol = Ui.transparent(new BorderLayout(6, 0));
+        vol.add(srcVolume, BorderLayout.CENTER);
+        vol.add(srcVolumeLabel, BorderLayout.EAST);
+        row(g, "Volume", vol);
+        row(g, "", srcMute);
+        audioOut.setSelectedIndex(Boolean.TRUE.equals(c.monitorOnly) ? 1 : 0);
+        row(g, "Monitoring", audioOut);
+        boolean on = audioBox.isSelected();
+        srcVolume.setEnabled(on);
+        srcMute.setEnabled(on);
+        audioOut.setEnabled(on);
+        // OFFLINE: what the audience sees while the camera is unplugged or failed (never an error message)
+        offlineCombo.setSelectedIndex("BLACK".equals(c.offline) ? 1 : "IMAGE".equals(c.offline) ? 2 : 0);
+        row(g, "When offline", offlineCombo);
+        if ("IMAGE".equals(c.offline)) {
+            JPanel f = Ui.transparent(new BorderLayout(6, 0));
+            f.add(offlineImageButton, BorderLayout.WEST);
+            f.add(Ui.small(c.offlineImage == null ? "No image" : fileName(c.offlineImage)), BorderLayout.CENTER);
+            row(g, "", f);
+        }
+    }
+
+    private static int pct(Double v) {
+        return v == null ? 0 : (int) Math.round(Math.clamp(v, 0.0, 0.45) * 100);
+    }
+
+    private static Double fraction(JSpinner s) {
+        int v = ((Number) s.getValue()).intValue();
+        return v <= 0 ? null : v / 100.0;
+    }
+
+    private void applyCameraProps(SourceConfig c) {
+        Object cam = cameraCombo.getSelectedItem();
+        c.camera = cam == null || cameraCombo.getSelectedIndex() == 0 ? null : cam.toString();
+        c.cropLeft = fraction(cropLeft);
+        c.cropTop = fraction(cropTop);
+        c.cropRight = fraction(cropRight);
+        c.cropBottom = fraction(cropBottom);
+        c.rotation = rotationCombo.getSelectedIndex() <= 0 ? null : rotationCombo.getSelectedIndex() * 90;
+        c.mirror = mirrorBox.isSelected() ? Boolean.TRUE : null;
+        c.audioEnabled = audioBox.isSelected() ? Boolean.TRUE : null;
+        c.muted = srcMute.isSelected() ? Boolean.TRUE : null;
+        c.volume = srcVolume.getValue() == 100 ? null : srcVolume.getValue();
+        c.monitorOnly = audioOut.getSelectedIndex() == 1 ? Boolean.TRUE : null;
+        srcVolume.setEnabled(audioBox.isSelected());
+        srcMute.setEnabled(audioBox.isSelected());
+        audioOut.setEnabled(audioBox.isSelected());
+        String offline = switch (offlineCombo.getSelectedIndex()) {
+            case 1 -> "BLACK";
+            case 2 -> "IMAGE";
+            default -> null;
+        };
+        boolean reload = !Objects.equals(offline, c.offline);
+        c.offline = offline;
+        if (reload) {
+            javax.swing.SwingUtilities.invokeLater(this::loadProps); // show / hide the image chooser
+        }
+    }
+
+    private void chooseOfflineImage() {
+        Source s = sourceList.getSelectedValue();
+        if (s == null || s.getType() != SourceType.CAMERA) {
+            return;
+        }
+        JFileChooser chooser = new JFileChooser();
+        com.jamc.worship.ui.MediaChoosers.imageFilters(chooser);
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        java.nio.file.Path file = chooser.getSelectedFile().toPath();
+        BackgroundTask.run("Import offline image", () -> importer.importImage(file), stored -> {
+            s.getConfig().offlineImage = stored;
+            loadProps();
+            sceneEdited();
+        }, err -> Dialogs.showError(this, "The image could not be added.", err));
     }
 
     private static JSpinner pixels(int min, int max) {
@@ -1983,10 +2428,19 @@ public class ScenesPanel extends JPanel {
             Graphics2D g3 = (Graphics2D) g.create();
             g3.setColor(Palette.border());
             g3.drawRect(r.x, r.y, r.width - 1, r.height - 1);
-            if (editing != null && program.scene() != null && Objects.equals(program.scene().getId(), editing.getId())) {
-                g3.setColor(Palette.live());
-                g3.drawRect(r.x, r.y, r.width - 1, r.height - 1);
-                g3.drawRect(r.x + 1, r.y + 1, r.width - 3, r.height - 3);
+            if (editing != null) {
+                // this canvas is the editor's own draft: say so, so nobody mistakes it for Preview or Program
+                boolean onProgram = program.scene() != null && Objects.equals(program.scene().getId(), editing.getId());
+                String badge = "SCENE EDITOR" + (dirty ? " · UNSAVED" : "")
+                        + (onProgram ? " · PROGRAM UNCHANGED UNTIL SAVE → PREVIEW → TAKE" : "");
+                g3.setFont(getFont().deriveFont(java.awt.Font.BOLD, 9.5f));
+                java.awt.FontMetrics bm = g3.getFontMetrics();
+                int bw = bm.stringWidth(badge) + 12;
+                int bx = r.x + r.width - bw - 6; // top right: the selected layer's name tag uses the top left
+                g3.setColor(new Color(0, 0, 0, 170));
+                g3.fillRoundRect(bx, r.y + 6, bw, bm.getHeight() + 2, 10, 10);
+                g3.setColor(Color.WHITE);
+                g3.drawString(badge, bx + 6, r.y + 7 + bm.getAscent());
             }
             Source sel = sourceList.getSelectedValue();
             if (sel != null && editing != null) {

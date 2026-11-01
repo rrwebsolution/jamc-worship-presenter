@@ -25,6 +25,8 @@ public class TransportControls extends JPanel {
     private Transport transport;
     private final JButton playButton = small("▶");
     private final JButton stopButton = small("■");
+    private final JButton back10 = icon("back-10");
+    private final JButton forward10 = icon("forward-10");
     private final JSlider seek = new JSlider(0, 1000, 0);
     private final JLabel time = Ui.small("0:00 / 0:00");
     private final JSlider volume = new JSlider(0, 150, 100);
@@ -57,6 +59,10 @@ public class TransportControls extends JPanel {
                 transport.stop();
             }
         });
+        back10.setToolTipText("Back 10 seconds");
+        back10.addActionListener(e -> skip(-10_000));
+        forward10.setToolTipText("Forward 10 seconds");
+        forward10.addActionListener(e -> skip(10_000));
         seek.setToolTipText("Position");
         seek.addChangeListener(e -> {
             dragging = seek.getValueIsAdjusting();
@@ -93,7 +99,9 @@ public class TransportControls extends JPanel {
         });
 
         JPanel buttons = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 3, 0));
+        buttons.add(back10);
         buttons.add(playButton);
+        buttons.add(forward10);
         buttons.add(stopButton);
         buttons.add(time);
         JPanel right = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 3, 0));
@@ -109,6 +117,23 @@ public class TransportControls extends JPanel {
         bind(null);
     }
 
+    /** Jumps {@code ms} forward (or back when negative), staying inside the video. */
+    private void skip(long ms) {
+        Transport t = transport;
+        if (t == null || t.length() <= 0) {
+            return;
+        }
+        long to = Math.clamp(t.time() + ms, 0, Math.max(0, t.length() - 500));
+        t.seek((float) to / t.length());
+        refresh();
+    }
+
+    /** Hides volume and mute (a player whose sound is set elsewhere, e.g. Preview follows PREVIEW AUDIO). */
+    public void setAudioVisible(boolean visible) {
+        volume.setVisible(visible);
+        mute.setVisible(visible);
+    }
+
     /** The player behind a remembering wrapper (MediaStates). */
     private static Transport unwrap(Transport t) {
         return t instanceof com.jamc.worship.media.MediaStates.Remembered r ? r.delegate() : t;
@@ -118,7 +143,7 @@ public class TransportControls extends JPanel {
     public void bind(Transport t) {
         this.transport = t;
         boolean has = t != null;
-        for (var c : new javax.swing.JComponent[]{playButton, stopButton, seek, volume, mute, loop, fadeIn, fadeOut}) {
+        for (var c : new javax.swing.JComponent[]{playButton, stopButton, back10, forward10, seek, volume, mute, loop, fadeIn, fadeOut}) {
             c.setEnabled(has);
         }
         boolean audio = unwrap(t) instanceof AudioPlayer;
@@ -174,6 +199,13 @@ public class TransportControls extends JPanel {
         long s = Math.max(0, ms / 1000);
         return s >= 3600 ? String.format("%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
                 : String.format("%d:%02d", s / 60, s % 60);
+    }
+
+    private static JButton icon(String name) {
+        JButton b = small(null);
+        b.setIcon(com.jamc.worship.ui.theme.Icons.get(name, 16));
+        b.putClientProperty(FlatClientProperties.STYLE, "margin: 2,5,2,5");
+        return b;
     }
 
     private static JButton small(String text) {

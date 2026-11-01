@@ -125,9 +125,12 @@ public class OutputCanvas extends JComponent {
                 d.clipRect(0, 0, pw, ph);
                 compositor.paint(d, pw, ph, to, program, keyMode);
                 d.dispose();
-            } else if (Compositor.contentChangeOnly(from, to)) {
+            } else if (Compositor.contentChangeOnly(from, to) || Compositor.sceneChange(from, to)) {
                 // next lyrics / verse / slide in the same scene: only the content layers transition; the
-                // scene's video, camera and logo keep playing at full opacity (never faded or restarted)
+                // scene's video, camera and logo keep playing at full opacity (never faded or restarted).
+                // Another scene: only the layers that differ transition (CAM 1 → CAM 2 under the same lyrics
+                // changes only the camera); shared layers stay.
+                boolean sameScene = Compositor.contentChangeOnly(from, to);
                 float fromAlpha;
                 float toAlpha;
                 switch (program.activeTransition()) {
@@ -149,7 +152,11 @@ public class OutputCanvas extends JComponent {
                 d.scale(r.width / (double) pw, r.height / (double) ph);
                 d.clipRect(0, 0, pw, ph);
                 d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                compositor.paintLayered(d, pw, ph, from, to, program, keyMode, fromAlpha, toAlpha);
+                if (sameScene) {
+                    compositor.paintLayered(d, pw, ph, from, to, program, keyMode, fromAlpha, toAlpha);
+                } else {
+                    compositor.paintSceneChange(d, pw, ph, from, to, program, keyMode, fromAlpha, toAlpha);
+                }
                 d.dispose();
             } else if (!keyMode && Compositor.sitsOnGlobal(from) && Compositor.sitsOnGlobal(to)) {
                 // Song → verse → slide over the global video: the background is one continuous layer;

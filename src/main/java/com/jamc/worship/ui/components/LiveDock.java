@@ -56,6 +56,9 @@ public class LiveDock extends JPanel {
         }
     }
 
+    private final TransportControls previewTransport = new TransportControls(true);
+    private final JPanel previewMediaRow = Ui.transparent(new BorderLayout(6, 0));
+    private final JLabel previewMediaLabel = Ui.label("PREVIEW MEDIA", Palette::secondaryText, "small");
     private final TransportControls programTransport = new TransportControls(true);
     private final JPanel programMediaRow = Ui.transparent(new BorderLayout(6, 0));
     private final JLabel programMediaLabel = Ui.label("PROGRAM MEDIA", Palette::secondaryText, "small");
@@ -150,7 +153,16 @@ public class LiveDock extends JPanel {
         programMediaRow.add(mixerButton, BorderLayout.EAST);
         programMediaRow.add(programTransport, BorderLayout.CENTER);
         programMediaRow.setVisible(false);
-        add(programMediaRow, c);
+        // PREVIEW MEDIA above PROGRAM MEDIA: the video waiting in Preview can be cued (±10 s) before TAKE
+        previewMediaRow.add(previewMediaLabel, BorderLayout.WEST);
+        previewMediaRow.add(previewTransport, BorderLayout.CENTER);
+        previewTransport.setAudioVisible(false);
+        previewMediaLabel.setToolTipText("The video in Preview. Its sound follows PREVIEW AUDIO (your monitor only).");
+        previewMediaRow.setVisible(false);
+        JPanel mediaRows = Ui.transparent(new BorderLayout(0, 4)); // hidden rows take no room
+        mediaRows.add(previewMediaRow, BorderLayout.NORTH);
+        mediaRows.add(programMediaRow, BorderLayout.CENTER);
+        add(mediaRows, c);
 
         c.gridx = 0;
         c.gridy = 1;
@@ -346,7 +358,7 @@ public class LiveDock extends JPanel {
             OutputService.RouteInfo r = byTarget.get(d.id());
             String suffix = r != null && r.source() != source ? "   (showing " + r.source() + ")"
                     : d.primary() ? "   (main screen)" : "";
-            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem("Display " + d.number() + "  ·  "
+            javax.swing.JCheckBoxMenuItem item = new javax.swing.JCheckBoxMenuItem(d.title() + "  ·  "
                     + d.pixelWidth() + "×" + d.pixelHeight() + suffix, r != null && r.source() == source);
             item.addActionListener(e -> router.route(source, d.id(), dialogParent.get()));
             menu.add(item);
@@ -494,6 +506,15 @@ public class LiveDock extends JPanel {
         programTransport.bind(transport);
         programMediaRow.setVisible(transport != null);
         bindProgramMediaLabel(title, note);
+    }
+
+    /** PREVIEW MEDIA: controls for the video waiting in Preview (null hides them). */
+    public void bindPreviewMedia(com.jamc.worship.media.Transport transport, String title) {
+        previewTransport.bind(transport);
+        previewMediaRow.setVisible(transport != null);
+        String t = title == null ? "" : firstWords(title, TITLE_WORDS) + (firstWords(title, TITLE_WORDS).equals(title.strip()) ? "" : "…");
+        previewMediaLabel.setText("<html><b>PREVIEW MEDIA</b>" + (title == null ? "" : "<br>" + escape(t)) + "</html>");
+        revalidate();
     }
 
     /** Updates the PROGRAM MEDIA title and note without rebinding the controls. */

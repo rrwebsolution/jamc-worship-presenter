@@ -21,6 +21,8 @@ public class Slide {
     private StyleOverrides overrides;
     private Long presentationId;
     private int presentationIndex = -1;
+    /** Song slides: the library song they come from (a scene source fixed to one song shows only its slides). */
+    private Long songId;
 
     public Slide(String label, String text, String caption) {
         this.label = label;
@@ -38,6 +40,7 @@ public class Slide {
         s.overrides = overrides == null ? null : overrides.copy();
         s.presentationId = presentationId;
         s.presentationIndex = presentationIndex;
+        s.songId = songId;
         return s;
     }
 
@@ -80,6 +83,8 @@ public class Slide {
     public Long getPresentationId() { return presentationId; }
     /** 0-based slide number within {@link #getPresentationId()}, or -1. */
     public int getPresentationIndex() { return presentationIndex; }
+    public Long getSongId() { return songId; }
+    public void setSongId(Long songId) { this.songId = songId; }
     public void setPresentation(Long id, int index) {
         this.presentationId = id;
         this.presentationIndex = id == null ? -1 : index;

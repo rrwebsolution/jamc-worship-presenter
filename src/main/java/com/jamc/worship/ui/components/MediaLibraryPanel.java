@@ -393,7 +393,7 @@ public class MediaLibraryPanel extends JPanel {
             chooser.addChoosableFileFilter(everything);
             chooser.setFileFilter(everything);
         }
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         File[] files = chooser.getSelectedFiles();

@@ -43,6 +43,8 @@ public final class ProgramOutput {
 
     private Transition transition = Transition.FADE;
     private int durationMs = 500;
+    /** Fade length when a TAKE goes from one camera scene to another; 0 = CUT (camera switching feels immediate). */
+    private int cameraFadeMs;
 
     private FrameSpec shown = FrameSpec.EMPTY;
     private FrameSpec previous;
@@ -77,10 +79,11 @@ public final class ProgramOutput {
             content = newContent;
             blank = false;
         }
+        Scene old = scene;
         if (newScene != null) {
             scene = newScene.copy();
         }
-        apply(true);
+        apply(true, cameraSwitch(old, scene));
     }
 
     /** Removes the live content (Program shows the scene without slide content). */
@@ -127,8 +130,30 @@ public final class ProgramOutput {
      * false when the same scene was only edited (a source moved or toggled) so it updates instantly.
      */
     public void setScene(Scene newScene, boolean animate) {
+        Scene old = scene;
         scene = newScene == null ? null : newScene.copy();
-        apply(animate);
+        apply(animate, animate && cameraSwitch(old, scene));
+    }
+
+    /**
+     * Fade length for switching between camera scenes (CAM 1 → CAM 2); 0 = CUT, the default. Only the layers
+     * that differ fade; the lyrics, logo and lower third on top stay.
+     */
+    public void setCameraSwitchFade(int ms) {
+        cameraFadeMs = Math.clamp(ms, 0, 3000);
+    }
+
+    public int cameraSwitchFade() {
+        return cameraFadeMs;
+    }
+
+    /** True when the scene changes from one showing a camera to another showing a camera. */
+    static boolean cameraSwitch(Scene from, Scene to) {
+        if (from == null || to == null || from == to) {
+            return false;
+        }
+        boolean same = java.util.Objects.equals(from.getId(), to.getId()) && from.getId() != null;
+        return !same && from.has(com.jamc.worship.model.SourceType.CAMERA) && to.has(com.jamc.worship.model.SourceType.CAMERA);
     }
 
     public void setTransition(Transition transition, int durationMs) {
@@ -227,17 +252,24 @@ public final class ProgramOutput {
     // ------------------------------------------------------------------ internals
 
     private void apply(boolean allowAnimation) {
+        apply(allowAnimation, false);
+    }
+
+    /** @param cameraSwitch a switch between camera scenes: the camera transition (CUT unless a fade is set) */
+    private void apply(boolean allowAnimation, boolean cameraSwitch) {
         FrameSpec next = new FrameSpec(content, !lyricsHidden && !blank, !backgroundHidden, black, scene);
         if (next.equals(shown)) {
             fire();
             return;
         }
-        boolean animate = allowAnimation && transition != Transition.CUT && durationMs > 0;
+        Transition kind = cameraSwitch ? (cameraFadeMs > 0 ? Transition.CROSSFADE : Transition.CUT) : transition;
+        int ms = cameraSwitch ? cameraFadeMs : durationMs;
+        boolean animate = allowAnimation && kind != Transition.CUT && ms > 0;
         // A new change during a running transition starts from the frame being transitioned to.
         previous = animate ? shown : null;
         shown = next;
-        activeTransition = animate ? transition : Transition.CUT;
-        activeDurationMs = animate ? durationMs : 0;
+        activeTransition = animate ? kind : Transition.CUT;
+        activeDurationMs = animate ? ms : 0;
         startNanos = System.nanoTime();
         if (animate) {
             timer.start();

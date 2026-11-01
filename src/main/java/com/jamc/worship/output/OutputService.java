@@ -88,13 +88,13 @@ public final class OutputService {
     }
 
     /** One active route as the operator sees it ("Display 2 · Program"). */
-    public record RouteInfo(String target, int displayNumber, Source source, boolean showing) {
+    public record RouteInfo(String target, int displayNumber, String displayName, Source source, boolean showing) {
         public boolean windowed() {
             return displayNumber <= 0;
         }
 
         public String place() {
-            return windowed() ? "Window" : "Display " + displayNumber;
+            return windowed() ? "Window" : displayName != null ? displayName : "Display " + displayNumber;
         }
     }
 
@@ -185,8 +185,9 @@ public final class OutputService {
     public List<RouteInfo> routes() {
         List<RouteInfo> out = new ArrayList<>();
         for (Route r : routes.values()) {
-            int number = r.windowTarget() ? 0 : displays.find(r.target).map(DisplayManager.Display::number).orElse(-1);
-            out.add(new RouteInfo(r.target, number, r.source, r.window != null));
+            DisplayManager.Display d = r.windowTarget() ? null : displays.find(r.target).orElse(null);
+            int number = r.windowTarget() ? 0 : d == null ? -1 : d.number();
+            out.add(new RouteInfo(r.target, number, d == null ? null : d.title(), r.source, r.window != null));
         }
         return out;
     }
@@ -232,9 +233,9 @@ public final class OutputService {
         if (existing != null && existing.source != source && displayId != null && parent != null) {
             Object[] options = {"Cancel", "Switch to " + source};
             int choice = JOptionPane.showOptionDialog(parent,
-                    "Display " + display.number() + " is currently showing " + existing.source + ".\n\n"
-                            + "Switch Display " + display.number() + " to " + source + "?",
-                    "Display " + display.number(), JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null,
+                    display.title() + " is currently showing " + existing.source + ".\n\n"
+                            + "Switch " + display.title() + " to " + source + "?",
+                    display.title(), JOptionPane.DEFAULT_OPTION, JOptionPane.QUESTION_MESSAGE, null,
                     options, options[1]);
             if (choice != 1) {
                 return false;
@@ -243,7 +244,7 @@ public final class OutputService {
         if (useMode == Mode.FULLSCREEN && isOperatorScreen(display) && parent != null) {
             Object[] options = {"Use a Window", "Cover This Screen", "Cancel"};
             int choice = JOptionPane.showOptionDialog(parent,
-                    "Display " + display.number() + " is the screen you are working on.\n"
+                    display.title() + " is the screen you are working on.\n"
                             + "Fullscreen output would cover these controls.\n\n"
                             + "Connect the projector, or show " + source + " in a window.",
                     "Display output", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[0]);
@@ -417,7 +418,8 @@ public final class OutputService {
                     g2.drawString(s, (getWidth() - fm.stringWidth(s)) / 2, (getHeight() - fm.getHeight()) / 2 + fm.getAscent());
                     g2.setFont(new Font("Segoe UI", Font.PLAIN, Math.max(12, getHeight() / 16)));
                     fm = g2.getFontMetrics();
-                    String sub = d.pixelWidth() + "×" + d.pixelHeight() + (d.primary() ? " · main" : "");
+                    String sub = (d.name() == null ? "" : d.name() + " · ") + d.pixelWidth() + "×" + d.pixelHeight()
+                            + (d.primary() ? " · main" : "");
                     g2.drawString(sub, (getWidth() - fm.stringWidth(sub)) / 2, getHeight() - fm.getHeight());
                     g2.dispose();
                 }
@@ -516,7 +518,7 @@ public final class OutputService {
                     r.mode = Mode.WINDOWED;
                 }
                 show(r, d);
-                notifier.accept("Display " + d.number() + " reconnected. " + r.source + " is showing again.");
+                notifier.accept(d.title() + " reconnected. " + r.source + " is showing again.");
             } else if (d != null && r.window.isFullscreen() && !r.window.getBounds().equals(d.bounds())) {
                 r.window.setBounds(d.bounds()); // resolution or arrangement changed: refit
             }

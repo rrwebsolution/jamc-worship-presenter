@@ -126,6 +126,42 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         });
     }
 
+    /**
+     * Mutes (or brings back) the microphone inputs MIC and AUX during the recording / stream, e.g. while a video
+     * plays on Program, so people talking in the room are not mixed into the video's sound. FFmpeg gets the new
+     * level through its command line on stdin ("c" + filter command), so nothing restarts. The MEDIA input is
+     * never touched.
+     */
+    public void setMicsMuted(boolean muted) {
+        Process p = process;
+        if (p == null || !p.isAlive() || stopping) {
+            return;
+        }
+        double master = settings.masterMuted() ? 0 : settings.masterVolume() / 100.0;
+        StringBuilder keys = new StringBuilder();
+        if (settings.micDevice() != null && !settings.micMuted() && !StreamSettings.APP_AUDIO.equals(settings.micDevice())) {
+            keys.append(micCommand("mic", muted ? 0 : settings.micVolume() / 100.0 * master));
+        }
+        if (settings.auxDevice() != null && !settings.auxMuted() && !StreamSettings.APP_AUDIO.equals(settings.auxDevice())) {
+            keys.append(micCommand("aux", muted ? 0 : settings.auxVolume() / 100.0 * master));
+        }
+        if (keys.isEmpty()) {
+            return;
+        }
+        try {
+            OutputStream out = p.getOutputStream();
+            out.write(keys.toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+            out.flush();
+        } catch (IOException e) {
+            log.debug("{} encoder: could not change the microphone level", target, e);
+        }
+    }
+
+    /** "c" (send a command to a filter), then "volume@mic -1 volume 0.8": the filter, now, new level. */
+    static String micCommand(String input, double gain) {
+        return "cvolume@" + input + " -1 volume " + fmt(gain) + "\n";
+    }
+
     @Override
     public boolean isRunning() {
         Process p = process;
@@ -264,8 +300,12 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
                 "-i", videoInput));
         // audio inputs: microphone, camera / capture audio, and the loopback carrying Program media (videos, music)
         List<double[]> gains = new ArrayList<>();
-        for (Object[] in : new Object[][]{{s.micDevice(), s.micMuted(), s.micVolume()},
-                {s.auxDevice(), s.auxMuted(), s.auxVolume()}, {s.mediaDevice(), s.mediaMuted(), s.mediaVolume()}}) {
+        List<String> names = new ArrayList<>();
+        String[] inputNames = {"mic", "aux", "media"};
+        Object[][] inputs = {{s.micDevice(), s.micMuted(), s.micVolume()},
+                {s.auxDevice(), s.auxMuted(), s.auxVolume()}, {s.mediaDevice(), s.mediaMuted(), s.mediaVolume()}};
+        for (int n = 0; n < inputs.length; n++) {
+            Object[] in = inputs[n];
             String device = (String) in[0];
             if (StreamSettings.APP_AUDIO.equals(device)) {
                 if (appAudio != null && !(Boolean) in[1]) { // this app's sound: raw PCM from the loopback capture
@@ -274,6 +314,7 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
                             "-f", appAudio.sample(), "-ar", String.valueOf(appAudio.rate()),
                             "-ac", String.valueOf(appAudio.channels()), "-i", appAudio.url()));
                     gains.add(new double[]{(Integer) in[2] / 100.0});
+                    names.add(inputNames[n]);
                 }
             } else if (device != null && !(Boolean) in[1]) {
                 // stamped with the real time it arrives: a device that delivers late or unevenly (some laptop
@@ -281,6 +322,7 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
                 c.addAll(List.of("-thread_queue_size", "1024", "-use_wallclock_as_timestamps", "1", "-f", "dshow", "-audio_buffer_size", "50",
                         "-i", "audio=" + device));
                 gains.add(new double[]{(Integer) in[2] / 100.0});
+                names.add(inputNames[n]);
             }
         }
         double master = s.masterMuted() ? 0 : s.masterVolume() / 100.0;
@@ -291,7 +333,9 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         } else {
             StringBuilder f = new StringBuilder();
             for (int i = 0; i < gains.size(); i++) {
-                f.append('[').append(i + 1).append(":a]volume=").append(fmt(gains.get(i)[0] * master))
+                // named (volume@mic / volume@aux / volume@media) so a level can change during the recording
+                f.append('[').append(i + 1).append(":a]volume@").append(names.get(i)).append('=')
+                        .append(fmt(gains.get(i)[0] * master))
                         .append(",aresample=48000:async=1000[a").append(i + 1).append("];"); // gaps filled, drift corrected
             }
             if (gains.size() == 1) {

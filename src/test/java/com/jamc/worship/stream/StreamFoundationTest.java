@@ -68,7 +68,7 @@ class StreamFoundationTest {
         String line = String.join(" ", FFmpegStreamEncoder.command("ffmpeg", withMedia, "libx264",
                 FFmpegStreamEncoder.Target.STREAM, "rtmps://example/key"));
         assertTrue(line.contains("audio=CABLE Output (VB-Audio Virtual Cable)"), "video sound reaches the livestream");
-        assertTrue(line.contains("[3:a]volume=0.90") && line.contains("[a1][a2][a3]amix=inputs=3"), line);
+        assertTrue(line.contains("[3:a]volume@media=0.90") && line.contains("[a1][a2][a3]amix=inputs=3"), line);
 
         // muted media: video sound stays out of the stream, the other inputs stay
         StreamSettings muted = new StreamSettings(s.providerId(), s.server(), s.destinationName(), s.width(), s.height(),
@@ -88,7 +88,7 @@ class StreamFoundationTest {
         assertTrue(line.contains("-f rawvideo -pix_fmt bgr24 -video_size 1920x1080 -framerate 30 -i pipe:0"));
         assertTrue(cmd.contains("audio=Microphone (Iriun Webcam)"));
         assertTrue(cmd.contains("audio=Stereo Mix"));
-        assertTrue(line.contains("[1:a]volume=0.80") && line.contains("[2:a]volume=0.60") && line.contains("amix=inputs=2"));
+        assertTrue(line.contains("[1:a]volume@mic=0.80") && line.contains("[2:a]volume@aux=0.60") && line.contains("amix=inputs=2"));
         assertTrue(line.contains("-c:v libx264") && line.contains("-b:v 6000k") && line.contains("-c:a aac -b:a 160k"));
         assertTrue(line.contains("+frag_keyframe+empty_moov") && cmd.getLast().equals("C:/rec/Service.mp4"));
         assertFalse(cmd.contains("-shortest"), "STOP sends q instead: -shortest held back live audio inputs");
@@ -99,7 +99,7 @@ class StreamFoundationTest {
         String withApp = String.join(" ", FFmpegStreamEncoder.command("ffmpeg", appSound, "libx264", FFmpegStreamEncoder.Target.RECORDING,
                 "C:/rec/Service.mp4", new LoopbackAudio.Input("tcp://127.0.0.1:1234", "f32le", 48000, 2, "Speakers")));
         assertTrue(withApp.contains("-f f32le -ar 48000 -ac 2 -i tcp://127.0.0.1:1234"), withApp);
-        assertTrue(withApp.contains("[1:a]volume=0.90"), withApp);
+        assertTrue(withApp.contains("[1:a]volume@media=0.90"), withApp);
         assertFalse(String.join(" ", FFmpegStreamEncoder.command("ffmpeg", appSound, "libx264",
                 FFmpegStreamEncoder.Target.RECORDING, "x.mp4")).contains("tcp://"), "no capture running: no app sound input");
 
@@ -236,5 +236,15 @@ class StreamFoundationTest {
         } catch (Exception e) {
             return "";
         }
+    }
+
+    /**
+     * While a video plays, the room microphones are muted in the running recording through FFmpeg's command
+     * input ("c", then the filter, -1 = now, the command): checked against FFmpeg 9 with a test tone.
+     */
+    @Test
+    void microphonesAreMutedThroughANamedVolumeFilterWhileRecording() {
+        assertEquals("cvolume@mic -1 volume 0.00\n", FFmpegStreamEncoder.micCommand("mic", 0));
+        assertEquals("cvolume@aux -1 volume 0.60\n", FFmpegStreamEncoder.micCommand("aux", 0.6));
     }
 }

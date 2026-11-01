@@ -33,7 +33,7 @@ public final class FontChoices {
         FileNameExtensionFilter filter = new FileNameExtensionFilter("Font files (*.ttf, *.otf, *.ttc)", "ttf", "otf", "ttc");
         chooser.addChoosableFileFilter(filter);
         chooser.setFileFilter(filter);
-        if (chooser.showOpenDialog(parent) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, parent) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         File[] files = chooser.getSelectedFiles();
@@ -64,6 +64,42 @@ public final class FontChoices {
                 after.run();
             }
         });
+    }
+
+    /**
+     * The FONT list shows every name in its own typeface (symbol fonts, which cannot draw their own name,
+     * stay in the normal font) and its tooltip says how many fonts the computer has. When the list is shown
+     * again it picks up fonts installed in Windows meanwhile.
+     */
+    public static void familyRenderer(JComboBox<String> combo) {
+        java.util.Map<String, java.awt.Font> faces = new java.util.HashMap<>();
+        combo.setRenderer(new DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean selected, boolean focus) {
+                super.getListCellRendererComponent(list, value, index, selected, focus);
+                if (value instanceof String name && index >= 0) {
+                    java.awt.Font base = list.getFont();
+                    java.awt.Font face = faces.computeIfAbsent(name, n -> {
+                        java.awt.Font f = new java.awt.Font(n, java.awt.Font.PLAIN, 1).deriveFont(base.getSize2D() + 2f);
+                        return f.canDisplayUpTo(n) == -1 ? f : null;
+                    });
+                    if (face != null) {
+                        setFont(face);
+                    }
+                }
+                return this;
+            }
+        });
+        Runnable count = () -> combo.setToolTipText(combo.getItemCount() + " fonts on this computer (every installed font). "
+                + "Each name is shown in its own font.");
+        count.run();
+        combo.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && combo.isShowing()) {
+                // fonts installed in Windows while the app runs: the Fonts listener refills the list
+                BackgroundTask.run("Find fonts", Fonts::loadWindowsFonts, added -> count.run(), err -> { });
+            }
+        });
+        Fonts.addListener(() -> SwingUtilities.invokeLater(count));
     }
 
     /**

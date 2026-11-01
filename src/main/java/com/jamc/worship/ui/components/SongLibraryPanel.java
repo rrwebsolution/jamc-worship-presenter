@@ -381,7 +381,7 @@ public class SongLibraryPanel extends JPanel {
                 "Lyrics files (*.txt, *.lrc, *.srt, *.vtt)", "txt", "lrc", "srt", "vtt");
         chooser.addChoosableFileFilter(filter);
         chooser.setFileFilter(filter);
-        if (chooser.showOpenDialog(this) != javax.swing.JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != javax.swing.JFileChooser.APPROVE_OPTION) {
             return;
         }
         java.io.File f = chooser.getSelectedFile();

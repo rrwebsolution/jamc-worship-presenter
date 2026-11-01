@@ -43,7 +43,8 @@ public class SourceConfig {
     /** Show the picture [on]; off plays the sound only. */
     public Boolean videoEnabled;
     /**
-     * Play the file's sound on Program [on]. It goes quiet by itself while the operator plays another video or
+     * CAMERA: play the camera's own microphone / HDMI sound on Program [off: camera audio is switched on explicitly,
+     * so several camera mics never echo]. VIDEO / AUDIO: play the file's sound on Program [on]. It goes quiet by itself while the operator plays another video or
      * audio (a Program video, the audio player), so only what was played is heard; Preview stays silent.
      */
     public Boolean audioEnabled;
@@ -59,14 +60,30 @@ public class SourceConfig {
     public Boolean restartOnProgram;
     /** Send this source's sound to the Preview monitor device instead of the Program output [off]. */
     public Boolean monitorOnly;
-    /** LYRICS picked from the song library: the song it belongs to (the lyrics stay dynamic; nothing is copied). */
+    /** LYRICS picked from the song library: the song it belongs to (nothing is copied). */
     public Long songId;
+    /**
+     * LYRICS: true = SPECIFIC, only {@link #songId}'s lyrics show in this box (another song sent keeps this one's
+     * last slide); null = dynamic, whatever lyrics are sent.
+     */
+    public Boolean fixedSong;
     /** Added from the service schedule: the service item it refers to. */
     public Long serviceItemId;
     /** Locked layers cannot be moved or resized on the canvas [off]. */
     public Boolean locked;
     /** CAMERA: flip the picture left to right; null = off. */
     public Boolean mirror;
+    /** CAMERA: part of the picture cut off at each edge, as a fraction of its width / height (0..0.45); null = 0. */
+    public Double cropLeft;
+    public Double cropTop;
+    public Double cropRight;
+    public Double cropBottom;
+    /** CAMERA: clockwise rotation in degrees (0, 90, 180, 270); null = 0. */
+    public Integer rotation;
+    /** CAMERA: what the box shows while the camera is disconnected or failed: SLATE ["Camera Offline"], BLACK or IMAGE. */
+    public String offline;
+    /** CAMERA: the image shown while offline when {@link #offline} is IMAGE (e.g. the church logo). */
+    public String offlineImage;
     /** Keep the box at the 16:9 shape while resizing; null = on for PRESENTATION, off for other sources. */
     public Boolean keepAspect;
     /** A permanent id for this layer (source ids change on every save): keeps a running slideshow in place. */
@@ -93,13 +110,19 @@ public class SourceConfig {
 
         @Override
         public String toString() {
-            return this == DYNAMIC ? "Dynamic" : "Fixed";
+            return this == DYNAMIC ? "Dynamic (any presentation sent)" : "Specific file only";
         }
     }
 
     @JsonIgnore
     public boolean isDynamicPresentation() {
         return presentationMode != PresentationMode.FIXED;
+    }
+
+    /** LYRICS fixed to one library song. */
+    @JsonIgnore
+    public boolean isFixedSong() {
+        return songId != null && Boolean.TRUE.equals(fixedSong);
     }
 
     public SourceConfig copy() {
@@ -124,7 +147,15 @@ public class SourceConfig {
         c.presentationMode = presentationMode;
         c.keepAspect = keepAspect;
         c.mirror = mirror;
+        c.cropLeft = cropLeft;
+        c.cropTop = cropTop;
+        c.cropRight = cropRight;
+        c.cropBottom = cropBottom;
+        c.rotation = rotation;
+        c.offline = offline;
+        c.offlineImage = offlineImage;
         c.songId = songId;
+        c.fixedSong = fixedSong;
         c.serviceItemId = serviceItemId;
         c.locked = locked;
         c.videoEnabled = videoEnabled;

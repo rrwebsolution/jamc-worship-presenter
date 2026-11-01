@@ -135,7 +135,7 @@ public class BibleVersionsDialog extends JDialog {
     /** Shows the dialog. Returns true if anything changed (versions or keys). */
     public static boolean show(Window owner, BibleService bible, AppConfig config) {
         BibleVersionsDialog d = new BibleVersionsDialog(owner, bible, config);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return d.changed;
     }
 
@@ -203,7 +203,7 @@ public class BibleVersionsDialog extends JDialog {
         chooser.setDialogTitle("Import a licensed Bible file" + (v == null ? "" : " for " + v.abbreviation()));
         chooser.setFileFilter(new FileNameExtensionFilter("Bible files (JSON, Zefania XML, CSV/TSV)",
                 "json", "gz", "xml", "csv", "tsv", "txt"));
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         String abbr = v == null ? null : v.abbreviation();

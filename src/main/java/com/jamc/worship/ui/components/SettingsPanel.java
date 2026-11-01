@@ -29,7 +29,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
 import javax.swing.JScrollPane;
-import javax.swing.JSlider;
+// import javax.swing.JSlider;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.filechooser.FileNameExtensionFilter;
@@ -59,6 +59,8 @@ public class SettingsPanel extends JPanel {
     public static final String KEY_SONG_CLICK_LIVE = "live.songClickGoesLive";
     /** Clicking a PowerPoint slide sends it straight to Program, like song lyrics. */
     public static final String KEY_PRESENTATION_CLICK_LIVE = "live.presentationClickGoesLive";
+    /** Presentations: NEXT / PREVIOUS (buttons and keys) put the slide in Preview and on Program at once. On by default. */
+    public static final String KEY_PRESENTATION_NEXT_LIVE = "live.presentationNextGoesLive";
     /** Clicking a scene switches Program at once (Direct Switch) instead of Preview + TAKE. */
     public static final String KEY_SCENE_DIRECT = "scenes.directSwitch";
     public static final String KEY_VLC_PATH = "media.vlcPath";
@@ -98,6 +100,55 @@ public class SettingsPanel extends JPanel {
             return name;
         }
     }
+
+    /**
+     * Settings that also have a control elsewhere (Output page, next to TAKE, the Scenes list, the Stream
+     * page). Both places change the same setting, so they always agree.
+     */
+    public interface LiveHooks {
+        com.jamc.worship.output.OutputService output();
+
+        com.jamc.worship.output.DisplayManager displays();
+
+        com.jamc.worship.stream.StreamManager stream();
+
+        com.jamc.worship.output.Transition transition();
+
+        int transitionMs();
+
+        void setTransition(com.jamc.worship.output.Transition transition, int durationMs);
+
+        boolean autoTake();
+
+        void setAutoTake(boolean on);
+
+        boolean separateLayouts();
+
+        void setSeparateLayouts(boolean on);
+
+        List<com.jamc.worship.model.Scene> scenes();
+
+        Long defaultSceneId();
+
+        /** null = no default scene (Program starts with the last live scene). */
+        void setDefaultScene(com.jamc.worship.model.Scene scene);
+    }
+
+    /** "None" in the default scene list. */
+    private record SceneChoice(com.jamc.worship.model.Scene scene) {
+        @Override
+        public String toString() {
+            return scene == null ? "None (start with the last live scene)" : scene.getName();
+        }
+    }
+
+    // filled by installLiveSettings (the live parts are created after this page)
+    private final JPanel projectorBody = Ui.transparent(new BorderLayout());
+    private final JPanel liveBody = Ui.transparent(new BorderLayout());
+    private final JPanel recordingBody = Ui.transparent(new BorderLayout());
+    private final List<Runnable> liveSync = new java.util.ArrayList<>();
+    private final List<JComponent> liveSections = new java.util.ArrayList<>();
+    private boolean syncing;
 
     private final AppContext context;
     private final Shortcuts shortcuts;
@@ -188,13 +239,14 @@ public class SettingsPanel extends JPanel {
             cfg.save();
         });
         JPanel output = rows(
-                Ui.label("Choose the projector display and fullscreen/windowed mode on the Output page.", Palette::secondaryText, null),
                 flow(Ui.small("Projector cursor:"), cursor),
                 flow(Ui.small("OBS window size:"), res, obsButton), borderless, green,
                 Ui.label("<html>In OBS add a <b>Window Capture</b> source and pick \"" + ObsOutput.WINDOW_TITLE
                         + "\". With the green option, add a Chroma Key filter. OBS handles streaming, recording and audio.</html>",
                         Palette::mutedText, "small"));
         content.add(section("Output & OBS", "Projector and livestream picture", output), c);
+        c.gridy++;
+        content.add(liveSection("Projector", "Which display the projector uses, fullscreen or windowed, and what it shows", projectorBody), c);
         c.gridy++;
 
         // PRESENTATION
@@ -215,14 +267,14 @@ public class SettingsPanel extends JPanel {
         JPanel presentation = rows(flow(Ui.small("Default theme for songs and slides:"), defaultTheme),
                 flow(Ui.small("Theme for Bible verses:"), bibleTheme),
                 checkbox("Song lyrics: clicking a slide sends it live at once (no Preview step)", KEY_SONG_CLICK_LIVE, true),
-                checkbox("Presentations (PowerPoint): clicking a slide sends it live at once (no Preview step)",
-                        KEY_PRESENTATION_CLICK_LIVE, true),
-                sceneSwitchRow(),
+                Ui.label("Presentations (PowerPoint): click selects a slide, double-click sends it to Preview, TAKE puts it live.",
+                        Palette::mutedText, "small"),
+                checkbox("Presentations: NEXT / PREVIOUS slide moves Preview and Program together", KEY_PRESENTATION_NEXT_LIVE, true),
                 checkbox("Double-click a slide to send it live (otherwise double-click only previews; use TAKE)",
-                        KEY_DOUBLE_CLICK_LIVE, false),
-                Ui.label("Default transition and duration are chosen next to the TAKE button and remembered.",
-                        Palette::mutedText, "small"));
+                        KEY_DOUBLE_CLICK_LIVE, false));
         content.add(section("Presentation", "Default look", presentation), c);
+        c.gridy++;
+        content.add(liveSection("Live & Scenes", "Transition, auto-take and how scenes reach Preview and Program", liveBody), c);
         c.gridy++;
 
         // TYPOGRAPHY (one profile per kind of content)
@@ -307,14 +359,8 @@ public class SettingsPanel extends JPanel {
         c.gridy++;
 
         // MEDIA
-        JSlider volume = new JSlider(0, 150, parseInt(cfg.get(KEY_VOLUME, "100"), 100));
-        volume.addChangeListener(e -> {
-            if (!volume.getValueIsAdjusting()) {
-                cfg.set(KEY_VOLUME, String.valueOf(volume.getValue()));
-                hub.setProgramVideoVolume(volume.getValue());
-                cfg.save();
-            }
-        });
+        JComponent volume = Ui.label("<html>Videos and audio start with their own sound: 100 % as recorded. To make all "
+                + "media quieter, use the MEDIA fader in the mixer.</html>", Palette::mutedText, "small");
         JComboBox<VideoEnd> end = new JComboBox<>(VideoEnd.values());
         end.setSelectedItem(VideoEnd.parse(cfg.get(KEY_VIDEO_END, null)));
         end.addActionListener(e -> {
@@ -326,11 +372,15 @@ public class SettingsPanel extends JPanel {
         locate.addActionListener(e -> locateVlc());
         JButton detect = Ui.button("Detect Cameras", "video");
         detect.addActionListener(e -> detectCameras());
-        JPanel media = rows(vlcStatus, flow(locate), flow(Ui.small("Default volume:"), volume),
+        JPanel media = rows(vlcStatus, flow(locate), volume,
                 flow(Ui.small("When a live video ends:"), end), autoplay, flow(detect), cameraStatus);
         content.add(section("Media & Camera", "Video, audio and camera playback use VLC media player", media), c);
         c.gridy++;
         content.add(section("Audio", "Where Program and Preview sound goes", new AudioSettingsPanel(hub.routing(), cfg)), c);
+        c.gridy++;
+        content.add(section("Camera", "Multi-camera performance and camera switching", buildCameraSettings(cfg)), c);
+        c.gridy++;
+        content.add(liveSection("Recording & Livestream", "Quality, encoder, where recordings go, FFmpeg and microphones", recordingBody), c);
         c.gridy++;
 
         // INTEGRATIONS → LYRICS
@@ -453,7 +503,7 @@ public class SettingsPanel extends JPanel {
         JFileChooser chooser = new JFileChooser(context.paths().backupsDir().toFile());
         chooser.setSelectedFile(backups.defaultBackupFile().toFile());
         chooser.setFileFilter(new FileNameExtensionFilter("Backup (*.zip)", "zip"));
-        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showSaveDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         Path target = chooser.getSelectedFile().toPath();
@@ -475,7 +525,7 @@ public class SettingsPanel extends JPanel {
     private void restore() {
         JFileChooser chooser = new JFileChooser(context.paths().backupsDir().toFile());
         chooser.setFileFilter(new FileNameExtensionFilter("Backup (*.zip)", "zip"));
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         Path file = chooser.getSelectedFile().toPath();
@@ -501,7 +551,7 @@ public class SettingsPanel extends JPanel {
         JFileChooser chooser = new JFileChooser("C:\\Program Files");
         chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
         chooser.setDialogTitle("Select the folder that contains libvlc.dll");
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         Path dir = chooser.getSelectedFile().toPath();
@@ -516,6 +566,61 @@ public class SettingsPanel extends JPanel {
                 "Restart", JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION) {
             restart.run();
         }
+    }
+
+    private java.util.function.IntConsumer cameraFadeHandler = ms -> { };
+
+    /** Called with the new camera switch fade (0 = CUT) when it changes here. */
+    public void setCameraSwitchFadeHandler(java.util.function.IntConsumer h) {
+        cameraFadeHandler = h == null ? ms -> { } : h;
+    }
+
+    /** Settings → Camera: multiview quality and frame rate, the camera switch transition, Direct Camera Switching. */
+    private JComponent buildCameraSettings(AppConfig cfg) {
+        com.jamc.worship.camera.CameraSettings cam = new com.jamc.worship.camera.CameraSettings(cfg);
+        JComboBox<com.jamc.worship.camera.CameraSettings.Quality> quality =
+                new JComboBox<>(com.jamc.worship.camera.CameraSettings.Quality.values());
+        quality.setSelectedItem(cam.quality());
+        quality.setToolTipText("How smoothly the multiview tiles are scaled. Program always keeps full quality.");
+        quality.addActionListener(e -> cam.setQuality((com.jamc.worship.camera.CameraSettings.Quality) quality.getSelectedItem()));
+        JComboBox<Integer> fps = new JComboBox<>(new Integer[]{15, 30, 60});
+        fps.setSelectedItem(cam.previewFps());
+        fps.setToolTipText("Refresh rate of the multiview tiles. Cameras not in Preview or Program refresh at half this rate.");
+        fps.addActionListener(e -> cam.setPreviewFps((Integer) fps.getSelectedItem()));
+
+        String[] choices = {"Cut (recommended)", "Fade 200 ms", "Fade 300 ms", "Custom fade"};
+        JComboBox<String> transition = new JComboBox<>(choices);
+        javax.swing.JSpinner custom = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(Math.max(100, cam.switchFadeMs()), 50, 3000, 50));
+        int ms = cam.switchFadeMs();
+        transition.setSelectedIndex(ms == 0 ? 0 : ms == 200 ? 1 : ms == 300 ? 2 : 3);
+        custom.setEnabled(transition.getSelectedIndex() == 3);
+        Runnable applyFade = () -> {
+            int v = switch (transition.getSelectedIndex()) {
+                case 1 -> 200;
+                case 2 -> 300;
+                case 3 -> ((Number) custom.getValue()).intValue();
+                default -> 0;
+            };
+            custom.setEnabled(transition.getSelectedIndex() == 3);
+            cam.setSwitchFadeMs(v);
+            cameraFadeHandler.accept(v);
+        };
+        transition.addActionListener(e -> applyFade.run());
+        custom.addChangeListener(e -> applyFade.run());
+        transition.setToolTipText("Used when TAKE goes from one camera scene to another. Only the camera layers change; "
+                + "lyrics, Bible, logo, lower third and background stay as they are.");
+
+        JCheckBox direct = new JCheckBox("Direct Camera Switching (advanced)");
+        direct.setSelected(cam.directSwitch());
+        direct.setToolTipText("Off (default): a camera goes Preview → TAKE → Program. On: the multiview shows a SWITCH NOW "
+                + "control that puts a camera on Program at once. Scene library clicks never go live directly.");
+        direct.addActionListener(e -> cam.setDirectSwitch(direct.isSelected()));
+
+        return rows(flow(Ui.small("Multiview quality:"), quality), flow(Ui.small("Multiview FPS:"), fps),
+                flow(Ui.small("Camera switch:"), transition, custom, Ui.small("ms")), direct,
+                Ui.label("<html>Camera audio is off for every camera until switched on in its scene source (several camera "
+                        + "microphones together cause echo and feedback). Use the church mixer as the main Program sound."
+                        + "</html>", Palette::mutedText, "small"));
     }
 
     private void detectCameras() {
@@ -585,6 +690,254 @@ public class SettingsPanel extends JPanel {
         d.setLocationRelativeTo(this);
         d.setVisible(true);
         buildShortcutRows();
+    }
+
+    // ------------------------------------------------------------------ live settings (also elsewhere in the app)
+
+    /** A section that stays hidden until {@link #installLiveSettings} fills it. */
+    private JComponent liveSection(String title, String subtitle, JComponent body) {
+        JComponent s = section(title, subtitle, body);
+        s.setVisible(false);
+        liveSections.add(s);
+        return s;
+    }
+
+    /**
+     * Adds the settings whose controls also live on the Output page, next to TAKE, in the Scenes list and on
+     * the Stream page, so everything that can be set is here too. Both places stay in step.
+     */
+    public void installLiveSettings(LiveHooks h) {
+        com.jamc.worship.output.OutputService out = h.output();
+        com.jamc.worship.stream.StreamManager stream = h.stream();
+
+        // PROJECTOR
+        JComboBox<com.jamc.worship.output.DisplayManager.Display> display = new JComboBox<>();
+        JRadioButton fullscreen = new JRadioButton("Fullscreen");
+        JRadioButton windowed = new JRadioButton("Windowed (to rehearse on one screen)");
+        ButtonGroup modes = new ButtonGroup();
+        modes.add(fullscreen);
+        modes.add(windowed);
+        JComboBox<com.jamc.worship.output.OutputService.Source> shows =
+                new JComboBox<>(com.jamc.worship.output.OutputService.Source.values());
+        JButton openClose = Ui.button("Open Projector", "monitor");
+        JButton identify = Ui.button("Identify Displays", "monitor");
+        JLabel outState = Ui.secondary(" ");
+        display.addActionListener(e -> {
+            if (!syncing && display.getSelectedItem() instanceof com.jamc.worship.output.DisplayManager.Display d) {
+                out.setDisplay(d.id(), this);
+            }
+        });
+        java.awt.event.ActionListener mode = e -> {
+            if (!syncing) {
+                out.setMode(windowed.isSelected() ? com.jamc.worship.output.OutputService.Mode.WINDOWED
+                        : com.jamc.worship.output.OutputService.Mode.FULLSCREEN, this);
+            }
+        };
+        fullscreen.addActionListener(mode);
+        windowed.addActionListener(mode);
+        shows.addActionListener(e -> {
+            if (!syncing && shows.getSelectedItem() instanceof com.jamc.worship.output.OutputService.Source s) {
+                out.setProjectorSource(s, this);
+            }
+        });
+        openClose.addActionListener(e -> out.toggle(this));
+        identify.addActionListener(e -> out.identifyDisplays());
+        Runnable syncProjector = () -> live(() -> {
+            display.removeAllItems();
+            h.displays().displays().forEach(display::addItem);
+            display.setSelectedItem(out.targetDisplay());
+            (out.mode() == com.jamc.worship.output.OutputService.Mode.WINDOWED ? windowed : fullscreen).setSelected(true);
+            shows.setSelectedItem(out.projectorSource());
+            openClose.setText(out.isOpen() ? "Close Projector" : "Open Projector");
+            outState.setText("Now: " + out.describe());
+        });
+        out.addListener(() -> SwingUtilities.invokeLater(syncProjector));
+        h.displays().addChangeListener(() -> SwingUtilities.invokeLater(syncProjector));
+        projectorBody.add(rows(flow(Ui.small("Projector display:"), display),
+                flow(Ui.small("Mode:"), fullscreen, windowed),
+                flow(Ui.small("Projector shows:"), shows),
+                flow(openClose, identify), outState,
+                Ui.label("The Output page and the right-click Display on Projector use these same settings.",
+                        Palette::mutedText, "small")), BorderLayout.CENTER);
+        liveSync.add(syncProjector);
+
+        // LIVE & SCENES
+        JComboBox<com.jamc.worship.output.Transition> transition = new JComboBox<>(com.jamc.worship.output.Transition.values());
+        String[] durationNames = new String[com.jamc.worship.output.ProgramOutput.DURATIONS_MS.length];
+        for (int i = 0; i < durationNames.length; i++) {
+            durationNames[i] = (com.jamc.worship.output.ProgramOutput.DURATIONS_MS[i] / 1000.0 + " s").replace(".0 s", " s");
+        }
+        JComboBox<String> duration = new JComboBox<>(durationNames);
+        JCheckBox autoTake = new JCheckBox("Auto-take: selecting a slide sends it live at once (skips Preview + TAKE)");
+        JCheckBox separate = new JCheckBox("Separate Layouts: Preview (church TV) and Program (livestream) keep their own scene");
+        JComboBox<SceneChoice> defaultScene = new JComboBox<>();
+        Runnable saveTransition = () -> {
+            if (!syncing && transition.getSelectedItem() instanceof com.jamc.worship.output.Transition t) {
+                int i = Math.max(0, duration.getSelectedIndex());
+                duration.setEnabled(t != com.jamc.worship.output.Transition.CUT);
+                h.setTransition(t, com.jamc.worship.output.ProgramOutput.DURATIONS_MS[i]);
+            }
+        };
+        transition.addActionListener(e -> saveTransition.run());
+        duration.addActionListener(e -> saveTransition.run());
+        autoTake.addActionListener(e -> {
+            if (!syncing) {
+                h.setAutoTake(autoTake.isSelected());
+            }
+        });
+        separate.addActionListener(e -> {
+            if (!syncing) {
+                h.setSeparateLayouts(separate.isSelected());
+            }
+        });
+        defaultScene.addActionListener(e -> {
+            if (!syncing && defaultScene.getSelectedItem() instanceof SceneChoice sc) {
+                h.setDefaultScene(sc.scene());
+            }
+        });
+        Runnable syncLive = () -> live(() -> {
+            transition.setSelectedItem(h.transition());
+            int[] ms = com.jamc.worship.output.ProgramOutput.DURATIONS_MS;
+            for (int i = 0; i < ms.length; i++) {
+                if (ms[i] == h.transitionMs()) {
+                    duration.setSelectedIndex(i);
+                }
+            }
+            duration.setEnabled(h.transition() != com.jamc.worship.output.Transition.CUT);
+            autoTake.setSelected(h.autoTake());
+            separate.setSelected(h.separateLayouts());
+            defaultScene.removeAllItems();
+            defaultScene.addItem(new SceneChoice(null));
+            SceneChoice chosen = null;
+            for (com.jamc.worship.model.Scene s : h.scenes()) {
+                SceneChoice sc = new SceneChoice(s);
+                defaultScene.addItem(sc);
+                if (java.util.Objects.equals(s.getId(), h.defaultSceneId())) {
+                    chosen = sc;
+                }
+            }
+            defaultScene.setSelectedIndex(0);
+            if (chosen != null) {
+                defaultScene.setSelectedItem(chosen);
+            }
+        });
+        liveBody.add(rows(flow(Ui.small("Transition:"), transition, Ui.small("Duration:"), duration),
+                autoTake, sceneSwitchRow(), separate,
+                flow(Ui.small("Scene when the app starts:"), defaultScene),
+                Ui.label("The same settings are next to the TAKE button and in the Scenes list.", Palette::mutedText, "small")),
+                BorderLayout.CENTER);
+        liveSync.add(syncLive);
+
+        // RECORDING & LIVESTREAM
+        JComboBox<Object> quality = new JComboBox<>();
+        for (com.jamc.worship.stream.StreamSettings.Preset p : com.jamc.worship.stream.StreamSettings.Preset.values()) {
+            quality.addItem(p);
+        }
+        JComboBox<com.jamc.worship.stream.StreamSettings.EncoderChoice> encoder =
+                new JComboBox<>(com.jamc.worship.stream.StreamSettings.EncoderChoice.values());
+        JLabel folder = Ui.label(" ", Palette::text, null);
+        JButton chooseFolder = Ui.button("Choose Folder…", "folder");
+        JButton defaultFolder = Ui.button("Default", null);
+        JButton openFolder = Ui.button("Open", "folder");
+        JLabel ffmpeg = Ui.secondary(" ");
+        JButton locateFfmpeg = Ui.button("Locate FFmpeg…", "search");
+        JCheckBox muteMics = new JCheckBox("Mute the microphones in the recording / livestream while a video or music plays");
+        quality.addActionListener(e -> {
+            if (!syncing && quality.getSelectedItem() instanceof com.jamc.worship.stream.StreamSettings.Preset p) {
+                stream.saveSettings(stream.settings().withPreset(p));
+            }
+        });
+        encoder.addActionListener(e -> {
+            if (!syncing && encoder.getSelectedItem() instanceof com.jamc.worship.stream.StreamSettings.EncoderChoice ch) {
+                stream.saveSettings(stream.settings().withEncoder(ch));
+            }
+        });
+        chooseFolder.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser(stream.recordingsDir().toFile());
+            chooser.setDialogTitle("Save recordings to");
+            chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+            chooser.setAcceptAllFileFilterUsed(false);
+            if (com.jamc.worship.ui.NativeFileDialogs.showDialog(chooser, this, "Use This Folder") == JFileChooser.APPROVE_OPTION) {
+                Path f = chooser.getSelectedFile().toPath();
+                if (!java.nio.file.Files.isDirectory(f) || !java.nio.file.Files.isWritable(f)) {
+                    Dialogs.showInfo(this, "Recordings folder", "Recordings cannot be saved in \"" + f
+                            + "\". Choose a folder you can write to.");
+                    return;
+                }
+                stream.setRecordingsDir(f);
+            }
+        });
+        defaultFolder.addActionListener(e -> stream.setRecordingsDir(null));
+        openFolder.addActionListener(e -> {
+            try {
+                java.nio.file.Files.createDirectories(stream.recordingsDir());
+                Desktop.getDesktop().open(stream.recordingsDir().toFile());
+            } catch (Exception ex) {
+                Dialogs.showError(this, "Could not open the recordings folder.", ex);
+            }
+        });
+        locateFfmpeg.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Locate ffmpeg.exe");
+            if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) == JFileChooser.APPROVE_OPTION) {
+                stream.setFFmpegPath(chooser.getSelectedFile().getAbsolutePath());
+            }
+        });
+        muteMics.addActionListener(e -> {
+            if (!syncing) {
+                stream.setMuteMicsDuringMedia(muteMics.isSelected());
+            }
+        });
+        Runnable syncRecording = () -> live(() -> {
+            com.jamc.worship.stream.StreamSettings s = stream.settings();
+            com.jamc.worship.stream.StreamSettings.Preset p = s.preset();
+            if (quality.getItemCount() > com.jamc.worship.stream.StreamSettings.Preset.values().length) {
+                quality.removeItemAt(quality.getItemCount() - 1);
+            }
+            if (p == null) {
+                String custom = "Custom: " + s.width() + "×" + s.height() + " " + s.fps() + " FPS (set on the Stream page)";
+                quality.addItem(custom);
+                quality.setSelectedItem(custom);
+            } else {
+                quality.setSelectedItem(p);
+            }
+            encoder.setSelectedItem(s.encoder());
+            folder.setText(stream.recordingsDir().toString());
+            folder.setToolTipText(stream.recordingsDir().toString());
+            var caps = stream.capabilities();
+            ffmpeg.setText(stream.isProbing() ? "FFmpeg: checking…"
+                    : caps == null ? "FFmpeg: not checked yet"
+                    : caps.available() ? "FFmpeg: found (" + caps.executable() + ")"
+                    : "FFmpeg: not found. Recording and livestreaming need it.");
+            muteMics.setSelected(stream.muteMicsDuringMedia());
+        });
+        stream.addListener(() -> SwingUtilities.invokeLater(syncRecording));
+        recordingBody.add(rows(flow(Ui.small("Quality:"), quality, Ui.small("Encoder:"), encoder),
+                flow(Ui.small("Recordings folder:"), folder), flow(chooseFolder, defaultFolder, openFolder),
+                flow(ffmpeg, locateFfmpeg), muteMics,
+                Ui.label("<html>Platform, stream key, bitrates and audio devices are on the Stream page; these settings are "
+                        + "shared with it.</html>", Palette::mutedText, "small")), BorderLayout.CENTER);
+        liveSync.add(syncRecording);
+
+        liveSections.forEach(s -> s.setVisible(true));
+        addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && isShowing()) {
+                liveSync.forEach(Runnable::run); // changed elsewhere (next to TAKE, Scenes list, Stream page)
+            }
+        });
+        liveSync.forEach(Runnable::run);
+        revalidate();
+    }
+
+    /** Fills controls without their listeners saving anything. */
+    private void live(Runnable fill) {
+        boolean was = syncing;
+        syncing = true;
+        try {
+            fill.run();
+        } finally {
+            syncing = was;
+        }
     }
 
     // ------------------------------------------------------------------ helpers
@@ -765,7 +1118,7 @@ public class SettingsPanel extends JPanel {
         javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(cfg.get(com.jamc.worship.lyrics.LyricsFolderProvider.KEY_FOLDER, null));
         chooser.setDialogTitle("Folder with the church's lyrics files (TXT, LRC, SRT, VTT)");
         chooser.setFileSelectionMode(javax.swing.JFileChooser.DIRECTORIES_ONLY);
-        if (chooser.showOpenDialog(this) == javax.swing.JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) == javax.swing.JFileChooser.APPROVE_OPTION) {
             cfg.set(com.jamc.worship.lyrics.LyricsFolderProvider.KEY_FOLDER, chooser.getSelectedFile().getAbsolutePath());
             cfg.save();
             refresh.run();
@@ -811,13 +1164,5 @@ public class SettingsPanel extends JPanel {
         row.add(value, BorderLayout.CENTER);
         row.add(open, BorderLayout.EAST);
         return row;
-    }
-
-    private static int parseInt(String s, int def) {
-        try {
-            return Integer.parseInt(s.strip());
-        } catch (NumberFormatException e) {
-            return def;
-        }
     }
 }

@@ -113,7 +113,7 @@ public final class CreateSceneDialog extends JDialog {
     /** Shows the dialog; null when cancelled. */
     public static Request show(Component parent, String currentScene) {
         CreateSceneDialog d = new CreateSceneDialog(parent, currentScene);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return d.result;
     }
 }

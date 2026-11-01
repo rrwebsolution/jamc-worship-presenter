@@ -44,7 +44,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.function.Consumer;
 
 /**
  * SCENE, the homepage: every scene as a large card (live thumbnail, name, number of sources, PREVIEW /
@@ -61,7 +60,9 @@ public class ScenesHomePanel extends JPanel {
     private static final int TILE_H = 178;
 
     private final ScenesDock.Host host;
-    private final Consumer<Scene> openEditor;
+    private final java.util.function.Predicate<Scene> openEditor;
+    /** Asked before ALL SCENES leaves the editor (false = stay: the operator cancelled over unsaved changes). */
+    private java.util.function.BooleanSupplier leaveEditor = () -> true;
     private final CardLayout cards = new CardLayout();
     private final JPanel body = Ui.transparent(cards);
     private final JPanel grid = Ui.transparent(new GridLayout(0, 4, 12, 12));
@@ -77,7 +78,7 @@ public class ScenesHomePanel extends JPanel {
      * @param editor     the scene editor (canvas, sources, + ADD SOURCE)
      * @param openEditor opens a scene in that editor
      */
-    public ScenesHomePanel(ScenesDock.Host host, JComponent editor, Consumer<Scene> openEditor) {
+    public ScenesHomePanel(ScenesDock.Host host, JComponent editor, java.util.function.Predicate<Scene> openEditor) {
         super(new BorderLayout());
         this.host = host;
         this.openEditor = openEditor;
@@ -125,7 +126,11 @@ public class ScenesHomePanel extends JPanel {
         // ---- one scene open: its canvas and sources
         JButton back = Ui.button("ALL SCENES", "chevron-left");
         back.setToolTipText("Back to all scenes");
-        back.addActionListener(e -> showHome());
+        back.addActionListener(e -> {
+            if (leaveEditor.getAsBoolean()) {
+                showHome();
+            }
+        });
         JPanel editorHead = Ui.transparent(new BorderLayout(12, 0));
         editorHead.setBorder(BorderFactory.createCompoundBorder(Ui.line(false, false, true, false),
                 BorderFactory.createEmptyBorder(8, 12, 8, 12)));
@@ -174,6 +179,7 @@ public class ScenesHomePanel extends JPanel {
         Scene keep = null;
         for (Scene s : scenes) {
             Tile t = new Tile(s);
+            SceneCardDrag.install(t, grid, c -> c instanceof Tile tile ? tile.scene : null, host::reorderScenes);
             tiles.add(t);
             grid.add(t);
             if (actions.scene() != null && Objects.equals(actions.scene().getId(), s.getId())) {
@@ -197,10 +203,17 @@ public class ScenesHomePanel extends JPanel {
 
     /** Opens one scene in the editor (from a card or Edit Scene). */
     public void showEditor(Scene scene) {
+        if (!openEditor.test(scene)) {
+            return; // another scene has unsaved changes and the operator stayed on it
+        }
         editorShown = true;
         editorTitle.setText("SCENE: " + scene.getName().toUpperCase(Locale.ROOT));
-        openEditor.accept(scene);
         cards.show(body, EDITOR);
+    }
+
+    /** Asked before ALL SCENES closes the editor; false keeps it open. */
+    public void setLeaveEditor(java.util.function.BooleanSupplier check) {
+        leaveEditor = check == null ? () -> true : check;
     }
 
     private static String icon(Scene s) {
@@ -233,7 +246,7 @@ public class ScenesHomePanel extends JPanel {
             setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
             setToolTipText("<html><b>" + scene.getName() + "</b><br>Click: select (Preview and Program stay)<br>"
                     + "Double-click or PREVIEW: Send to Preview · LIVE: Take Scene Live · EDIT: its sources<br>"
-                    + "Right-click: Duplicate, Rename…</html>");
+                    + "Drag: change the order · Right-click: Display on Projector, Duplicate, Rename…</html>");
             addMouseListener(new MouseAdapter() {
                 @Override
                 public void mousePressed(MouseEvent e) {
@@ -254,6 +267,7 @@ public class ScenesHomePanel extends JPanel {
             JPopupMenu m = new JPopupMenu();
             m.add(item("Send to Preview", "monitor", () -> host.sceneClicked(scene)));
             m.add(item("Take Scene Live", "play", () -> host.sendToProgram(scene)));
+            m.add(ScenesDock.projectorMenu(host, scene));
             m.addSeparator();
             m.add(item("Edit Scene…", "layers", () -> showEditor(scene)));
             m.add(item("Duplicate", "copy", () -> host.duplicateScene(scene)));

@@ -38,6 +38,7 @@ public final class SlideGenerator {
                 Slide slide = new Slide(label, parts.get(i), null);
                 slide.setSectionKey(key);
                 slide.setCardKey(cardKey(key, i));
+                slide.setSongId(song.getId());
                 slides.add(slide);
             }
         }

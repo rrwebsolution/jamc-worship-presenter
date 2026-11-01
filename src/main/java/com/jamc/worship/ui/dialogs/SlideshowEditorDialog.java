@@ -216,7 +216,7 @@ public final class SlideshowEditorDialog extends JDialog {
         if (c.imageIds == null || c.imageIds.isEmpty()) {
             SwingUtilities.invokeLater(d::addImages); // a new slideshow starts with the image picker
         }
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         if (!d.saved) {
             return null;
         }

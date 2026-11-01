@@ -76,6 +76,7 @@ public class TypographyEditor extends JPanel {
             family.addItem(f);
         }
         family.setMaximumRowCount(18);
+        com.jamc.worship.ui.FontChoices.familyRenderer(family);
         family.setPrototypeDisplayValue("Segoe UI Semibold Wide");
         italic.setToolTipText("Italic");
         italic.putClientProperty(com.formdev.flatlaf.FlatClientProperties.STYLE, "font: italic; margin: 3,9,3,9");
@@ -112,16 +113,24 @@ public class TypographyEditor extends JPanel {
         c.gridy++;
         fields.add(flow(restore), c);
 
+        // PREVIEW right beside the controls (not at the far edge of the wide Settings page, where it could be
+        // scrolled out of sight): every change shows here at once
         sample.setBadge("SAMPLE", Palette::mutedText);
-        sample.setPreferredSize(new Dimension(300, 169));
-        JPanel sampleHolder = Ui.transparent(new BorderLayout());
-        sampleHolder.add(sample, BorderLayout.NORTH);
+        Dimension sampleSize = new Dimension(400, 225);
+        sample.setPreferredSize(sampleSize);
+        sample.setMinimumSize(sampleSize);
+        JPanel sampleColumn = Ui.transparent(new BorderLayout(0, 6));
+        sampleColumn.add(Ui.label("PREVIEW", Palette::secondaryText, "semibold"), BorderLayout.NORTH);
+        sampleColumn.add(sample, BorderLayout.CENTER);
+        sampleColumn.add(Ui.label("Changes show here as you make them.", Palette::mutedText, "small"), BorderLayout.SOUTH);
+        JPanel sampleHolder = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+        sampleHolder.add(sampleColumn);
 
         add(useGlobal, BorderLayout.NORTH);
-        JPanel fieldsHolder = Ui.transparent(new BorderLayout());
-        fieldsHolder.add(fields, BorderLayout.WEST);
-        add(fieldsHolder, BorderLayout.CENTER);
-        add(sampleHolder, BorderLayout.EAST);
+        JPanel body = Ui.transparent(new BorderLayout(28, 0));
+        body.add(fields, BorderLayout.WEST);
+        body.add(sampleHolder, BorderLayout.CENTER);
+        add(body, BorderLayout.CENTER);
 
         load();
         wire();

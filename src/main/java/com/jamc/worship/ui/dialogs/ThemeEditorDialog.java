@@ -125,7 +125,7 @@ public class ThemeEditorDialog extends JDialog {
     /** Edits an existing theme. Returns the saved theme (which may be a new one from "Save as New"). */
     public static Optional<Theme> edit(Window owner, ThemeService service, Theme theme, StyleForm.ImageImporter importer) {
         ThemeEditorDialog d = new ThemeEditorDialog(owner, service, theme, null, null, importer);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return Optional.ofNullable(d.result);
     }
 
@@ -133,7 +133,7 @@ public class ThemeEditorDialog extends JDialog {
     public static Optional<Theme> create(Window owner, ThemeService service, String suggestedName, SlideStyle startStyle,
                                          StyleForm.ImageImporter importer) {
         ThemeEditorDialog d = new ThemeEditorDialog(owner, service, null, suggestedName, startStyle, importer);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return Optional.ofNullable(d.result);
     }
 

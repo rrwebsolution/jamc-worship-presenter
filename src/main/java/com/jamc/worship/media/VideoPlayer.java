@@ -40,6 +40,8 @@ public final class VideoPlayer implements VideoPlayback {
     private volatile boolean loop;
     private volatile boolean released;
     private volatile boolean errored;
+    /** Frames received so far (a camera that stops counting has stalled or been unplugged). */
+    private volatile long frameCount;
     /** Audio settings re-applied when playback starts (VLC can drop values set before the media opens). */
     private volatile String outputDevice;
     /** The device last routed to (re-routing to the same device would restart the sound). */
@@ -132,6 +134,11 @@ public final class VideoPlayer implements VideoPlayback {
 
     public boolean hasError() {
         return errored;
+    }
+
+    /** How many frames have arrived since playback started. */
+    public long frameCount() {
+        return frameCount;
     }
 
     @Override
@@ -258,6 +265,29 @@ public final class VideoPlayer implements VideoPlayback {
         }
     }
 
+    /**
+     * Sets volume and mute again on the running sound output; with {@code reRoute} the output device too (VLC then
+     * reopens the sound output). For sound that was lost, e.g. after a device switch while playing.
+     */
+    public void reapplyAudio(boolean reRoute) {
+        if (released) {
+            return;
+        }
+        if (reRoute) {
+            appliedDevice = null;
+        }
+        applyAudio();
+    }
+
+    /** What VLC itself says about this player's mute (the app's own wish is {@link #isMuted()}). */
+    public boolean outputMuted() {
+        try {
+            return !released && player.audio().isMute();
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     @Override
     public int volume() {
         // what this app set (and applies when playback starts); VLC reports 0 before its sound output opens
@@ -376,6 +406,7 @@ public final class VideoPlayer implements VideoPlayback {
                     back = new BufferedImage(done.getWidth(), done.getHeight(), BufferedImage.TYPE_INT_RGB);
                 }
                 backPixels = ((DataBufferInt) back.getRaster().getDataBuffer()).getData();
+                frameCount++;
             }
             MediaFrames.frameArrived();
         }

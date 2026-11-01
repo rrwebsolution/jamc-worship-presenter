@@ -137,7 +137,7 @@ public final class YouTubeLyricsImportDialog extends JDialog {
     public static Optional<Song> showDialog(Window owner, SongService songs, MediaService media, AppConfig config,
                                             Callable<SongEditorDialog.Context> editorContext) {
         YouTubeLyricsImportDialog d = new YouTubeLyricsImportDialog(owner, songs, media, config, editorContext);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return Optional.ofNullable(d.saved);
     }
 
@@ -301,7 +301,7 @@ public final class YouTubeLyricsImportDialog extends JDialog {
                 : new FileNameExtensionFilter("Text files (*.txt)", "txt");
         chooser.addChoosableFileFilter(filter);
         chooser.setFileFilter(filter);
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         File f = chooser.getSelectedFile();

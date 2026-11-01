@@ -68,6 +68,8 @@ public class GlobalBackgroundPanel extends JPanel {
     private final JButton changeButton = Ui.button("Change", "landscape");
     private final JButton restartButton = Ui.button("Restart", "refresh");
     private final JButton pauseButton = Ui.button("Pause", "pause");
+    private final JButton back10 = Ui.toolButton("back-10", "Background video: back 10 seconds");
+    private final JButton forward10 = Ui.toolButton("forward-10", "Background video: forward 10 seconds");
     private final JButton settingsButton = Ui.toolButton("sliders", "Background settings: loop, mute, overlay, fit, change style");
     private final JPanel details = Ui.transparent(null);
     private final Monitor monitor = new Monitor();
@@ -102,7 +104,9 @@ public class GlobalBackgroundPanel extends JPanel {
         onOff.putClientProperty(FlatClientProperties.STYLE, "font: bold; minimumWidth: 56");
         onOff.setToolTipText("Turn the global background OFF or back ON (a video keeps its position while off)");
         JPanel controls = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        controls.add(back10);
         controls.add(pauseButton);
+        controls.add(forward10);
         controls.add(restartButton);
         controls.add(changeButton);
         controls.add(onOff);
@@ -134,6 +138,8 @@ public class GlobalBackgroundPanel extends JPanel {
         });
         restartButton.addActionListener(e -> manager.restart());
         pauseButton.addActionListener(e -> manager.setPaused(!manager.isPaused()));
+        back10.addActionListener(e -> manager.skip(-10_000));
+        forward10.addActionListener(e -> manager.skip(10_000));
         settingsButton.addActionListener(e -> {
             JPopupMenu popup = new JPopupMenu();
             popup.add(details);
@@ -229,7 +235,7 @@ public class GlobalBackgroundPanel extends JPanel {
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Choose a background video or image");
         MediaChoosers.backgroundFilters(chooser);
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         Path file = chooser.getSelectedFile().toPath();
@@ -277,8 +283,12 @@ public class GlobalBackgroundPanel extends JPanel {
             boolean live = manager.isActive();
             restartButton.setVisible(video);
             pauseButton.setVisible(video);
+            back10.setVisible(video);
+            forward10.setVisible(video);
             restartButton.setEnabled(live);
             pauseButton.setEnabled(live);
+            back10.setEnabled(live);
+            forward10.setEnabled(live);
             pauseButton.setText(manager.isPaused() ? "Play" : "Pause");
             pauseButton.setIcon(Icons.get(manager.isPaused() ? "play" : "pause", Icons.SMALL));
             loop.setSelected(manager.loop());

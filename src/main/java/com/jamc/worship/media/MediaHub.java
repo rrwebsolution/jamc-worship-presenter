@@ -21,6 +21,7 @@ public final class MediaHub implements LiveFrames {
     private final CameraManager cameras;
     private final AudioRouting routing;
     private final SceneVideos sceneVideos;
+    private final CameraAudio cameraAudio;
     private VideoPlayer programVideo;
     /** Program player for YouTube videos taken live (the embedded YouTube player, never VLC). */
     private YouTubePlayer programYouTube;
@@ -33,6 +34,7 @@ public final class MediaHub implements LiveFrames {
         this.cameras = cameras;
         this.routing = routing;
         this.sceneVideos = new SceneVideos(resolver, routing);
+        this.cameraAudio = new CameraAudio(cameras, routing);
         // only what the operator plays is heard: scene videos go quiet while a Program video or the audio player plays
         sceneVideos.setOperatorMediaPlaying(() -> (activeProgram != null && activeProgram.isPlaying()) || (audio != null && audio.isPlaying()));
         routing.addListener(this::applyRouting);
@@ -45,6 +47,26 @@ public final class MediaHub implements LiveFrames {
     /** Players (with sound) for the video sources of the Program and Preview scenes. */
     public SceneVideos sceneVideos() {
         return sceneVideos;
+    }
+
+    /**
+     * True while a video or music is heard on Program: the taken (fullscreen) video, the audio player, or a scene
+     * video with its sound on. Recordings then mute the room microphones.
+     */
+    public boolean programMediaHeard() {
+        VideoPlayback p = activeProgram;
+        if (p != null && p.isPlaying() && !p.isMuted() && routing.mediaGain() > 0) {
+            return true;
+        }
+        if (audio != null && audio.isPlaying() && !audio.isMuted() && routing.mediaGain() > 0) {
+            return true;
+        }
+        return sceneVideos.anyHeard();
+    }
+
+    /** Sound of the Program scene's cameras that have AUDIO switched on. */
+    public CameraAudio cameraAudio() {
+        return cameraAudio;
     }
 
     /**
@@ -211,6 +233,34 @@ public final class MediaHub implements LiveFrames {
         return frame;
     }
 
+    /**
+     * PREVIEW MEDIA: play / pause / seek / ±10 s for the video waiting in Preview. Its sound follows PREVIEW
+     * AUDIO (the operator's monitor), so volume and mute are not set here.
+     */
+    public Transport previewVideoTransport(String path) {
+        return new Transport() {
+            private VideoPlayback p() {
+                return pool.player(path);
+            }
+
+            @Override public void playOrResume() { if (p() != null) p().playOrResume(); }
+            @Override public void pause() { if (p() != null) p().pause(); }
+            @Override public void stop() { if (p() != null) p().stop(); }
+            @Override public void seek(float position) { if (p() != null) p().seek(position); }
+            @Override public void setVolume(int volume) { }
+            @Override public int volume() { return 100; }
+            @Override public void setMuted(boolean muted) { }
+            @Override public boolean isMuted() { return p() == null || p().isMuted(); }
+            @Override public void setLoop(boolean loop) { if (p() != null) p().setLoop(loop); }
+            @Override public boolean isLoop() { return p() != null && p().isLoop(); }
+            @Override public boolean isPlaying() { return p() != null && p().isPlaying(); }
+            @Override public long time() { return p() == null ? 0 : p().time(); }
+            @Override public long length() { return p() == null ? 0 : p().length(); }
+            @Override public boolean hasMedia() { return p() != null && p().hasMedia(); }
+            @Override public void addStateListener(Runnable listener) { } // TransportControls also polls
+        };
+    }
+
     @Override
     public BufferedImage videoPoster(String path) {
         return pool.poster(path);
@@ -236,10 +286,16 @@ public final class MediaHub implements LiveFrames {
         return cameras.frame(name);
     }
 
+    @Override
+    public com.jamc.worship.camera.CameraStatus cameraStatus(String name) {
+        return cameras.status(name);
+    }
+
     /** Stops everything and releases VLC. Call once on exit. */
     public void shutdown() {
         pool.stopAll();
         sceneVideos.shutdown();
+        cameraAudio.shutdown();
         cameras.stopAll();
         if (programYouTube != null) {
             programYouTube.release();

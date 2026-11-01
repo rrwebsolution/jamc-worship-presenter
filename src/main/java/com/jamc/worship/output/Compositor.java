@@ -145,12 +145,16 @@ public final class Compositor {
             return null;
         }
         long id = content.slide().getPresentationId();
+        // a SPECIFIC source for this very presentation always wins; a FROM LIBRARY (dynamic) source takes the rest
         for (Source s : scene.getSources()) {
-            if (s.isVisible() && s.getType() == SourceType.PRESENTATION) {
-                SourceConfig c = s.getConfig();
-                if (c.isDynamicPresentation() || java.util.Objects.equals(c.presentationId, id)) {
-                    return s;
-                }
+            if (s.isVisible() && s.getType() == SourceType.PRESENTATION && !s.getConfig().isDynamicPresentation()
+                    && java.util.Objects.equals(s.getConfig().presentationId, id)) {
+                return s;
+            }
+        }
+        for (Source s : scene.getSources()) {
+            if (s.isVisible() && s.getType() == SourceType.PRESENTATION && s.getConfig().isDynamicPresentation()) {
+                return s;
             }
         }
         return null;
@@ -226,8 +230,16 @@ public final class Compositor {
                 }
             }
             case LYRICS, BIBLE -> {
-                LiveContent content = spec.content();
-                if (content != null && !content.isVideo() && spec.text() && !hidesPresentation(spec, slot)) {
+                boolean fixed = s.getType() == SourceType.LYRICS && c.isFixedSong();
+                // a source fixed to one song shows only that song (its last slide while another is sent)
+                LiveContent content = fixed ? songContent(c, spec.content()) : spec.content();
+                if (fixed && content == null && editorMode) {
+                    SourceConfig label = new SourceConfig();
+                    label.fontSize = 36;
+                    label.color = "#94A3B8";
+                    drawText(g, rect, s.getName() + " · this song only", label, ph);
+                }
+                if (content != null && !content.isVideo() && spec.text() && (fixed || !hidesPresentation(spec, slot))) {
                     // a scene may place the text itself (e.g. smaller, at the bottom over a camera)
                     // inside the layer's box when the scene gives it one (smaller box = smaller text)
                     boolean fullFrame = c.x <= 0 && c.y <= 0 && c.w >= 1 && c.h >= 1;
@@ -241,14 +253,11 @@ public final class Compositor {
             }
             case CAMERA -> {
                 if (!keyMode) {
-                    if (Boolean.TRUE.equals(c.mirror)) {
-                        Graphics2D m = (Graphics2D) g.create();
-                        m.translate(rect.x * 2 + rect.width, 0);
-                        m.scale(-1, 1); // flipped around the box's vertical center line
-                        drawFit(m, frames.camera(c.camera), rect, c.fit, opacity(c));
-                        m.dispose();
+                    BufferedImage frame = frames.camera(c.camera);
+                    if (frame != null) {
+                        drawCamera(g, frame, rect, c, opacity(c));
                     } else {
-                        drawFit(g, frames.camera(c.camera), rect, c.fit, opacity(c));
+                        paintCameraOffline(g, rect, s, frames.cameraStatus(c.camera), ph);
                     }
                 }
             }
@@ -356,6 +365,22 @@ public final class Compositor {
      * remembered slide (looked up in the library by id). In the scene editor an empty or broken source
      * shows a labelled placeholder; on the outputs it simply shows nothing.
      */
+    /** Last slide each SPECIFIC song / presentation showed on this output (kept while another one is sent). */
+    private final Map<Long, LiveContent> lastSongSlide = new java.util.HashMap<>();
+    private final Map<Long, LiveContent> lastPresentationSlide = new java.util.HashMap<>();
+
+    /**
+     * What a lyrics source fixed to one song shows: the content when it is a slide of that song (remembered), else
+     * the song's last slide shown here, or null when none has been sent yet.
+     */
+    LiveContent songContent(SourceConfig c, LiveContent content) {
+        if (content != null && !content.isVideo() && java.util.Objects.equals(content.slide().getSongId(), c.songId)) {
+            lastSongSlide.put(c.songId, content);
+            return content;
+        }
+        return lastSongSlide.get(c.songId);
+    }
+
     private void paintPresentation(Graphics2D g, Rectangle rect, Source s, LiveContent content, boolean takesContent, int ph) {
         SourceConfig c = s.getConfig();
         FitMode fit = c.fit == null ? FitMode.FIT : c.fit;
@@ -363,8 +388,15 @@ public final class Compositor {
         if (takesContent) {
             StyleOverrides o = content.slide().getOverrides();
             image = o == null ? null : o.backgroundValue;
+            if (!c.isDynamicPresentation() && c.presentationId != null) {
+                lastPresentationSlide.put(c.presentationId, content);
+            }
         } else if (c.presentationId != null) {
-            image = Rendering.presentations().slideImage(c.presentationId, c.slideIndex == null ? 0 : c.slideIndex);
+            // a SPECIFIC presentation keeps its last sent slide while another presentation is clicked
+            LiveContent last = c.isDynamicPresentation() ? null : lastPresentationSlide.get(c.presentationId);
+            StyleOverrides o = last == null ? null : last.slide().getOverrides();
+            image = o != null && o.backgroundValue != null ? o.backgroundValue
+                    : Rendering.presentations().slideImage(c.presentationId, c.slideIndex == null ? 0 : c.slideIndex);
         }
         BufferedImage img = image == null ? null : renderer.images().get(image);
         if (img != null) {
@@ -444,6 +476,113 @@ public final class Compositor {
                 new Color(0, 0, 0, alpha)));
         g.fillRect(r.x, r.y, r.width, r.height);
         g.setPaint(old);
+    }
+
+    /**
+     * A camera picture in its box: cropped, rotated, mirrored, then fitted (Fit / Fill / Stretch) at an opacity.
+     * Shared by Program, Preview, the scene editor and the camera library, so they all look the same.
+     */
+    public static void drawCamera(Graphics2D g, BufferedImage img, Rectangle r, SourceConfig c, float alpha) {
+        if (img == null || r.width <= 0 || r.height <= 0) {
+            return;
+        }
+        BufferedImage pic = crop(img, c);
+        int rot = rotation(c);
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.clipRect(r.x, r.y, r.width, r.height);
+        Rectangle box = r;
+        if (rot != 0) {
+            // turn the drawing around the box's center; for 90° / 270° the picture is fitted to the box turned on its side
+            g2.translate(r.getCenterX(), r.getCenterY());
+            g2.rotate(Math.toRadians(rot));
+            int bw = rot % 180 == 0 ? r.width : r.height;
+            int bh = rot % 180 == 0 ? r.height : r.width;
+            box = new Rectangle(-bw / 2, -bh / 2, bw, bh);
+        }
+        if (Boolean.TRUE.equals(c.mirror)) {
+            g2.translate(box.x * 2 + box.width, 0);
+            g2.scale(-1, 1); // flipped around the box's vertical center line
+        }
+        drawFit(g2, pic, box, c.fit, alpha);
+        g2.dispose();
+    }
+
+    /** 0, 90, 180 or 270. */
+    static int rotation(SourceConfig c) {
+        int r = c.rotation == null ? 0 : Math.floorMod(c.rotation, 360);
+        return r - r % 90;
+    }
+
+    /** The part of the picture left after the source's crop (the whole picture when nothing is cropped). */
+    static BufferedImage crop(BufferedImage img, SourceConfig c) {
+        double l = edge(c.cropLeft);
+        double t = edge(c.cropTop);
+        double r = edge(c.cropRight);
+        double b = edge(c.cropBottom);
+        if (l + t + r + b <= 0) {
+            return img;
+        }
+        int x = (int) Math.round(img.getWidth() * l);
+        int y = (int) Math.round(img.getHeight() * t);
+        int w = Math.max(1, img.getWidth() - x - (int) Math.round(img.getWidth() * r));
+        int h = Math.max(1, img.getHeight() - y - (int) Math.round(img.getHeight() * b));
+        return img.getSubimage(Math.min(x, img.getWidth() - 1), Math.min(y, img.getHeight() - 1),
+                Math.min(w, img.getWidth() - x), Math.min(h, img.getHeight() - y));
+    }
+
+    private static double edge(Double v) {
+        return v == null ? 0 : Math.clamp(v, 0.0, 0.45);
+    }
+
+    /**
+     * A camera with no picture. While it starts: nothing (or a placeholder in the scene editor). Disconnected
+     * or failed: the source's offline choice, "CAMERA OFFLINE" by default, black, or an image such as the church
+     * logo. Never an error message on the outputs.
+     */
+    private void paintCameraOffline(Graphics2D g, Rectangle r, Source s, com.jamc.worship.camera.CameraStatus status, int ph) {
+        if (r.width <= 0 || r.height <= 0) {
+            return;
+        }
+        SourceConfig c = s.getConfig();
+        boolean offline = status != null && status.isOffline();
+        if (!offline) {
+            if (editorMode) {
+                slate(g, r, s.getName(), status == null ? "STARTING" : status.label(), ph);
+            }
+            return;
+        }
+        String mode = c.offline == null ? "SLATE" : c.offline;
+        if ("BLACK".equals(mode)) {
+            g.setColor(Color.BLACK);
+            g.fillRect(r.x, r.y, r.width, r.height);
+        } else if ("IMAGE".equals(mode) && c.offlineImage != null && renderer.images().get(c.offlineImage) != null) {
+            g.setColor(Color.BLACK);
+            g.fillRect(r.x, r.y, r.width, r.height);
+            drawFit(g, renderer.images().get(c.offlineImage), r, FitMode.FIT, 1f);
+        } else {
+            slate(g, r, "CAMERA OFFLINE", editorMode ? s.getName() + " · " + status.label() : null, ph);
+        }
+    }
+
+    private static void slate(Graphics2D g, Rectangle r, String title, String detail, int ph) {
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.clipRect(r.x, r.y, r.width, r.height);
+        g2.setPaint(new java.awt.GradientPaint(r.x, r.y, new Color(0x1E293B), r.x, r.y + r.height, new Color(0x0F172A)));
+        g2.fillRect(r.x, r.y, r.width, r.height);
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        int size = Math.max(9, Math.min(r.height / 9, Math.round(56f * ph / H)));
+        g2.setFont(new Font("Segoe UI", Font.BOLD, size));
+        FontMetrics fm = g2.getFontMetrics();
+        int y = r.y + r.height / 2 + (detail == null ? fm.getAscent() / 2 : 0);
+        g2.setColor(new Color(0xCBD5E1));
+        g2.drawString(title, r.x + (r.width - fm.stringWidth(title)) / 2, y);
+        if (detail != null) {
+            g2.setFont(new Font("Segoe UI", Font.PLAIN, Math.max(8, size * 2 / 3)));
+            FontMetrics dm = g2.getFontMetrics();
+            g2.setColor(new Color(0x94A3B8));
+            g2.drawString(detail, r.x + (r.width - dm.stringWidth(detail)) / 2, y + dm.getHeight() + 2);
+        }
+        g2.dispose();
     }
 
     private static void drawFit(Graphics2D g, BufferedImage img, Rectangle r, FitMode fit, float alpha) {
@@ -582,7 +721,10 @@ public final class Compositor {
                 continue;
             }
             boolean content = switch (s.getType()) {
-                case LYRICS, BIBLE -> true;
+                // a source fixed to one song changes only when that song's slide changes
+                case LYRICS -> !s.getConfig().isFixedSong()
+                        || songContent(s.getConfig(), from.content()) != songContent(s.getConfig(), to.content());
+                case BIBLE -> true;
                 case BACKGROUND -> !sameBackground;
                 case PRESENTATION -> s == fromSlot || s == toSlot;
                 default -> false;
@@ -594,6 +736,98 @@ public final class Compositor {
             fadeSource(g, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, fromAlpha);
             fadeSource(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, toAlpha);
         }
+    }
+
+    /**
+     * True for a change from one scene to another (both showing, neither black): it transitions per layer with
+     * {@link #paintSceneChange}, so layers both scenes share keep going untouched.
+     */
+    public static boolean sceneChange(FrameSpec from, FrameSpec to) {
+        return from != null && to != null && !from.black() && !to.black() && !contentChangeOnly(from, to);
+    }
+
+    /**
+     * One frame of a scene change. A layer that looks the same in both scenes (the lyrics on Program, the logo,
+     * the global background, a lower third...) is painted once at full opacity, so it never fades or blinks;
+     * only the layers that differ fade: the old scene's out ({@code fromAlpha}), the new scene's in
+     * ({@code toAlpha}). Switching CAM 1 to CAM 2 under the same lyrics therefore changes only the camera.
+     */
+    public void paintSceneChange(Graphics2D g, int pw, int ph, FrameSpec from, FrameSpec to, ProgramOutput lowerThirdSource,
+                                 boolean keyMode, float fromAlpha, float toAlpha) {
+        g.setColor(keyMode ? KEY_GREEN : Color.BLACK);
+        g.fillRect(0, 0, pw, ph);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        Scene a = from.scene() == null ? DEFAULT_SCENE : from.scene();
+        Scene b = to.scene() == null ? DEFAULT_SCENE : to.scene();
+        Source fromSlot = presentationSlot(a, from.content());
+        Source toSlot = presentationSlot(b, to.content());
+        List<Source> as = a.getSources().stream().filter(Source::isVisible).toList();
+        List<Source> bs = b.getSources().stream().filter(Source::isVisible).toList();
+        java.util.Set<String> aKeys = new java.util.HashSet<>();
+        java.util.Set<String> bKeys = new java.util.HashSet<>();
+        String[] ak = new String[as.size()];
+        String[] bk = new String[bs.size()];
+        for (int i = 0; i < as.size(); i++) {
+            ak[i] = layerKey(as.get(i), from, fromSlot);
+            aKeys.add(ak[i]);
+        }
+        for (int i = 0; i < bs.size(); i++) {
+            bk[i] = layerKey(bs.get(i), to, toSlot);
+            bKeys.add(bk[i]);
+        }
+        // walk both stacks from the bottom up: the old scene's own layers fade out where they were, the new
+        // scene's own layers fade in above them, and each shared layer is painted once, from the new scene
+        int ia = as.size() - 1;
+        int ib = bs.size() - 1;
+        while (ia >= 0 || ib >= 0) {
+            while (ia >= 0 && !bKeys.contains(ak[ia])) {
+                fadeSource(g, pw, ph, as.get(ia), from, fromSlot, lowerThirdSource, keyMode, fromAlpha);
+                ia--;
+            }
+            while (ib >= 0 && !aKeys.contains(bk[ib])) {
+                fadeSource(g, pw, ph, bs.get(ib), to, toSlot, lowerThirdSource, keyMode, toAlpha);
+                ib--;
+            }
+            if (ib >= 0) {
+                paintSource(g, pw, ph, bs.get(ib), to, lowerThirdSource, keyMode, false, toSlot);
+                ib--;
+            }
+            if (ia >= 0) {
+                ia--;
+            }
+        }
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper LAYER_JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+    private final Map<Source, String> configKeys = new java.util.WeakHashMap<>();
+
+    /**
+     * What a layer shows, as text: its type and settings, plus, for layers that show the live content, which
+     * content. Two layers with the same key look the same.
+     */
+    private String layerKey(Source s, FrameSpec spec, Source slot) {
+        String config = configKeys.computeIfAbsent(s, src -> {
+            SourceConfig c = src.getConfig().copy();
+            c.uid = null; // bookkeeping that does not change the picture
+            c.locked = null;
+            c.keepAspect = null;
+            try {
+                return src.getType() + LAYER_JSON.writeValueAsString(c);
+            } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+                return src.getType() + "@" + System.identityHashCode(src);
+            }
+        });
+        LiveContent content = spec.content();
+        return switch (s.getType()) {
+            case LYRICS, BIBLE -> config + "|" + System.identityHashCode(s.getConfig().isFixedSong() && s.getType() == SourceType.LYRICS
+                    ? songContent(s.getConfig(), content) : content) + "|" + spec.text();
+            case BACKGROUND -> {
+                String bg = backgroundKey(spec, slot);
+                yield config + "|" + (bg != null ? bg : "c" + System.identityHashCode(content)) + "|" + spec.background();
+            }
+            case PRESENTATION -> config + "|" + (s == slot ? System.identityHashCode(content) : "own");
+            default -> config;
+        };
     }
 
     private BufferedImage fadeBuffer;

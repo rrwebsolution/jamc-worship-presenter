@@ -140,7 +140,7 @@ public final class LyricsEditorDialog extends JDialog {
     /** Shows the editor; returns the saved Lyrics item, if any. */
     public static Optional<Song> showDialog(Window owner, SongService songs, Draft draft) {
         LyricsEditorDialog d = new LyricsEditorDialog(owner, songs, draft);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return Optional.ofNullable(d.saved);
     }
 

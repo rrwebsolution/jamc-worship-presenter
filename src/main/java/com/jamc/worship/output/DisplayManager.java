@@ -9,7 +9,9 @@ import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
 import java.awt.Rectangle;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -27,12 +29,18 @@ public final class DisplayManager {
      * @param id     stable device id (e.g. {@code \Display2}), stored in settings
      * @param number 1-based number shown to the operator
      * @param bounds desktop area in Java (scaled) coordinates
+     * @param name   the connected screen's own name ("EPSON PJ", "SAMSUNG"), null if Windows has none
      */
     public record Display(String id, int number, Rectangle bounds, int pixelWidth, int pixelHeight, boolean primary,
-                          GraphicsDevice device) {
+                          GraphicsDevice device, String name) {
 
         public String label() {
-            return "Display " + number + "  ·  " + pixelWidth + "×" + pixelHeight + (primary ? "  ·  main screen" : "");
+            return title() + "  ·  " + pixelWidth + "×" + pixelHeight + (primary ? "  ·  main screen" : "");
+        }
+
+        /** "EPSON PJ (Display 2)", or "Display 2" when the screen has no name. */
+        public String title() {
+            return name == null ? "Display " + number : name + " (Display " + number + ")";
         }
 
         @Override
@@ -47,7 +55,7 @@ public final class DisplayManager {
     private String signature;
 
     public DisplayManager() {
-        displays = scan();
+        displays = scan(true);
         signature = signature(displays);
     }
 
@@ -89,24 +97,28 @@ public final class DisplayManager {
     private void checkForChanges() {
         List<Display> now;
         try {
-            now = scan();
+            now = scan(false);
+            String sig = signature(now);
+            if (sig.equals(signature)) {
+                return;
+            }
+            now = scan(true); // the names are read only when something changed
+            log.info("Displays changed: {}", sig);
+            displays = now;
+            signature = sig;
         } catch (RuntimeException e) {
             log.warn("Could not enumerate displays", e);
             return;
         }
-        String sig = signature(now);
-        if (!sig.equals(signature)) {
-            log.info("Displays changed: {}", sig);
-            displays = now;
-            signature = sig;
-            listeners.forEach(Runnable::run);
-        }
+        listeners.forEach(Runnable::run);
     }
 
-    private static List<Display> scan() {
+    private static List<Display> scan(boolean withNames) {
         GraphicsEnvironment env = GraphicsEnvironment.getLocalGraphicsEnvironment();
         GraphicsDevice primary = env.getDefaultScreenDevice();
-        List<GraphicsDevice> devices = new ArrayList<>(List.of(env.getScreenDevices()));
+        GraphicsDevice[] windowsOrder = env.getScreenDevices();
+        Map<GraphicsDevice, String> names = withNames ? names(windowsOrder) : Map.of();
+        List<GraphicsDevice> devices = new ArrayList<>(List.of(windowsOrder));
         // Number displays left to right, which matches how people describe their setup.
         devices.sort((a, b) -> Integer.compare(a.getDefaultConfiguration().getBounds().x,
                 b.getDefaultConfiguration().getBounds().x));
@@ -117,9 +129,46 @@ public final class DisplayManager {
             DisplayMode mode = d.getDisplayMode();
             int pw = mode != null ? mode.getWidth() : bounds.width;
             int ph = mode != null ? mode.getHeight() : bounds.height;
-            result.add(new Display(d.getIDstring(), i + 1, bounds, pw, ph, d == primary, d));
+            result.add(new Display(d.getIDstring(), i + 1, bounds, pw, ph, d == primary, d, names.get(d)));
         }
         return List.copyOf(result);
+    }
+
+    /**
+     * Matches Java's screen devices to Windows' monitors. Both list them in the same order; the size is
+     * checked as well, and on a mismatch the first unused monitor of that size is taken.
+     */
+    private static Map<GraphicsDevice, String> names(GraphicsDevice[] devices) {
+        List<MonitorNames.Monitor> monitors = new ArrayList<>(MonitorNames.monitors());
+        Map<GraphicsDevice, String> out = new HashMap<>();
+        boolean[] used = new boolean[monitors.size()];
+        for (int i = 0; i < devices.length; i++) {
+            DisplayMode mode = devices[i].getDisplayMode();
+            if (mode == null) {
+                continue;
+            }
+            int match = -1;
+            if (i < monitors.size() && !used[i] && sameSize(monitors.get(i), mode)) {
+                match = i;
+            } else {
+                for (int m = 0; m < monitors.size() && match < 0; m++) {
+                    if (!used[m] && sameSize(monitors.get(m), mode)) {
+                        match = m;
+                    }
+                }
+            }
+            if (match >= 0) {
+                used[match] = true;
+                if (monitors.get(match).name() != null) {
+                    out.put(devices[i], monitors.get(match).name());
+                }
+            }
+        }
+        return out;
+    }
+
+    private static boolean sameSize(MonitorNames.Monitor m, DisplayMode mode) {
+        return m.bounds().width == mode.getWidth() && m.bounds().height == mode.getHeight();
     }
 
     private static String signature(List<Display> displays) {

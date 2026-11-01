@@ -34,7 +34,9 @@ import java.util.Optional;
 
 /**
  * Library → Videos → Import from YouTube ("YOUTUBE VIDEO LIBRARY"): search YouTube, select a video,
- * see its VIDEO DETAILS, PLAY / PREVIEW it here, and ADD TO VIDEO LIBRARY. The library item only
+ * see its VIDEO DETAILS, and ADD TO VIDEO LIBRARY. A selected video plays here at once (AUTOPLAY); when it
+ * ends, YouTube's own up-next videos follow (its Mix), unless LOOP is on; it keeps playing while the dialog is
+ * minimized. The library item only
  * references the YouTube video (nothing is downloaded); it plays through the embedded YouTube player.
  * This never creates lyrics.
  */
@@ -51,9 +53,12 @@ public final class YouTubeVideoImportDialog extends JDialog {
     private final JButton add = Ui.primaryButton("ADD TO VIDEO LIBRARY", "plus");
     private final CardLayout cards = new CardLayout();
     private final JPanel detail = Ui.transparent(cards);
+    private final YouTubeSearchPanel search;
     private YouTubePlayer player;
     private YouTubeVideo video;
     private MediaItem added;
+    /** LOOP as the operator left it: kept for the next video (a looping video repeats and never goes to the next). */
+    private boolean loop;
 
     private YouTubeVideoImportDialog(Window owner, MediaService media, AppConfig config) {
         super(owner, "YouTube Video Library", ModalityType.APPLICATION_MODAL);
@@ -66,7 +71,7 @@ public final class YouTubeVideoImportDialog extends JDialog {
             }
         });
 
-        YouTubeSearchPanel search = new YouTubeSearchPanel(config, "worship background video", this::select);
+        search = new YouTubeSearchPanel(config, "worship background video", this::select);
         search.setBorder(BorderFactory.createEmptyBorder(14, 16, 14, 12));
 
         JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, search, buildDetail());
@@ -98,7 +103,7 @@ public final class YouTubeVideoImportDialog extends JDialog {
     /** Shows the dialog; returns the last video added to the library, if any. */
     public static Optional<MediaItem> showDialog(Window owner, MediaService media, AppConfig config) {
         YouTubeVideoImportDialog d = new YouTubeVideoImportDialog(owner, media, config);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return Optional.ofNullable(d.added);
     }
 
@@ -107,7 +112,14 @@ public final class YouTubeVideoImportDialog extends JDialog {
                 Palette::mutedText, null);
         empty.setHorizontalAlignment(JLabel.CENTER);
 
-        preview.setToolTipText("Play the video here in the embedded YouTube player (Preview and Program are not touched)");
+        preview.setToolTipText("A selected video plays here by itself; then YouTube's up-next videos follow (unless LOOP is on). "
+                + "Preview and Program are not touched.");
+        title.addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                showTitle();
+            }
+        });
         preview.addActionListener(e -> togglePreview());
         add.setToolTipText("Add a reference to this YouTube video to Library → Videos");
         add.addActionListener(e -> addToLibrary());
@@ -146,7 +158,7 @@ public final class YouTubeVideoImportDialog extends JDialog {
     private void select(YouTubeVideo v) {
         releasePlayer();
         video = v;
-        title.setText("<html>" + escape(v.title()) + "</html>");
+        showTitle();
         channel.setText(v.channel().isBlank() ? " " : "Channel: " + v.channel());
         duration.setText(v.durationMs() == null ? "Duration: shown once it plays" : "Duration: " + TransportControls.format(v.durationMs()));
         preview.setText("PLAY / PREVIEW");
@@ -161,6 +173,17 @@ public final class YouTubeVideoImportDialog extends JDialog {
                 message.setText("Already in Library → Videos as \"" + existing.get().getName() + "\".");
             }
         }, null);
+        startPlayer(); // AUTOPLAY: a selected video plays at once
+    }
+
+    /** The title in VIDEO DETAILS: two lines at most, "…" after that; the whole title on hover. */
+    private void showTitle() {
+        if (video == null) {
+            return;
+        }
+        int width = title.getWidth() > 0 ? title.getWidth() : 360;
+        title.setText(YouTubeSearchPanel.clampLines(video.title(), title.getFontMetrics(title.getFont()), width, 2));
+        title.setToolTipText(video.title());
     }
 
     private void togglePreview() {
@@ -168,18 +191,83 @@ public final class YouTubeVideoImportDialog extends JDialog {
             return;
         }
         if (player == null) {
-            player = new YouTubePlayer();
-            player.play(video.path(), false, false);
-            transport.bind(player);
-            transport.setVisible(true);
-            monitor.show(video, player);
-            preview.setText("STOP PREVIEW");
-            revalidate();
+            startPlayer();
         } else {
             releasePlayer();
             monitor.show(video, null);
             preview.setText("PLAY / PREVIEW");
         }
+    }
+
+    private void startPlayer() {
+        YouTubePlayer p = new YouTubePlayer();
+        player = p;
+        p.addFinishedListener(() -> {
+            if (p == player) {
+                finished(); // only the video playing now moves on
+            }
+        });
+        p.addStateListener(() -> {
+            if (p != player) {
+                return;
+            }
+            if (p.isUpNext() && p.errorMessage() != null) {
+                // YouTube's up next could not play here: the next search result instead of silence
+                if (!search.selectNext()) {
+                    message.setForeground(Palette.secondaryText());
+                    message.setText("YouTube has no up-next video that can play here.");
+                }
+                return;
+            }
+            followNowPlaying(); // UP NEXT: the details follow the video YouTube plays now
+        });
+        player.play(video.path(), loop, false);
+        transport.bind(player);
+        transport.setVisible(true);
+        monitor.show(video, player);
+        preview.setText("STOP PREVIEW");
+        search.setPlaying(video.id());
+        revalidate();
+    }
+
+    /**
+     * UP NEXT, like youtube.com: when the video ends, YouTube's own next videos follow (its Mix for that video), not
+     * the search results; after that YouTube keeps moving on by itself. A video with LOOP on repeats instead (the
+     * player never reports its end), so it never moves on.
+     */
+    private void finished() {
+        if (player == null || player.isLoop() || player.isUpNext()) {
+            return; // looping, or YouTube already chooses each next video
+        }
+        player.playUpNext();
+        message.setForeground(Palette.secondaryText());
+        message.setText("Up next from YouTube…");
+    }
+
+    /** The video YouTube plays now became another one (UP NEXT): VIDEO DETAILS and ADD TO VIDEO LIBRARY follow it. */
+    private void followNowPlaying() {
+        String id = player.nowPlayingId();
+        if (id == null || id.isBlank() || video == null || id.equals(video.id())) {
+            return;
+        }
+        String name = player.nowPlayingTitle();
+        video = new YouTubeVideo(id, name == null || name.isBlank() ? "YouTube video" : name,
+                player.nowPlayingChannel() == null ? "" : player.nowPlayingChannel(), null,
+                "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg");
+        showTitle();
+        channel.setText(video.channel().isBlank() ? " " : "Channel: " + video.channel());
+        duration.setText("Duration: shown once it plays");
+        add.setEnabled(true);
+        message.setForeground(Palette.secondaryText());
+        message.setText("Up next from YouTube.");
+        monitor.show(video, player);
+        search.setPlaying(id);
+        YouTubeVideo v = video;
+        BackgroundTask.run("Check library", () -> media.findYouTube(v.id()), existing -> {
+            if (existing.isPresent() && v == video) {
+                message.setText("Up next from YouTube · already in Library → Videos as \"" + existing.get().getName() + "\".");
+            }
+        }, null);
     }
 
     private void addToLibrary() {
@@ -205,12 +293,10 @@ public final class YouTubeVideoImportDialog extends JDialog {
     private void releasePlayer() {
         transport.bind(null);
         if (player != null) {
+            loop = player.isLoop(); // the next video keeps the operator's LOOP choice
             player.release();
             player = null;
         }
-    }
-
-    private static String escape(String s) {
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        search.setPlaying(null);
     }
 }

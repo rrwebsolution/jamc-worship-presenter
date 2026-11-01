@@ -41,6 +41,7 @@ import com.jamc.worship.ui.components.LowerThirdsPanel;
 import com.jamc.worship.ui.components.MediaOutputPanel;
 import com.jamc.worship.ui.components.MediaLibraryPanel;
 import com.jamc.worship.ui.components.OutputPanel;
+import com.jamc.worship.ui.components.ScenesDock;
 import com.jamc.worship.ui.components.PresentationDetailPanel;
 import com.jamc.worship.ui.components.PresentationLibraryPanel;
 import com.jamc.worship.ui.components.ScenesPanel;
@@ -164,6 +165,10 @@ public class MainFrame extends JFrame {
     private Scene lastProgramScene;
     private final DisplayManager displays = new DisplayManager();
     private final CameraManager cameras = new CameraManager();
+    private com.jamc.worship.camera.CameraNames cameraNames;
+    /** The page on screen (leaving SCENE with unsaved scene changes asks Save / Discard / Cancel first). */
+    private TopBar.Page currentPage = TopBar.Page.LIBRARY; // the app opens on the Library
+    private com.jamc.worship.camera.CameraSettings cameraSettings;
     private final com.jamc.worship.stream.StreamManager streamManager;
     private final com.jamc.worship.ui.components.StreamPanel streamPanel;
     private final MediaHub hub;
@@ -268,6 +273,10 @@ public class MainFrame extends JFrame {
         // where Program and Preview media sound goes (speakers, monitor headphones) and the media mixer
         this.audioRouting = new com.jamc.worship.media.AudioRouting(context.config());
         this.hub = new MediaHub(path -> context.mediaService().resolve(path), cameras, audioRouting);
+        // camera numbers and nicknames ("CAM 2 · PREACHER CAMERA"), the operator's audio input per camera
+        this.cameraNames = new com.jamc.worship.camera.CameraNames(context.config());
+        this.cameraSettings = new com.jamc.worship.camera.CameraSettings(context.config());
+        cameras.setAudioOverride(cameraNames::audioInput);
         // the operator's mute / volume / loop per video, audio file and scene source (kept across visits and restarts)
         this.mediaStates = new com.jamc.worship.media.MediaStates(context.config());
         hub.sceneVideos().setStates(mediaStates);
@@ -346,7 +355,28 @@ public class MainFrame extends JFrame {
             }
         });
         mediaDetail.setMediaStates(mediaStates);
-        cameraWorkspace = new com.jamc.worship.ui.components.CameraWorkspacePanel(cameras, context.config(), this::previewCamera);
+        cameraWorkspace = new com.jamc.worship.ui.components.CameraWorkspacePanel(cameras, cameraNames, cameraSettings,
+                context.config(), new com.jamc.worship.ui.components.CameraWorkspacePanel.Actions() {
+                    @Override
+                    public void sendToPreview(String camera, com.jamc.worship.model.FitMode fit, boolean mirror) {
+                        previewCamera(camera, fit, mirror, false);
+                    }
+
+                    @Override
+                    public void switchProgram(String camera, com.jamc.worship.model.FitMode fit, boolean mirror) {
+                        previewCamera(camera, fit, mirror, true);
+                    }
+
+                    @Override
+                    public Scene programScene() {
+                        return program.scene();
+                    }
+
+                    @Override
+                    public Scene previewScene() {
+                        return previewState.scene();
+                    }
+                });
         lowerThirds = new LowerThirdsPanel(context.sceneService());
         lowerThirdEditor = new LowerThirdEditorPanel(context.sceneService(), program, importer);
         presentationLibrary = new PresentationLibraryPanel(context.presentationService());
@@ -358,7 +388,9 @@ public class MainFrame extends JFrame {
 
             @Override
             public void take(int index) {
+                // double-click on a slide here: Preview (TAKE puts it live), like the slide list
                 thumbnails.setSelectedIndex(index);
+                previewSelectedPresentationSlide();
                 if (doubleClickTakes()) {
                     MainFrame.this.take();
                 }
@@ -366,12 +398,12 @@ public class MainFrame extends JFrame {
 
             @Override
             public void previous() {
-                thumbnails.selectPrevious();
+                stepSlide(false);
             }
 
             @Override
             public void next() {
-                thumbnails.selectNext();
+                stepSlide(true);
             }
 
             @Override
@@ -427,10 +459,16 @@ public class MainFrame extends JFrame {
             String id = audioRouting.programDeviceInUse();
             return id == null || id.isEmpty() ? "" : audioRouting.nameOf(id);
         });
+        // while a video or music is heard on Program, the room microphones are muted in recordings / the livestream
+        streamManager.setProgramMediaPlaying(hub::programMediaHeard);
         new javax.swing.Timer(1000, e -> updateRecordingIndicator()).start();
-        this.settingsPanel = new SettingsPanel(context, this::changeTheme, shortcuts, obs, hub, this::restartApplication,
+        this.settingsPanel =new SettingsPanel(context, this::changeTheme, shortcuts, obs, hub, this::restartApplication,
                 this::manageBibleVersions);
         settingsPanel.setUpdateCheckHandler(() -> checkForUpdates(true));
+        settingsPanel.setCameraSwitchFadeHandler(ms -> {
+            program.setCameraSwitchFade(ms);
+            previewState.setCameraSwitchFade(ms);
+        });
         settingsPanel.setSongsResetHandler(() -> {
             songLibrary.reloadCurrent(); // the open song drops its own font settings too
             typographyChanged();
@@ -475,6 +513,88 @@ public class MainFrame extends JFrame {
         });
         loadLiveSettings();
         liveDock.setOutputRouter(output, displays, () -> this);
+        settingsPanel.installLiveSettings(new SettingsPanel.LiveHooks() {
+            @Override
+            public OutputService output() {
+                return output;
+            }
+
+            @Override
+            public DisplayManager displays() {
+                return displays;
+            }
+
+            @Override
+            public com.jamc.worship.stream.StreamManager stream() {
+                return streamManager;
+            }
+
+            @Override
+            public Transition transition() {
+                return Transition.parse(context.config().get(AppConfig.KEY_TRANSITION, null), Transition.FADE);
+            }
+
+            @Override
+            public int transitionMs() {
+                return parseInt(context.config().get(AppConfig.KEY_TRANSITION_MS, "500"), 500);
+            }
+
+            @Override
+            public void setTransition(Transition transition, int durationMs) {
+                // the same as choosing it next to TAKE, and the controls there follow
+                program.setTransition(transition, durationMs);
+                previewState.setTransition(transition, durationMs);
+                liveDock.setTransition(transition, durationMs);
+                context.config().set(AppConfig.KEY_TRANSITION, transition.name());
+                context.config().set(AppConfig.KEY_TRANSITION_MS, String.valueOf(durationMs));
+                context.config().save();
+            }
+
+            @Override
+            public boolean autoTake() {
+                return liveDock.isAutoTake();
+            }
+
+            @Override
+            public void setAutoTake(boolean on) {
+                liveDock.setAutoTake(on);
+                context.config().set(AppConfig.KEY_AUTO_TAKE, String.valueOf(on));
+                context.config().save();
+                SwingUtilities.invokeLater(MainFrame.this::updateClickHint);
+            }
+
+            @Override
+            public boolean separateLayouts() {
+                return MainFrame.this.separateLayouts();
+            }
+
+            @Override
+            public void setSeparateLayouts(boolean on) {
+                sceneHost.setSeparateLayouts(on);
+            }
+
+            @Override
+            public List<Scene> scenes() {
+                return scenes;
+            }
+
+            @Override
+            public Long defaultSceneId() {
+                return sceneHost.defaultSceneId();
+            }
+
+            @Override
+            public void setDefaultScene(Scene scene) {
+                if (scene != null) {
+                    sceneHost.setDefaultScene(scene);
+                    return;
+                }
+                context.config().set(KEY_DEFAULT_SCENE, null);
+                context.config().save();
+                scenesDock.sync();
+                if (scenesHome != null) scenesHome.sync();
+            }
+        });
         liveDock.setMonitorListener(on -> {
             audioRouting.setPreviewMonitor(on);
             statusBar.showMessage(on ? "Preview audio ON: Preview videos play on the monitor device ("
@@ -574,6 +694,8 @@ public class MainFrame extends JFrame {
         pages.add(region(streamPanel), TopBar.Page.STREAM.name());
         // SCENE: the homepage (scene cards; one scene open with its sources and + ADD SOURCE)
         scenesHome = new com.jamc.worship.ui.components.ScenesHomePanel(sceneHost, region(scenesPanel), s -> scenesPanel.edit(s.getId()));
+        scenesHome.setLeaveEditor(scenesPanel::confirmLeave); // unsaved scene changes: Save / Discard / Cancel
+        scenesPanel.setCameraNames(cameraNames);
         scenesPanel.setSongs(context.songService());
         scenesPanel.setSlideshows(slideshows);
         scenesPanel.setServiceItems(() -> schedule.current() == null ? List.of() : schedule.current().getItems());
@@ -617,6 +739,7 @@ public class MainFrame extends JFrame {
 
             @Override
             public void windowClosing(WindowEvent e) {
+                scenesPanel.saveOnExit();
                 shutdown();
             }
         });
@@ -1007,13 +1130,13 @@ public class MainFrame extends JFrame {
             scenes = list;
             scenesDock.setScenes(list);
             if (scenesHome != null) scenesHome.setScenes(list);
-            Scene live = program.scene();
-            if (live != null) {
-                list.stream().filter(s -> Objects.equals(s.getId(), live.getId())).findFirst()
-                        .ifPresent(s -> program.setScene(s, false));
+            // On the Scenes page SAVE only updates the scene library (SEND TO PREVIEW shows it). A save that finishes
+            // after the operator left the page (Save in the leave question) updates Preview like leaving does.
+            if (currentPage != TopBar.Page.SCENE) {
+                applySavedSceneToPreview();
             }
         });
-        scenesPanel.setLiveSceneChosen(s -> setLiveScene(s, true));
+        scenesPanel.setPreviewChosen(this::sendSceneToPreview);
 
         thumbnails.addSelectionListener(index -> {
             Slide slide = thumbnails.getSelectedSlide();
@@ -1032,12 +1155,14 @@ public class MainFrame extends JFrame {
                     stripToPreview(slide, itemStyle, itemTitle);
                 }
                 case PRESENTATION -> {
+                    // a click only selects (white ring, like a scene card): double-click sends it to Preview,
+                    // TAKE to Program. Preview and Program never change from a single click.
                     presentationDetail.setSelectedIndex(index);
                     if (slide != null) {
-                        stripToPreview(slide, SlideStyle.fallback(), presentationTitle());
                         preloadPresentationSlide(index);
                         preloadPresentationSlide(index + 1);
                     }
+                    return;
                 }
                 default -> {
                     // DECK: the slide editor already updated Preview
@@ -1052,10 +1177,21 @@ public class MainFrame extends JFrame {
             }
         });
         thumbnails.addActivationListener(index -> {
+            if (stripSource == StripSource.PRESENTATION) {
+                previewSelectedPresentationSlide(); // double-click: Preview
+                if (doubleClickTakes()) {
+                    take();
+                } else if (liveDock.isAutoTake()) {
+                    take(false);
+                }
+                return;
+            }
             if (doubleClickTakes()) {
                 take();
             }
         });
+        // presentations: selecting a slide and putting it in Preview are separate (lyrics: one and the same)
+        thumbnails.setSelectionIsPreview(() -> stripSource != StripSource.PRESENTATION);
         thumbnails.addSlidesChangedListener(this::refreshLiveMarker);
         thumbnails.addSlidesChangedListener(this::updateClickHint);
 
@@ -1071,6 +1207,9 @@ public class MainFrame extends JFrame {
                 syncedProgramScene = program.scene();
                 hub.sceneVideos().syncProgram(syncedProgramScene);
                 slideshows.syncProgram(syncedProgramScene); // IMAGE SLIDESHOW sources: Program's own position
+                // Program's cameras stay open (even hidden PiPs), and only its camera sources with AUDIO on are heard
+                cameras.keepOpen("program", cameraDevices(syncedProgramScene));
+                hub.cameraAudio().syncProgram(syncedProgramScene);
             }
         });
         previewState.addListener(() -> {
@@ -1078,8 +1217,12 @@ public class MainFrame extends JFrame {
             if (previewState.scene() != syncedPreviewScene) {
                 syncedPreviewScene = previewState.scene();
                 slideshows.syncPreview(syncedPreviewScene); // Preview steps its slideshows without moving Program
+                // Preview's cameras are opened now, so TAKE never waits for a camera to start
+                cameras.keepOpen("preview", cameraDevices(syncedPreviewScene));
             }
         });
+        program.setCameraSwitchFade(cameraSettings.switchFadeMs());
+        previewState.setCameraSwitchFade(cameraSettings.switchFadeMs());
         program.addListener(this::updateLiveIndicators);
         // a slideshow moved in Preview (NEXT / PREVIOUS / Auto Play): TAKE becomes available
         slideshows.addListener(() -> liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null
@@ -1553,6 +1696,10 @@ public class MainFrame extends JFrame {
             suppressAutoTake = false;
         }
         thumbnails.setSourceKey(key);
+        // the slide of this presentation waiting in Preview keeps its PREVIEW mark when the presentation is reopened
+        Slide waiting = previewSlide;
+        thumbnails.setPreviewIndex(waiting != null && currentPresentation != null
+                && Objects.equals(waiting.getPresentationId(), currentPresentation.id()) ? waiting.getPresentationIndex() : -1);
         refreshLiveMarker();
     }
 
@@ -1636,14 +1783,39 @@ public class MainFrame extends JFrame {
      * media keep Preview + TAKE. Each is a setting.
      */
     private boolean clickGoesLive() {
-        return stripSource == StripSource.SONG && songClickGoesLive()
-                || stripSource == StripSource.PRESENTATION && context.config().getBoolean(SettingsPanel.KEY_PRESENTATION_CLICK_LIVE, true);
+        // presentations never go live on a click: click selects, double-click → Preview, TAKE → Program
+        return stripSource == StripSource.SONG && songClickGoesLive();
     }
 
     /** Tells the operator above the lyrics cards what a click does for the content shown. */
     private void updateClickHint() {
+        if (stripSource == StripSource.PRESENTATION) {
+            thumbnails.setHint("Click = Select · Double-click = Preview · TAKE = Live", false);
+            return;
+        }
         boolean live = liveDock.isAutoTake() || clickGoesLive();
         thumbnails.setHint(live ? "Click = LIVE" : "Click = Preview · TAKE = Live", live);
+    }
+
+    /**
+     * NEXT / PREVIOUS slide. Presentations: Preview moves to that slide, and with Settings → "NEXT / PREVIOUS slide
+     * moves Preview and Program together" (on by default) Program follows at once; otherwise TAKE puts it live.
+     * Only the content changes: Program keeps its scene. Lyrics as before.
+     */
+    private void stepSlide(boolean next) {
+        int before = thumbnails.getSelectedIndex();
+        if (next) {
+            thumbnails.selectNext();
+        } else {
+            thumbnails.selectPrevious();
+        }
+        if (stripSource == StripSource.PRESENTATION && thumbnails.getSelectedIndex() >= 0) {
+            boolean moved = thumbnails.getSelectedIndex() != before;
+            previewSelectedPresentationSlide();
+            if (moved && context.config().getBoolean(SettingsPanel.KEY_PRESENTATION_NEXT_LIVE, true)) {
+                take(false); // content only: Program's scene (camera, logo...) stays
+            }
+        }
     }
 
     /** Settings: a double-click on a slide goes live; by default it only previews and TAKE goes live. */
@@ -1779,12 +1951,19 @@ public class MainFrame extends JFrame {
         Slide slide = thumbnails.getSelectedSlide();
         if (slide != null) {
             setPreview(slide, SlideStyle.fallback(), presentationTitle());
+            thumbnails.setPreviewIndex(thumbnails.getSelectedIndex());
+            preloadPresentationSlide(thumbnails.getSelectedIndex());
             // the Preview scene is kept; a Presentation source in it shows the slide in its own box
             Scene scene = previewState.scene();
             com.jamc.worship.model.Source slot = com.jamc.worship.output.Compositor.presentationSlot(scene, previewState.content());
-            statusBar.showMessage("Slide " + (thumbnails.getSelectedIndex() + 1) + " is in Preview"
-                    + (slot != null ? " in the \"" + scene.getName() + "\" scene's " + slot.getName() + " source" : "")
-                    + ". Press TAKE (Space) to send it live.");
+            boolean hidden = scene != null && slot == null;
+            statusBar.showMessage(hidden
+                    ? "Slide " + (thumbnails.getSelectedIndex() + 1) + " is in Preview, but the \"" + scene.getName()
+                            + "\" scene does not show this presentation (its Presentation source is set to a specific file, "
+                            + "or it has none)."
+                    : "Slide " + (thumbnails.getSelectedIndex() + 1) + " is in Preview"
+                            + (slot != null ? " in the \"" + scene.getName() + "\" scene's " + slot.getName() + " source" : "")
+                            + ". Press TAKE (Space) to send it live.");
         }
     }
 
@@ -1921,6 +2100,7 @@ public class MainFrame extends JFrame {
             setPreview(new Slide(item.getName(), "▶  " + item.getName(), "Video"), SlideStyle.fallback(), item.getName());
             previewVideoPath = path;
             previewState.take(LiveContent.video(path, item.getName()));
+            liveDock.bindPreviewMedia(hub.previewVideoTransport(path), item.getName()); // cue it (±10 s) before TAKE
         }
         statusBar.showMessage("\"" + item.getName() + "\" is in Preview. Press TAKE (Space) to send it live.");
     }
@@ -1931,10 +2111,10 @@ public class MainFrame extends JFrame {
             return;
         }
         var audio = hub.audio();
-        // this file's own mute / volume / loop from last time (else the Settings volume), set before it plays
+        // this file's loop from last time; it starts with its own sound (100 % as recorded, unmuted)
         String key = com.jamc.worship.media.MediaStates.mediaKey(item.getPath());
-        com.jamc.worship.media.MediaStates.apply(audio, mediaStates.get(key, new com.jamc.worship.media.MediaStates.State(
-                false, parseInt(context.config().get(SettingsPanel.KEY_VOLUME, "100"), 100), false)));
+        var last = mediaStates.get(key, new com.jamc.worship.media.MediaStates.State(false, 100, false));
+        com.jamc.worship.media.MediaStates.apply(audio, new com.jamc.worship.media.MediaStates.State(false, 100, last.loop()));
         audio.play(context.mediaService().resolve(item).toString(), item.getName());
         audioControls.bind(mediaStates.remember(audio, key));
         audioTitle.setText("♪ " + item.getName());
@@ -1976,6 +2156,7 @@ public class MainFrame extends JFrame {
         previewStyle = style;
         previewTitle = title;
         previewVideoPath = null;
+        liveDock.bindPreviewMedia(null, null);
         if (slide != null && style != null) {
             previewState.take(LiveContent.snapshot(slide, style, title));
         } else {
@@ -1994,7 +2175,7 @@ public class MainFrame extends JFrame {
         }
         if (live != lastProgramScene) {
             lastProgramScene = live;
-            if (pendingScene == null || (live != null && Objects.equals(live.getId(), pendingScene.getId()))) {
+            if (pendingScene == null || sameLayout(live, pendingScene)) {
                 pendingScene = null;
                 previewState.setScene(live, false);
             }
@@ -2025,6 +2206,11 @@ public class MainFrame extends JFrame {
             sceneClicked(chosen);
         }
         Scene scene = withScene && !separateLayouts() ? pendingScene : null;
+        if (scene == null && !separateLayouts() && pendingScene != null && program.scene() != null
+                && Objects.equals(program.scene().getId(), pendingScene.getId())) {
+            // the saved version of the live scene was sent to Preview: a content TAKE (NEXT slide, lyrics click) brings it too
+            scene = pendingScene;
+        }
         LiveContent taken = null;
         if (previewVideoPath != null) {
             taken = LiveContent.video(previewVideoPath, previewTitle);
@@ -2084,7 +2270,7 @@ public class MainFrame extends JFrame {
      * Library → Camera → SEND TO PREVIEW: the Camera scene, showing this camera with these options, goes to
      * Preview only (TAKE puts it on Program). The saved scene itself is not changed.
      */
-    private void previewCamera(String camera, com.jamc.worship.model.FitMode fit, boolean mirror) {
+    private void previewCamera(String camera, com.jamc.worship.model.FitMode fit, boolean mirror, boolean direct) {
         List<Scene> all = scenes == null ? List.of() : scenes;
         Scene base = all.stream().filter(s -> s.getName().equals("Camera")).findFirst()
                 .orElseGet(() -> all.stream().filter(s -> s.has(com.jamc.worship.model.SourceType.CAMERA)).findFirst().orElse(null));
@@ -2101,13 +2287,35 @@ public class MainFrame extends JFrame {
                 src.getConfig().mirror = mirror ? Boolean.TRUE : null;
             }
         }
+        String name = cameraNames.full(camera);
+        if (direct) {
+            // Settings → Camera → Direct Camera Switching (advanced, off by default): Program at once, Preview stays
+            if (!cameraSettings.directSwitch()) {
+                return;
+            }
+            setLiveScene(s, true);
+            updatePreviewNote();
+            scenesDock.sync();
+            if (scenesHome != null) scenesHome.sync();
+            statusBar.showMessage(name + " switched to Program directly.");
+            return;
+        }
         pendingScene = separateLayouts() ? null : s;
         previewState.setScene(s, false);
         liveDock.setPreviewReady(true);
         updatePreviewNote();
         scenesDock.sync();
         if (scenesHome != null) scenesHome.sync();
-        statusBar.showMessage("\"" + camera + "\" is in Preview (" + s.getName() + " scene). Press TAKE to put it live.");
+        statusBar.showMessage(name + " is in Preview (" + s.getName() + " scene). Press TAKE to put it live.");
+    }
+
+    /** Every camera a scene uses, hidden sources included (so hiding a PiP never closes its camera). */
+    static List<String> cameraDevices(Scene scene) {
+        if (scene == null) {
+            return List.of();
+        }
+        return scene.getSources().stream().filter(s -> s.getType() == com.jamc.worship.model.SourceType.CAMERA)
+                .map(s -> s.getConfig().camera == null ? "" : s.getConfig().camera).distinct().toList();
     }
 
     /** A scene card was clicked: Preview (safe default), or Program at once in Direct Switch mode. */
@@ -2117,6 +2325,12 @@ public class MainFrame extends JFrame {
             sendSceneToProgram(scene);
             return;
         }
+        sendSceneToPreview(scene);
+    }
+
+    /** The scene goes to Preview (never Program): from a double-click, PREVIEW, or the scene editor's SEND TO PREVIEW. */
+    private void sendSceneToPreview(Scene scene) {
+        selectedScene = null;
         if (separateLayouts()) {
             previewState.setScene(scene, false);
             pendingScene = null;
@@ -2127,10 +2341,11 @@ public class MainFrame extends JFrame {
                     + (live == null ? "its layout" : live.getName()) + " (TAKE SCENE changes it).");
         } else {
             Scene live = program.scene();
-            if (live != null && Objects.equals(live.getId(), scene.getId())) {
+            if (sameLayout(live, scene)) {
                 pendingScene = null;
                 previewState.setScene(live, false);
             } else {
+                // another scene, or the live scene saved with changes since it was taken: TAKE puts this version live
                 pendingScene = scene;
                 previewState.setScene(scene, false);
                 statusBar.showMessage("Scene \"" + scene.getName() + "\" is in Preview. Press TAKE to put it live.");
@@ -2142,12 +2357,63 @@ public class MainFrame extends JFrame {
         if (scenesHome != null) scenesHome.sync();
     }
 
+    /**
+     * Leaving the Scenes page: when the scene in Preview was saved with changes, Preview shows the saved version
+     * (its From Library / Specific sources work at once for what is sent from the Library). If Program shows an
+     * older version, the saved one waits as the next scene change: Program changes only at TAKE (or NEXT slide).
+     */
+    private void applySavedSceneToPreview() {
+        Scene inPreview = previewState.scene();
+        List<Scene> all = scenes == null ? List.of() : scenes;
+        Scene saved = inPreview == null ? null
+                : all.stream().filter(s -> Objects.equals(s.getId(), inPreview.getId())).findFirst().orElse(null);
+        if (saved == null || sameLayout(inPreview, saved)) {
+            return;
+        }
+        previewState.setScene(saved, false);
+        if (!separateLayouts()) {
+            pendingScene = sameLayout(program.scene(), saved) ? null : saved;
+        }
+        liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null || pendingScene != null);
+        updatePreviewNote();
+        scenesDock.sync();
+        if (scenesHome != null) scenesHome.sync();
+        statusBar.showMessage("Preview now uses the saved \"" + saved.getName() + "\" scene. Program changes at TAKE.");
+    }
+
+    /**
+     * True when two scenes are the same scene with the same layers (name, type, visibility and settings of every
+     * source). A scene edited and saved after it went live is NOT the same as Program's copy, so sending it to
+     * Preview and pressing TAKE puts the new version live. Source ids are ignored (they change on every save).
+     */
+    static boolean sameLayout(Scene a, Scene b) {
+        if (a == null || b == null || !Objects.equals(a.getId(), b.getId())) {
+            return false;
+        }
+        List<com.jamc.worship.model.Source> as = a.getSources();
+        List<com.jamc.worship.model.Source> bs = b.getSources();
+        if (as.size() != bs.size()) {
+            return false;
+        }
+        for (int i = 0; i < as.size(); i++) {
+            com.jamc.worship.model.Source x = as.get(i);
+            com.jamc.worship.model.Source y = bs.get(i);
+            if (x.getType() != y.getType() || x.isVisible() != y.isVisible() || !Objects.equals(x.getName(), y.getName())
+                    || !Objects.equals(com.jamc.worship.util.Json.write(x.getConfig()), com.jamc.worship.util.Json.write(y.getConfig()))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private void sendSceneToProgram(Scene scene) {
         selectedScene = null;
         setLiveScene(scene, true);
         if (!separateLayouts()) {
-            pendingScene = null;
-            previewState.setScene(scene, false);
+            // LIVE changes Program only: Preview keeps what it showed. A different scene there stays the
+            // next scene, so TAKE still does what Preview shows.
+            Scene inPreview = previewState.scene();
+            pendingScene = inPreview == null || sameLayout(scene, inPreview) ? null : inPreview;
         }
         updatePreviewNote();
         scenesDock.sync();
@@ -2201,11 +2467,15 @@ public class MainFrame extends JFrame {
 
         @Override
         public void editLayout(Scene scene) {
-            scenesPanel.edit(scene.getId());
+            if (!scenesPanel.edit(scene.getId())) {
+                scenesPanel.refresh(); // the lists still show a scene just added; the editor keeps its draft
+                return; // the scene being edited has unsaved changes and the operator stayed on it
+            }
             topBar.selectPage(TopBar.Page.SCENE);
             showPage(TopBar.Page.SCENE);
             scenesHome.showEditor(scene);
-            statusBar.showMessage("Editing \"" + scene.getName() + "\": + ADD SOURCE adds content. ALL SCENES goes back.");
+            statusBar.showMessage("Editing \"" + scene.getName() + "\": changes stay in the editor until SAVE SCENE; "
+                    + "Preview and Program do not change. ALL SCENES goes back.");
         }
 
         @Override
@@ -2228,10 +2498,8 @@ public class MainFrame extends JFrame {
                 Scene copy = context.sceneService().duplicate(copyFrom);
                 copy.setName(req.name());
                 return context.sceneService().save(copy);
-            }, created -> {
-                loadScenes();
-                editLayout(created);
-            }, err -> Dialogs.showError(MainFrame.this, "Could not add the scene.", err));
+            }, created -> editLayout(created), // opening it reloads every scene list; Program is not touched
+                    err -> Dialogs.showError(MainFrame.this, "Could not add the scene.", err));
         }
 
         @Override
@@ -2243,14 +2511,30 @@ public class MainFrame extends JFrame {
             }
             Scene copy = scene.copy();
             copy.setName(name.toString().strip());
-            BackgroundTask.run("Rename scene", () -> context.sceneService().save(copy), saved -> loadScenes(),
+            // the scene lists reload; Preview and Program keep what they show (loadScenes would reset Program)
+            BackgroundTask.run("Rename scene", () -> context.sceneService().save(copy), saved -> scenesPanel.refresh(),
                     err -> Dialogs.showError(MainFrame.this, "Could not rename the scene.", err));
         }
 
         @Override
         public void duplicateScene(Scene scene) {
-            BackgroundTask.run("Duplicate scene", () -> context.sceneService().duplicate(scene.getId()), copy -> loadScenes(),
-                    err -> Dialogs.showError(MainFrame.this, "Could not duplicate the scene.", err));
+            BackgroundTask.run("Duplicate scene", () -> context.sceneService().duplicate(scene.getId()),
+                    copy -> scenesPanel.refresh(), err -> Dialogs.showError(MainFrame.this, "Could not duplicate the scene.", err));
+        }
+
+        @Override
+        public void reorderScenes(List<Scene> order) {
+            List<Long> ids = order.stream().map(Scene::getId).toList();
+            BackgroundTask.run("Reorder scenes", () -> {
+                context.sceneService().reorder(ids);
+                return true;
+            }, ok -> {
+                scenesPanel.refresh(); // both card grids and the editor's list follow the new order
+                statusBar.showMessage("Scene order saved.");
+            }, err -> {
+                Dialogs.showError(MainFrame.this, "Could not save the scene order.", err);
+                scenesPanel.refresh(); // back to the saved order
+            });
         }
 
         @Override
@@ -2288,6 +2572,50 @@ public class MainFrame extends JFrame {
         @Override
         public Scene previewScene() {
             return previewState.scene();
+        }
+
+        @Override
+        public void showOnProjector(Scene scene) {
+            // right-click → Display on Projector: this scene goes live, and the projector output opens if it is off
+            sendSceneToProgram(scene);
+            if (!output.isOpen()) {
+                output.toggle(MainFrame.this);
+            }
+            statusBar.showMessage("Scene \"" + scene.getName() + "\" is on the projector.");
+        }
+
+        @Override
+        public List<ScenesDock.Screen> projectorScreens() {
+            GraphicsDevice mine = operatorDevice();
+            List<ScenesDock.Screen> out = new ArrayList<>();
+            for (DisplayManager.Display d : displays.displays()) {
+                if (mine != null && (d.device() == mine || d.id().equals(mine.getIDstring()))) {
+                    continue; // never cover the controls from a right-click
+                }
+                boolean showing = output.routes().stream().anyMatch(r -> r.target().equals(d.id())
+                        && r.source() == OutputService.Source.PROGRAM && r.showing());
+                out.add(new ScenesDock.Screen(d.id(), d.title() + "  ·  " + d.pixelWidth() + "×"
+                        + d.pixelHeight(), showing));
+            }
+            return out;
+        }
+
+        @Override
+        public void showOnProjector(Scene scene, String screenId) {
+            // one projector/TV (or all of them) shows Program, and this scene goes live on it
+            sendSceneToProgram(scene);
+            List<ScenesDock.Screen> screens = projectorScreens();
+            int shown = 0;
+            for (ScenesDock.Screen s : screens) {
+                if ((ScenesDock.ALL_SCREENS.equals(screenId) || s.id().equals(screenId))
+                        && output.route(OutputService.Source.PROGRAM, s.id(), MainFrame.this)) {
+                    shown++;
+                }
+            }
+            String where = ScenesDock.ALL_SCREENS.equals(screenId) ? shown + " projectors / TVs"
+                    : screens.stream().filter(s -> s.id().equals(screenId)).map(ScenesDock.Screen::label)
+                            .findFirst().orElse("the projector");
+            statusBar.showMessage("Scene \"" + scene.getName() + "\" is on " + where + ".");
         }
 
         @Override
@@ -2374,14 +2702,16 @@ public class MainFrame extends JFrame {
         // a YouTube video plays in the embedded YouTube player; a file plays in VLC
         com.jamc.worship.media.VideoPlayback player = hub.programPlayer(path);
         SettingsPanel.VideoEnd end = SettingsPanel.VideoEnd.parse(context.config().get(SettingsPanel.KEY_VIDEO_END, null));
-        // this video's own mute / volume / loop from last time; Settings only for a video never changed
+        // this video's loop from last time (Settings for a video never changed)
         var state = mediaStates.get(com.jamc.worship.media.MediaStates.mediaKey(path), new com.jamc.worship.media.MediaStates.State(
-                false, parseInt(context.config().get(SettingsPanel.KEY_VOLUME, "100"), 100), end == SettingsPanel.VideoEnd.LOOP));
+                false, 100, end == SettingsPanel.VideoEnd.LOOP));
         boolean loop = state.loop();
-        hub.setProgramVideoVolume(state.volume()); // through the mixer
-        hub.setProgramVideoMuted(state.muted());
+        // every video starts with its own sound: 100 % as recorded, unmuted (the mixer's MEDIA / MASTER still apply);
+        // a volume or mute changed while it plays lasts until it leaves Program
+        hub.setProgramVideoVolume(100);
+        hub.setProgramVideoMuted(false);
         if (context.config().getBoolean(SettingsPanel.KEY_AUTOPLAY, true)) {
-            player.play(path, loop, state.muted());
+            player.play(path, loop, false);
         } else {
             player.cue(path, loop);
         }
@@ -2578,6 +2908,16 @@ public class MainFrame extends JFrame {
     }
 
     private void showPage(TopBar.Page page) {
+        boolean leavingScenes = currentPage == TopBar.Page.SCENE && page != TopBar.Page.SCENE;
+        if (leavingScenes && scenesPanel.hasUnsavedChanges() && !scenesPanel.confirmLeave()) {
+            topBar.selectPage(TopBar.Page.SCENE); // Cancel: stay in the scene editor with the unsaved changes
+            return;
+        }
+        currentPage = page;
+        if (leavingScenes) {
+            // the saved From Library / Specific sources work at once in the Library, without SEND TO PREVIEW
+            applySavedSceneToPreview();
+        }
         placeLiveDock(page == TopBar.Page.SCENE);
         switch (page) {
             case SCENE -> pageCards.show(pages, page.name());
@@ -2727,8 +3067,8 @@ public class MainFrame extends JFrame {
         };
         new GlobalShortcuts(this::isActive, shortcuts, enterTakes, action -> {
             switch (action) {
-                case NEXT_SLIDE -> thumbnails.selectNext();
-                case PREVIOUS_SLIDE -> thumbnails.selectPrevious();
+                case NEXT_SLIDE -> stepSlide(true);
+                case PREVIOUS_SLIDE -> stepSlide(false);
                 case SLIDESHOW_NEXT -> slideshows.controlPreview(com.jamc.worship.output.Slideshows.Control.NEXT);
                 case SLIDESHOW_PREVIOUS -> slideshows.controlPreview(com.jamc.worship.output.Slideshows.Control.PREVIOUS);
                 case TAKE -> take();

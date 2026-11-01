@@ -157,7 +157,7 @@ public final class FindLyricsDialog extends JDialog {
     public static Optional<Song> showDialog(Window owner, SongService songs, LyricsProviders providers, Alternatives alternatives,
                                             String initial) {
         FindLyricsDialog d = new FindLyricsDialog(owner, songs, providers, alternatives, initial);
-        d.setVisible(true);
+        com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         if (d.after != null) {
             d.after.run();
         }

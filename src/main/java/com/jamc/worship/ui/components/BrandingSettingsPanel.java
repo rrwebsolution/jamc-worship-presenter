@@ -170,7 +170,7 @@ public class BrandingSettingsPanel extends JPanel {
         JFileChooser chooser = new JFileChooser();
         chooser.setDialogTitle("Change Application Icon");
         chooser.setFileFilter(new FileNameExtensionFilter("Images (PNG, JPG)", "png", "jpg", "jpeg"));
-        if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) {
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
             return;
         }
         Path file = chooser.getSelectedFile().toPath();
