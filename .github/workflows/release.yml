@@ -82,6 +82,8 @@ jobs:
             --win-menu --win-menu-group "JAMC" --win-shortcut --win-dir-chooser --win-per-user-install `
             --win-upgrade-uuid 2c7919e6-0df8-4da3-97ba-26bfd85c0057
           Get-ChildItem dist/*.exe | Rename-Item -NewName "JAMC-Worship-Presenter-$v.exe"
+          # the operator manual goes on every release, next to the installer
+          Copy-Item docs/User-Manual.html dist/JAMC-Worship-Presenter-User-Manual.html
 
       - uses: actions/upload-artifact@v4
         with:
@@ -94,7 +96,9 @@ jobs:
           tag_name: v${{ steps.v.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: JAMC Worship Presenter ${{ steps.v.outputs.version }}
-          files: dist/*.exe
+          files: |
+            dist/*.exe
+            dist/JAMC-Worship-Presenter-User-Manual.html
           body: |
             **Install:** download `JAMC-Worship-Presenter-${{ steps.v.outputs.version }}.exe` below and run it.
             Windows may show "Windows protected your PC": click **More info → Run anyway** (the installer is not code-signed).
@@ -104,3 +108,5 @@ jobs:
             - **FFmpeg** for recording / livestream: open Command Prompt and run `winget install Gyan.FFmpeg`
 
             YouTube playback downloads its player engine (Chromium) once, on first use, so keep the internet on the first time.
+
+            **User manual:** download `JAMC-Worship-Presenter-User-Manual.html` below and open it in Chrome or Edge.
