@@ -1,0 +1,458 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Worship Presenter Operator Manual</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,800&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: a booth manual — sticky contents rail on the left, one reading column; PREVIEW blue and LIVE red carry meaning everywhere, as in the app. */
+:root {
+  --bg: #f4f6fa;
+  --surface: #ffffff;
+  --ink: #141b2b;
+  --muted: #56607a;
+  --line: #d9dfea;
+  --preview: #1d63e0;
+  --preview-soft: #e3ecfd;
+  --live: #d92b3a;
+  --live-soft: #fde6e8;
+  --ok: #17803d;
+  --ok-soft: #e1f4e7;
+  --warn: #9a5b00;
+  --warn-soft: #fdf0d9;
+  --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --body: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", Consolas, ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d121c; --surface: #151c2a; --ink: #e8ecf4; --muted: #9aa5bd; --line: #26304380;
+    --preview: #6b9dff; --preview-soft: #18264a; --live: #ff6b76; --live-soft: #3a1820;
+    --ok: #5fd08a; --ok-soft: #12301f; --warn: #f2b55a; --warn-soft: #33260f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d121c; --surface: #151c2a; --ink: #e8ecf4; --muted: #9aa5bd; --line: #26304380;
+  --preview: #6b9dff; --preview-soft: #18264a; --live: #ff6b76; --live-soft: #3a1820;
+  --ok: #5fd08a; --ok-soft: #12301f; --warn: #f2b55a; --warn-soft: #33260f;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font-family: var(--body); font-size: 17px; line-height: 1.6;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.page { max-width: 1120px; margin: 0 auto; padding-block: 40px 80px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; }
+@media (max-width: 860px) { .page { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-block: 24px 56px; } }
+
+/* contents rail */
+nav.toc { position: sticky; top: calc(24px + env(safe-area-inset-top, 0px)); align-self: start; font-size: 15px; }
+nav.toc p { font-family: var(--display); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; counter-reset: toc; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--ink); text-decoration: none; }
+nav.toc a:hover, nav.toc a:focus-visible { background: var(--surface); outline: none; box-shadow: inset 2px 0 0 var(--preview); }
+@media (max-width: 860px) {
+  nav.toc { position: static; }
+  nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+}
+
+main { min-width: 0; }
+header.hero { padding-bottom: 28px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+.eyebrow { font-family: var(--display); font-weight: 600; font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--preview); margin: 0 0 10px; }
+h1 { font-family: var(--display); font-weight: 800; font-size: clamp(34px, 5vw, 52px); line-height: 1.05; margin: 0 0 14px; text-wrap: balance; letter-spacing: -.01em; }
+.lede { font-size: 19px; color: var(--muted); max-width: 62ch; margin: 0; }
+h2 { font-family: var(--display); font-weight: 800; font-size: 30px; line-height: 1.15; margin: 56px 0 6px; text-wrap: balance; scroll-margin-top: 20px; }
+h2 + .sub { color: var(--muted); margin: 0 0 22px; max-width: 65ch; }
+h3 { font-family: var(--display); font-weight: 600; font-size: 20px; margin: 30px 0 8px; }
+p, li { max-width: 68ch; }
+a { color: var(--preview); }
+ol.steps, ul.plain { padding-left: 1.3em; margin: 8px 0 16px; }
+ol.steps li, ul.plain li { margin: 6px 0; padding-left: 4px; }
+ol.steps li::marker { font-family: var(--display); font-weight: 800; color: var(--preview); }
+
+/* tags that mirror the app */
+.btn { display: inline-block; font-family: var(--body); font-weight: 700; font-size: .82em; letter-spacing: .03em; padding: 1px 8px; border-radius: 5px; border: 1px solid var(--line); background: var(--surface); white-space: nowrap; }
+.btn.preview { color: var(--preview); border-color: var(--preview); background: var(--preview-soft); }
+.btn.live { color: var(--live); border-color: var(--live); background: var(--live-soft); }
+kbd { font-family: var(--mono); font-size: .8em; padding: 1px 7px; border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 6px; background: var(--surface); white-space: nowrap; }
+
+/* the core flow */
+.flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 26px 0 8px; align-items: stretch; }
+.flow .stage { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 16px 14px; position: relative; display: flex; flex-direction: column; gap: 6px; }
+.flow .stage + .stage { margin-left: 28px; }
+.flow .stage + .stage::before { content: ""; position: absolute; left: -24px; top: 50%; width: 18px; height: 2px; background: var(--muted); }
+.flow .stage + .stage::after { content: ""; position: absolute; left: -10px; top: calc(50% - 5px); border: 6px solid transparent; border-left-color: var(--muted); border-right: 0; }
+.flow .tag { font-family: var(--display); font-weight: 800; font-size: 13px; letter-spacing: .1em; text-transform: uppercase; }
+.flow .stage p { margin: 0; font-size: 15px; color: var(--muted); }
+.flow .stage.pv { border-color: var(--preview); box-shadow: inset 0 3px 0 var(--preview); }
+.flow .stage.pv .tag { color: var(--preview); }
+.flow .stage.pg { border-color: var(--live); box-shadow: inset 0 3px 0 var(--live); }
+.flow .stage.pg .tag { color: var(--live); }
+.flow .stage.take { align-self: center; text-align: center; }
+.flow .stage.take .tag { font-size: 18px; }
+@media (max-width: 760px) {
+  .flow { grid-template-columns: minmax(0, 1fr); }
+  .flow .stage + .stage { margin-left: 0; margin-top: 26px; }
+  .flow .stage + .stage::before { left: 50%; top: -22px; width: 2px; height: 16px; }
+  .flow .stage + .stage::after { left: calc(50% - 5px); top: -9px; border: 6px solid transparent; border-top-color: var(--muted); border-bottom: 0; }
+}
+.fanout { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.fanout span { font-size: 14px; padding: 4px 10px; border-radius: 999px; background: var(--live-soft); color: var(--live); font-weight: 600; }
+
+/* service timeline */
+.timeline { display: grid; gap: 14px; margin-top: 18px; }
+.phase { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; }
+.phase .when { font-family: var(--display); font-weight: 800; font-size: 18px; line-height: 1.2; }
+.phase .when small { display: block; font-family: var(--body); font-weight: 400; font-size: 14px; color: var(--muted); margin-top: 4px; }
+.phase ol { margin: 0; padding-left: 1.2em; }
+.phase li { margin: 5px 0; }
+@media (max-width: 640px) { .phase { grid-template-columns: minmax(0, 1fr); gap: 8px; } }
+
+/* page tour */
+.tour { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; margin-top: 16px; }
+.tour div { border-top: 3px solid var(--ink); padding-top: 10px; }
+.tour b { font-family: var(--display); font-size: 18px; display: block; margin-bottom: 4px; }
+.tour p { margin: 0; font-size: 15px; color: var(--muted); }
+
+/* callouts */
+.note { border-left: 4px solid var(--preview); background: var(--preview-soft); padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; max-width: 68ch; }
+.note.warn { border-color: var(--warn); background: var(--warn-soft); }
+.note.ok { border-color: var(--ok); background: var(--ok-soft); }
+.note p { margin: 0; }
+
+/* how-content-goes-live table and shortcuts */
+.tablewrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; min-width: 560px; }
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--display); font-weight: 600; font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+
+/* troubleshooting */
+details { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 0 18px; margin: 10px 0; }
+summary { cursor: pointer; padding: 14px 0; font-weight: 700; list-style-position: outside; }
+summary:focus-visible { outline: 2px solid var(--preview); outline-offset: 4px; border-radius: 4px; }
+details[open] summary { border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+details > *:last-child { margin-bottom: 14px; }
+
+footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 14px; }
+@media (prefers-reduced-motion: no-preference) { html { scroll-behavior: smooth; } }
+</style>
+</head>
+<body>
+
+<div class="page">
+  <nav class="toc" aria-label="Contents">
+    <p>Contents</p>
+    <ol>
+      <li><a href="#flow">The process flow</a></li>
+      <li><a href="#sunday">A Sunday, step by step</a></li>
+      <li><a href="#pages">The six pages</a></li>
+      <li><a href="#lyrics">Song lyrics</a></li>
+      <li><a href="#bible">Bible verses</a></li>
+      <li><a href="#ppt">PowerPoint</a></li>
+      <li><a href="#media">Videos &amp; images</a></li>
+      <li><a href="#background">Backgrounds</a></li>
+      <li><a href="#scenes">Scenes</a></li>
+      <li><a href="#projectors">Projectors &amp; TVs</a></li>
+      <li><a href="#stream">Record &amp; livestream</a></li>
+      <li><a href="#settings">Settings</a></li>
+      <li><a href="#keys">Keyboard shortcuts</a></li>
+      <li><a href="#help">When something goes wrong</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="hero">
+      <p class="eyebrow">Operator manual · JAMC Worship Presenter</p>
+      <h1>Running the screens for a worship service</h1>
+      <p class="lede">For volunteers at the media desk. It explains how the app is organised, what to do before, during and after a service, and how to show lyrics, Bible verses, PowerPoint slides, videos and cameras on the projector and the livestream.</p>
+    </header>
+
+    <h2 id="flow">The process flow</h2>
+    <p class="sub">Everything in the app follows one rule: <strong>you prepare in Preview, and the church sees Program.</strong> Nothing reaches the projector until you send it there.</p>
+
+    <div class="flow" role="list" aria-label="How content goes live">
+      <div class="stage" role="listitem">
+        <span class="tag">1 · Library</span>
+        <p>Pick a song, verse, slide, video, image or scene. Clicking an item only shows it to you.</p>
+      </div>
+      <div class="stage pv" role="listitem">
+        <span class="tag">2 · Preview</span>
+        <p>The left monitor. Only you see it. Check it before it goes live.</p>
+      </div>
+      <div class="stage take" role="listitem">
+        <span class="tag">TAKE</span>
+        <p><kbd>Space</kbd> or the <span class="btn">TAKE →</span> button</p>
+      </div>
+      <div class="stage pg" role="listitem">
+        <span class="tag">3 · Program</span>
+        <p>The right monitor, marked LIVE. This is what everyone sees.</p>
+      </div>
+    </div>
+    <div class="fanout" aria-label="Program feeds">
+      <span>Projector</span><span>TVs</span><span>Livestream</span><span>Recording</span><span>OBS window</span>
+    </div>
+
+    <div class="note">
+      <p><strong>Two exceptions to know.</strong> Song lyrics go live as soon as you click a lyric slide, with no TAKE needed (you can turn this off in Settings). For PowerPoint, <span class="btn">NEXT</span> and <span class="btn">PREV</span> move Preview and Program together.</p>
+    </div>
+
+    <h3>How each kind of content reaches Program</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Content</th><th>To Preview</th><th>To Program</th></tr></thead>
+        <tbody>
+          <tr><td>Song lyrics</td><td>—</td><td>Click a lyric slide (goes live at once)</td></tr>
+          <tr><td>Bible verse</td><td>Click the verse</td><td>TAKE</td></tr>
+          <tr><td>PowerPoint slide</td><td>Double-click the slide</td><td>TAKE, then NEXT / PREV</td></tr>
+          <tr><td>Video or image</td><td><span class="btn preview">SEND TO PREVIEW</span> or <span class="btn">FULLSCREEN VIDEO</span></td><td>TAKE</td></tr>
+          <tr><td>Background</td><td>—</td><td><span class="btn">TAKE AS BACKGROUND</span> (changes the background only)</td></tr>
+          <tr><td>Scene (layout)</td><td>Double-click the card, or select it and press <span class="btn preview">PREVIEW</span></td><td>TAKE, or select it and press <span class="btn live">LIVE</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="sunday">A Sunday, step by step</h2>
+    <p class="sub">The order most churches use. Do the "before" list at least 30 minutes before the service starts.</p>
+
+    <div class="timeline">
+      <section class="phase" aria-label="Before the service">
+        <div class="when">Before<small>30–60 min early</small></div>
+        <ol>
+          <li>Connect the projector and TVs, then open the app.</li>
+          <li>Open <b>Settings → Projector</b>. Check the projector display is right (it shows the screen's real name, such as "TCL SMART TV"). Press <span class="btn">Identify Displays</span> if you are unsure which is which.</li>
+          <li>Press <kbd>F5</kbd> to open the projector output. The top bar changes from OUTPUT OFF.</li>
+          <li>Open the <b>Service</b> page and choose this week's service, or press <span class="btn">New Service</span> and add songs, verses, slides and videos with <span class="btn">Add to Service</span>.</li>
+          <li>Pick the starting scene on the <b>Scenes</b> page (for example "Worship").</li>
+          <li>Play one video briefly to check the sound reaches the speakers.</li>
+          <li>If you livestream, open the <b>Stream</b> page and run <span class="btn">Pre-stream Check</span>.</li>
+        </ol>
+      </section>
+      <section class="phase" aria-label="During the service">
+        <div class="when">During<small>the service</small></div>
+        <ol>
+          <li>Press <span class="btn">● START RECORDING</span> and <span class="btn">START STREAM</span> when the service begins (both can run together).</li>
+          <li>Work through the service list: <kbd>Page Down</kbd> moves to the next item.</li>
+          <li>For songs, click each lyric slide as it is sung, or use <kbd>→</kbd> and <kbd>←</kbd>.</li>
+          <li>For anything else, put it in Preview, check it, then press <kbd>Space</kbd> to TAKE.</li>
+          <li>Need a clean screen? <kbd>B</kbd> = black, <kbd>W</kbd> = hide the text, <kbd>L</kbd> = lyrics on/off.</li>
+        </ol>
+      </section>
+      <section class="phase" aria-label="After the service">
+        <div class="when">After<small>when people leave</small></div>
+        <ol>
+          <li>Stop the stream, then stop the recording. Wait for "Saving the MP4…" to finish.</li>
+          <li>Press <kbd>F5</kbd> to close the projector output.</li>
+          <li>Close the app. Songs, services and settings save automatically.</li>
+        </ol>
+      </section>
+    </div>
+
+    <h2 id="pages">The six pages</h2>
+    <p class="sub">The buttons along the top switch between them. The Preview and Program monitors stay on screen on the Library and Service pages.</p>
+    <div class="tour">
+      <div><b>Library</b><p>All content: Lyrics, Bible, Presentations, Images, Videos, Audio, Backgrounds, Camera. Under "More": Custom Slides, Themes, Lower Thirds, Favorite Lyrics, All Media.</p></div>
+      <div><b>Service</b><p>This week's running order. Add items from the Library, drag to reorder, and step through with Page Up / Page Down.</p></div>
+      <div><b>Scenes</b><p>Screen layouts: camera, lyrics, logo and lower third arranged together. Edit, save and send them to Preview.</p></div>
+      <div><b>Output</b><p>Which screen shows Preview or Program, fullscreen or windowed, and the projector status.</p></div>
+      <div><b>Stream</b><p>Recording and livestreaming: platform, stream key, quality, microphones and the audio mixer.</p></div>
+      <div><b>Settings</b><p>Every option in one place, from fonts and transitions to cameras, recording and keyboard shortcuts.</p></div>
+    </div>
+
+    <h2 id="lyrics">Song lyrics</h2>
+    <ol class="steps">
+      <li>Open <b>Library → Lyrics</b> and type the song name in the search box.</li>
+      <li>Click the song. Its slides appear as cards.</li>
+      <li>Click a lyric card. It goes live on Program straight away.</li>
+      <li>Use <kbd>→</kbd> and <kbd>←</kbd> for the next and previous slide.</li>
+    </ol>
+    <p><b>New song:</b> press <span class="btn">ADD LYRICS</span> and type or paste the words, or use the import options (a lyrics file, or lyrics found from YouTube). Lyrics are reviewed before saving and then work offline.</p>
+    <p><b>The look of lyrics</b> (font, size, color, shadow) is set once for every song in <b>Settings → Lyrics Typography</b>. The preview beside it shows the result as you change it.</p>
+
+    <h2 id="bible">Bible verses</h2>
+    <ol class="steps">
+      <li>Open <b>Library → Bible</b> and choose the version.</li>
+      <li>Type a reference such as <em>John 3:16</em>, or pick the book and chapter.</li>
+      <li>Click the verse to put it in Preview.</li>
+      <li>Press <kbd>Space</kbd> to TAKE it live.</li>
+    </ol>
+    <p>Long verses split across slides by themselves. Add more versions with <b>Settings → Manage Bible Versions…</b>.</p>
+
+    <h2 id="ppt">PowerPoint</h2>
+    <ol class="steps">
+      <li>Open <b>Library → Presentations</b> and press <span class="btn">Import PowerPoint</span>. Choose the .pptx or .ppt file.</li>
+      <li>Click a slide to select it (white outline).</li>
+      <li>Double-click it to send it to Preview, then press <kbd>Space</kbd> to TAKE.</li>
+      <li>Press <span class="btn">NEXT</span> or <kbd>→</kbd> for the next slide. Preview and Program move together.</li>
+    </ol>
+    <p>Slides look exactly as they do in PowerPoint. Their fonts are not changed by the app's typography settings.</p>
+
+    <h2 id="media">Videos &amp; images</h2>
+    <p class="sub">Clicking a video or image shows it in the media panel only. Nothing changes on Preview or Program yet.</p>
+    <h3>The four action buttons</h3>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Button</th><th>What it does</th></tr></thead>
+        <tbody>
+          <tr><td><span class="btn preview">SEND TO PREVIEW</span></td><td>Puts it in Preview. TAKE sends it live.</td></tr>
+          <tr><td><span class="btn">ADD TO SERVICE</span></td><td>Adds it to the service list. Nothing goes on screen.</td></tr>
+          <tr><td><span class="btn">FULLSCREEN VIDEO</span> / <span class="btn">FULLSCREEN IMAGE</span></td><td>Fills the whole screen. It goes to Preview first; TAKE puts it live.</td></tr>
+          <tr><td><span class="btn">TAKE AS BACKGROUND</span></td><td>Makes it the background behind lyrics and scenes. Greyed out for YouTube videos.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Playing controls</h3>
+    <p>Under the video, and in the <b>PREVIEW MEDIA</b> and <b>PROGRAM MEDIA</b> rows under the monitors: back 10 seconds, play / pause, forward 10 seconds, stop, a position bar, volume, mute and loop.</p>
+    <ul class="plain">
+      <li>Use <b>PREVIEW MEDIA</b> to find the right starting point before you TAKE.</li>
+      <li>Preview's sound plays only through your monitor headphones, and only when <span class="btn">PREVIEW AUDIO</span> is on. The church never hears Preview.</li>
+      <li>Videos start with their own sound at 100%. Make all media quieter with the MEDIA fader in the <span class="btn">MIXER</span>.</li>
+    </ul>
+    <p><b>YouTube:</b> use <b>Import from YouTube</b> in the Videos library. YouTube videos need the internet while they play.</p>
+
+    <h2 id="background">Backgrounds</h2>
+    <ol class="steps">
+      <li>Open <b>Library → Backgrounds</b> and click a video or image.</li>
+      <li>Press <span class="btn">TAKE AS BACKGROUND</span>. It shows <b>✓ ACTIVE BACKGROUND</b>.</li>
+    </ol>
+    <p>The background controls below the monitors have back 10 s, Pause, forward 10 s, Restart, Change, and ON / OFF. Changing the background never changes the scene or the lyrics on top.</p>
+
+    <h2 id="scenes">Scenes</h2>
+    <p class="sub">A scene is a saved screen layout, for example "Camera + Lyrics" or "Worship". Scene cards are on the Scenes page and in the Scenes list beside the Library.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>You do</th><th>What happens</th></tr></thead>
+        <tbody>
+          <tr><td>Click a card once</td><td>Selects it (outline). Nothing changes on screen.</td></tr>
+          <tr><td>Double-click, or <span class="btn preview">PREVIEW</span></td><td>The scene goes to Preview. TAKE puts it live.</td></tr>
+          <tr><td>Select, then <span class="btn live">LIVE</span></td><td>The scene goes live on Program. Preview stays as it was.</td></tr>
+          <tr><td>Right-click → Display on Projector</td><td>Pick a projector or TV by name, or "All Projectors / TVs". The scene goes live there.</td></tr>
+          <tr><td>Drag a card</td><td>Changes the order of the scenes.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <h3>Editing a scene</h3>
+    <ol class="steps">
+      <li>Right-click the card and choose <b>Edit Scene…</b>. Editing never changes Preview or Program.</li>
+      <li>Add sources (camera, lyrics, image, video, presentation, text) with <b>Add Source</b>. For presentations, lyrics, images and videos choose <b>From Library</b> (follows whatever you send) or <b>Specific File</b> (always shows that one file).</li>
+      <li>Press <span class="btn">SAVE SCENE</span>, then <span class="btn preview">SEND TO PREVIEW</span> to see it. If you leave the Scenes page with unsaved changes, the app asks first.</li>
+    </ol>
+    <div class="note">
+      <p><b>Separate Layouts</b> (in the Scenes list, and in Settings → Live &amp; Scenes) lets the church TV keep one scene while the livestream keeps another. TAKE then changes only the content; <span class="btn">TAKE SCENE →</span> changes Program's layout.</p>
+    </div>
+
+    <h2 id="projectors">Projectors &amp; TVs</h2>
+    <ul class="plain">
+      <li>Screens are listed by their real name, for example "TCL SMART TV (Display 2)". Your own laptop screen is never covered by a right-click.</li>
+      <li><kbd>F5</kbd> opens or closes the projector. <kbd>Esc</kbd> closes a fullscreen projector.</li>
+      <li>The <span class="btn">PREVIEW</span> / <span class="btn">PROGRAM</span> switch above the monitors chooses what the projector shows. Program is normal.</li>
+      <li>If a cable comes loose, the output closes. It returns by itself when the screen is reconnected.</li>
+    </ul>
+
+    <h2 id="stream">Record &amp; livestream</h2>
+    <ol class="steps">
+      <li>Open the <b>Stream</b> page. Choose the platform (Facebook, YouTube…) and press <span class="btn">Change…</span> to enter the stream key once.</li>
+      <li>Choose the quality. 1080p 30 FPS suits most churches; use 720p on a slow computer or slow internet.</li>
+      <li>Press <span class="btn">Pre-stream Check</span>, then <span class="btn">START STREAM</span>.</li>
+      <li>Press <span class="btn">● START RECORDING</span> to save an MP4 on the computer. Recording and streaming can run at the same time and stop separately.</li>
+    </ol>
+    <ul class="plain">
+      <li>Both use the Program picture and the same mixer (microphone, aux, media, master).</li>
+      <li>While a video or music plays, the microphones are muted in the recording and stream, so talking in the room is not mixed in. You can turn this off in Settings → Recording &amp; Livestream.</li>
+      <li>If the internet drops, the stream tries to reconnect and the recording keeps going.</li>
+      <li>Recording and streaming together roughly doubles the work for the computer. Use the <b>Auto</b> or <b>Hardware</b> encoder.</li>
+    </ul>
+
+    <h2 id="settings">Settings</h2>
+    <p class="sub">Every option is on the Settings page. Options that also appear elsewhere (next to TAKE, on the Output or Stream page) are the same setting; changing one changes the other.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Section</th><th>What you set there</th></tr></thead>
+        <tbody>
+          <tr><td>General</td><td>Dark or light look, reopen last service, open projector at start, check for updates</td></tr>
+          <tr><td>Projector</td><td>Projector screen, fullscreen or windowed, Program or Preview, identify displays</td></tr>
+          <tr><td>Presentation</td><td>Default themes, song click goes live, PowerPoint NEXT moves both, double-click behaviour</td></tr>
+          <tr><td>Live &amp; Scenes</td><td>Transition and duration, Auto-take, scene switching, Separate Layouts, scene at start</td></tr>
+          <tr><td>Lyrics / Bible / Other Typography</td><td>Font (every font on the computer, shown in its own style), thickness, size, color, position, shadow, outline</td></tr>
+          <tr><td>Bible Presentation</td><td>Reference position, version name, capitals, splitting long verses, Bible versions</td></tr>
+          <tr><td>Media &amp; Camera, Audio, Camera</td><td>VLC, what happens when a video ends, sound devices, camera quality and switching</td></tr>
+          <tr><td>Recording &amp; Livestream</td><td>Quality, encoder, recordings folder, FFmpeg, mute microphones during media</td></tr>
+          <tr><td>Database</td><td>Backup and restore</td></tr>
+          <tr><td>Keyboard Shortcuts</td><td>Change any key, or reset to the defaults</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="keys">Keyboard shortcuts</h2>
+    <p class="sub">These are the defaults; change them in Settings → Keyboard Shortcuts.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Key</th><th>Action</th><th>Key</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td><kbd>Space</kbd></td><td>TAKE (Preview → Program)</td><td><kbd>→</kbd> / <kbd>←</kbd></td><td>Next / previous slide</td></tr>
+          <tr><td><kbd>B</kbd></td><td>Black screen</td><td><kbd>Shift</kbd>+<kbd>→</kbd> / <kbd>←</kbd></td><td>Next / previous slideshow image</td></tr>
+          <tr><td><kbd>W</kbd></td><td>Blank (hide text until next TAKE)</td><td><kbd>Page Down</kbd> / <kbd>Page Up</kbd></td><td>Next / previous service item</td></tr>
+          <tr><td><kbd>L</kbd></td><td>Lyrics on / off</td><td><kbd>F5</kbd></td><td>Open / close projector</td></tr>
+          <tr><td><kbd>H</kbd></td><td>Hide lower third</td><td><kbd>Esc</kbd></td><td>Close fullscreen projector</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>Search songs</td><td><kbd>Ctrl</kbd>+<kbd>S</kbd></td><td>Save</td></tr>
+          <tr><td><kbd>Ctrl</kbd>+<kbd>N</kbd></td><td>New song</td><td></td><td></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="note warn">
+      <p><b>Shortcuts pause while you type in a text box</b>, so Space and B type normally. Click anywhere outside the box (a slide, a card, an empty spot) and they work again right away.</p>
+    </div>
+
+    <h2 id="help">When something goes wrong</h2>
+    <details>
+      <summary>Nothing shows on the projector</summary>
+      <ul class="plain">
+        <li>Check the top bar. If it says OUTPUT OFF, press <kbd>F5</kbd>.</li>
+        <li>Check the screen is chosen in Settings → Projector, and press Identify Displays.</li>
+        <li>Check the projector switch above the monitors is on PROGRAM.</li>
+        <li>Check the screen is not on Black (<kbd>B</kbd>) or Blank (<kbd>W</kbd>).</li>
+      </ul>
+    </details>
+    <details>
+      <summary>A video has no sound in the church</summary>
+      <ul class="plain">
+        <li>Look at the PROGRAM MEDIA row: is it muted, or is the volume low?</li>
+        <li>Open the <span class="btn">MIXER</span> and check the MEDIA fader.</li>
+        <li>Check Settings → Audio uses the right speaker output.</li>
+        <li>Some videos have no audio track; the PROGRAM MEDIA row says so.</li>
+      </ul>
+    </details>
+    <details>
+      <summary>Space or the arrow keys do nothing</summary>
+      <p>The cursor is probably still in a search box. Click anywhere outside it and try again.</p>
+    </details>
+    <details>
+      <summary>The livestream stopped</summary>
+      <ul class="plain">
+        <li>It reconnects by itself for a short while. Watch the status on the Stream page.</li>
+        <li>The recording keeps going, so the service is still saved on the computer.</li>
+        <li>If it keeps failing, lower the quality to 720p and start the stream again.</li>
+      </ul>
+    </details>
+    <details>
+      <summary>A font is missing from the list</summary>
+      <p>Install the font in Windows, then open Settings again; the list refreshes by itself. Or press <span class="btn">Add Font…</span> beside the font list and choose the TTF or OTF file.</p>
+    </details>
+    <details>
+      <summary>A camera shows "CAMERA OFFLINE"</summary>
+      <ul class="plain">
+        <li>Check the USB cable. The camera comes back by itself when reconnected.</li>
+        <li>Several USB cameras on one port can run out of bandwidth. Move one to another USB port, or lower its resolution in Settings → Camera.</li>
+      </ul>
+    </details>
+
+    <footer>Written for the JAMC Worship Presenter as of November 2026. Button names in this manual match the labels in the app.</footer>
+  </main>
+</div>
+</body>
+</html>
