@@ -3092,6 +3092,7 @@ public class MainFrame extends JFrame {
             }
             return true;
         }).install();
+        ClickAwayFocus.install(this, getRootPane()); // a click outside a text box gives the shortcuts back
     }
 
     private void newSong() {

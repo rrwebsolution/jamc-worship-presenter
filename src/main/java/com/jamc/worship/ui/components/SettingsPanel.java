@@ -416,7 +416,7 @@ public class SettingsPanel extends JPanel {
         keys.add(shortcutRows, BorderLayout.CENTER);
         keys.add(flow(reset), BorderLayout.SOUTH);
         buildShortcutRows();
-        content.add(section("Keyboard Shortcuts", "Live keys work anywhere except while typing in a text field", keys), c);
+        content.add(section("Keyboard Shortcuts", "Live keys work anywhere except while typing in a text box. Click anywhere outside the box to use them again", keys), c);
         c.gridy++;
 
         c.weighty = 1;

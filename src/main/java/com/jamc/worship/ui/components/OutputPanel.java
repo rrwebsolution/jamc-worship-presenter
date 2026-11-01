@@ -136,7 +136,7 @@ public class OutputPanel extends JPanel {
                 + "<b>L</b> Lyrics on/off<br>"
                 + "<b>F5</b> Open / close projector &nbsp;·&nbsp; <b>Esc</b> Close fullscreen projector"
                 + "</html>", Palette::secondaryText, null);
-        content.add(section("Live Shortcuts", "Work anywhere except while typing in a text field.", keys), c);
+        content.add(section("Live Shortcuts", "Work anywhere except while typing in a text box. Click anywhere outside the box to use them again.", keys), c);
         c.gridy++;
 
         JLabel obs = Ui.label("<html>A dedicated \"JAMC Worship - OBS Output\" window with green-screen mode for OBS "
