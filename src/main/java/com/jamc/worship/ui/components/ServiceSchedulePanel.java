@@ -228,6 +228,17 @@ public class ServiceSchedulePanel extends JPanel {
         insertItem(at, item);
     }
 
+    public int selectedIndex() {
+        return list.getSelectedIndex();
+    }
+
+    public void selectIndex(int index) {
+        if (index >= 0 && index < model.size()) {
+            list.setSelectedIndex(index);
+            list.ensureIndexIsVisible(index);
+        }
+    }
+
     public void selectNext() {
         int i = list.getSelectedIndex();
         if (i < model.size() - 1) {

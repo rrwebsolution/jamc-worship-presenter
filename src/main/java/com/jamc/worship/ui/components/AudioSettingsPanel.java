@@ -81,7 +81,8 @@ public class AudioSettingsPanel extends JPanel {
         add(takeRow);
         add(Ui.label("STREAM & RECORDING AUDIO", Palette::secondaryText, "semibold"));
         add(streamMedia);
-        add(Ui.label("<html>Videos inside a scene are picture only (tick Audio on a scene video to hear it). The sound comes from "
+        // a set width, or this one long line makes the whole Settings page wider than the window
+        add(Ui.label("<html><body style='width:760px'>Videos inside a scene are picture only (tick Audio on a scene video to hear it). The sound comes from "
                 + "what you play: a Program video, the audio player or Media Preview. Scene videos with Audio on are silent in Preview until you press "
                 + "PREVIEW AUDIO under the Preview monitor (it becomes MONITOR ON), so the church never hears a video twice. Global background videos "
                 + "stay muted unless you unmute them in the background settings.</html>", Palette::mutedText, "small"));

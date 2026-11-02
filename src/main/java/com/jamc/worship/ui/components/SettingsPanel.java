@@ -45,7 +45,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.function.Consumer;
 
-/** Settings page: General, Output, Presentation, Media, Database, Advanced and Keyboard Shortcuts. */
+/** Settings page: General, Output, Presentation, Media, Remote Control, Database, Advanced and Keyboard Shortcuts. */
 public class SettingsPanel extends JPanel {
 
     public static final String KEY_REOPEN_SERVICE = "app.reopenService";
@@ -112,6 +112,8 @@ public class SettingsPanel extends JPanel {
 
         com.jamc.worship.stream.StreamManager stream();
 
+        com.jamc.worship.remote.RemoteManager remote();
+
         com.jamc.worship.output.Transition transition();
 
         int transitionMs();
@@ -146,6 +148,7 @@ public class SettingsPanel extends JPanel {
     private final JPanel projectorBody = Ui.transparent(new BorderLayout());
     private final JPanel liveBody = Ui.transparent(new BorderLayout());
     private final JPanel recordingBody = Ui.transparent(new BorderLayout());
+    private final JPanel remoteBody = Ui.transparent(new BorderLayout());
     private final List<Runnable> liveSync = new java.util.ArrayList<>();
     private final List<JComponent> liveSections = new java.util.ArrayList<>();
     private boolean syncing;
@@ -381,6 +384,8 @@ public class SettingsPanel extends JPanel {
         content.add(section("Camera", "Multi-camera performance and camera switching", buildCameraSettings(cfg)), c);
         c.gridy++;
         content.add(liveSection("Recording & Livestream", "Quality, encoder, where recordings go, FFmpeg and microphones", recordingBody), c);
+        c.gridy++;
+        content.add(liveSection("Remote Control", "Let phones and tablets on this network connect, and choose what each may do", remoteBody), c);
         c.gridy++;
 
         // INTEGRATIONS → LYRICS
@@ -918,6 +923,11 @@ public class SettingsPanel extends JPanel {
                 Ui.label("<html>Platform, stream key, bitrates and audio devices are on the Stream page; these settings are "
                         + "shared with it.</html>", Palette::mutedText, "small")), BorderLayout.CENTER);
         liveSync.add(syncRecording);
+
+        // REMOTE CONTROL
+        RemoteControlSettingsPanel remotePanel = new RemoteControlSettingsPanel(h.remote());
+        remoteBody.add(remotePanel, BorderLayout.CENTER);
+        liveSync.add(remotePanel::refresh);
 
         liveSections.forEach(s -> s.setVisible(true));
         addHierarchyListener(e -> {

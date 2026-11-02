@@ -90,6 +90,18 @@
             <artifactId>jcefmaven</artifactId>
             <version>${jcef.version}</version>
         </dependency>
+        <!-- QR code for the Remote Control address (pure Java, core only) -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+        <!-- Remote Control: HTTP and WebSocket on one port -->
+        <dependency>
+            <groupId>org.eclipse.jetty.websocket</groupId>
+            <artifactId>jetty-websocket-jetty-server</artifactId>
+            <version>12.1.14</version>
+        </dependency>
         <!-- POI logs through Log4j API; route it into SLF4J/Logback -->
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>

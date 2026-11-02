@@ -95,10 +95,13 @@ import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 
 /**
@@ -170,6 +173,7 @@ public class MainFrame extends JFrame {
     private TopBar.Page currentPage = TopBar.Page.LIBRARY; // the app opens on the Library
     private com.jamc.worship.camera.CameraSettings cameraSettings;
     private final com.jamc.worship.stream.StreamManager streamManager;
+    private final com.jamc.worship.remote.RemoteManager remoteManager;
     private final com.jamc.worship.ui.components.StreamPanel streamPanel;
     private final MediaHub hub;
     /** The operator's global video background: lives for the whole session, independent of all content. */
@@ -462,6 +466,12 @@ public class MainFrame extends JFrame {
         // while a video or music is heard on Program, the room microphones are muted in recordings / the livestream
         streamManager.setProgramMediaPlaying(hub::programMediaHeard);
         new javax.swing.Timer(1000, e -> updateRecordingIndicator()).start();
+        this.remoteManager = new com.jamc.worship.remote.RemoteManager(context.config(),
+                context.paths().configDir().resolve("remote-devices.json"));
+        BackgroundTask.run("Start the remote server", () -> {
+            remoteManager.startIfEnabled();
+            return true;
+        }, ok -> { }, err -> log.warn("Remote server did not start", err));
         this.settingsPanel =new SettingsPanel(context, this::changeTheme, shortcuts, obs, hub, this::restartApplication,
                 this::manageBibleVersions);
         settingsPanel.setUpdateCheckHandler(() -> checkForUpdates(true));
@@ -527,6 +537,11 @@ public class MainFrame extends JFrame {
             @Override
             public com.jamc.worship.stream.StreamManager stream() {
                 return streamManager;
+            }
+
+            @Override
+            public com.jamc.worship.remote.RemoteManager remote() {
+                return remoteManager;
             }
 
             @Override
@@ -1194,6 +1209,7 @@ public class MainFrame extends JFrame {
         thumbnails.setSelectionIsPreview(() -> stripSource != StripSource.PRESENTATION);
         thumbnails.addSlidesChangedListener(this::refreshLiveMarker);
         thumbnails.addSlidesChangedListener(this::updateClickHint);
+        remoteManager.setDesk(new RemoteDeskImpl());
 
         program.addListener(this::refreshLiveMarker);
         program.addListener(this::followProgramScene);
@@ -1470,7 +1486,10 @@ public class MainFrame extends JFrame {
             }
             return;
         }
-        BibleDisplay display = bibleDisplay();
+        BibleDisplay shown = bibleDisplay();
+        // a chapter opened from a remote is one card per verse, like lyrics cards: no verses packed onto one slide
+        BibleDisplay display = p.equals(remoteBibleChapter)
+                ? new BibleDisplay(shown.referencePosition(), shown.showVersion(), shown.uppercaseReference(), false) : shown;
         BackgroundTask.run("Prepare Bible slides", () -> {
             SlideStyle style = resolveBibleStyle();
             List<Slide> slides = context.bibleService().slides(p, display, style,
@@ -1487,7 +1506,18 @@ public class MainFrame extends JFrame {
             stripSource = StripSource.BIBLE;
             thumbnails.setTitle(p.referenceWithTranslation());
             thumbnails.setEmptyMessage("Select verses to see them here.");
-            if (restoringBible) {
+            if (remoteBibleVerse != null && p.equals(remoteBibleChapter)) {
+                int verse = remoteBibleVerse;
+                remoteBibleVerse = null;
+                restoringBible = false;
+                suppressAutoTake = true; // the tap below decides, once the verse is in Preview
+                try {
+                    thumbnails.setSlides(slides, bibleStyle, cardOfVerse(slides, verse));
+                } finally {
+                    suppressAutoTake = false;
+                }
+                remoteBibleTapped();
+            } else if (restoringBible) {
                 restoringBible = false;
                 restoreStrip(() -> thumbnails.setSlides(slides, bibleStyle)); // back on Bible: Preview stays as it is
             } else {
@@ -1501,6 +1531,35 @@ public class MainFrame extends JFrame {
             pendingBibleLive = false;
             Dialogs.showError(this, "Could not prepare the verses.", err);
         });
+    }
+
+    /** The chapter a remote opened, shown one card per verse. */
+    private BiblePassage remoteBibleChapter;
+    /** The verse tapped on the remote, waiting for that chapter's cards. */
+    private Integer remoteBibleVerse;
+
+    /** A remote's tap on a Bible card follows the lyrics rule, so Bible and lyrics work the same on the remote. */
+    private boolean remoteBibleGoesLive() {
+        return songClickGoesLive() || liveDock.isAutoTake();
+    }
+
+    /** The tapped verse is in Preview: on to Program too, unless it is already there. */
+    private void remoteBibleTapped() {
+        Slide slide = thumbnails.getSelectedSlide();
+        boolean alreadyLive = slide != null && slide == takenSlide && program.content() == takenContent;
+        if (remoteBibleGoesLive() && !alreadyLive) {
+            take(false);
+        }
+    }
+
+    private static int cardOfVerse(List<Slide> slides, int verse) {
+        for (int i = 0; i < slides.size(); i++) {
+            String label = slides.get(i).getLabel();
+            if (label != null && label.endsWith(":" + verse)) {
+                return i;
+            }
+        }
+        return Math.clamp(verse - 1L, 0, Math.max(0, slides.size() - 1));
     }
 
     /** Reference position, version label and auto-fit, from Settings. */
@@ -1785,6 +1844,691 @@ public class MainFrame extends JFrame {
     private boolean clickGoesLive() {
         // presentations never go live on a click: click selects, double-click → Preview, TAKE → Program
         return stripSource == StripSource.SONG && songClickGoesLive();
+    }
+
+    /**
+     * What remotes see and do. Commands go through the operator's own paths (take, sendSceneToPreview, previewCamera,
+     * the slide strip...), so a remote's action appears in the real Preview and Program. The Scene Editor's draft is
+     * never touched: scenes come from the saved list.
+     */
+    private final class RemoteDeskImpl implements com.jamc.worship.remote.RemoteDesk {
+        private static final int REMOTE_LIST_LIMIT = 200;
+        /** Large enough for the big display on a phone: the same picture serves the row and the display. */
+        private static final int CARD_WIDTH = 640;
+        private static final int CARD_HEIGHT = 360;
+        private static final int LARGE_SLIDE_WIDTH = 960;
+        private static final int PICTURE_WIDTH = 320;
+        private static final int PICTURE_HEIGHT = 180;
+        private com.jamc.worship.output.OutputCanvas previewCanvas;
+        private com.jamc.worship.output.OutputCanvas programCanvas;
+
+        @Override
+        public Map<String, Object> snapshot() {
+            Map<String, Object> s = new HashMap<>();
+            s.put("monitors", monitors());
+            s.put("lyrics", stripSource == StripSource.SONG && songLibrary.currentSong() != null
+                    ? cards(songLibrary.currentSong().getTitle(), null) : null);
+            s.put("bible", stripSource == StripSource.BIBLE && biblePassage != null
+                    ? cards(biblePassage.reference(), biblePassage.translation()) : null);
+            s.put("presentation", presentation());
+            s.put("service", service());
+            s.put("scenes", scenes());
+            s.put("cameras", cameraList());
+            s.put("media", media());
+            s.put("projector", Map.of("black", output.isProjectorBlack(), "open", output.isOpen()));
+            s.put("stream", session(streamManager.live()));
+            s.put("recording", session(streamManager.recording()));
+            return s;
+        }
+
+        private Map<String, Object> monitors() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("preview", monitor(previewState));
+            m.put("program", monitor(program));
+            m.put("canTake", canTake());
+            return m;
+        }
+
+        private boolean canTake() {
+            return previewSlide != null || previewVideoPath != null || pendingScene != null || selectedScene != null;
+        }
+
+        private Map<String, Object> monitor(ProgramOutput state) {
+            LiveContent c = state.content();
+            Scene scene = state.scene();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("kind", c == null ? (scene == null ? "EMPTY" : "SCENE") : c.isVideo() ? "VIDEO" : "CONTENT");
+            m.put("title", c == null ? null : c.title());
+            m.put("label", c == null || c.slide() == null ? null : c.slide().getLabel());
+            m.put("scene", scene == null ? null : scene.getName());
+            m.put("cameras", scene == null ? List.of() : scene.getSources().stream()
+                    .filter(src -> src.isVisible() && src.getType() == com.jamc.worship.model.SourceType.CAMERA)
+                    .map(src -> cameraName(src.getConfig().camera)).distinct().toList());
+            m.put("black", state.isBlack());
+            return m;
+        }
+
+        /** The strip's cards, for what the operator has open: a song or a Bible passage. */
+        private Map<String, Object> cards(String title, String translation) {
+            List<Map<String, Object>> cards = new ArrayList<>();
+            int preview = -1;
+            List<Slide> slides = thumbnails.getSlides();
+            for (int i = 0; i < slides.size(); i++) {
+                Slide slide = slides.get(i);
+                Map<String, Object> card = new LinkedHashMap<>();
+                card.put("label", slide.getLabel());
+                card.put("text", slide.getText());
+                cards.add(card);
+                if (slide == previewSlide) {
+                    preview = i;
+                }
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("revision", Objects.hash(title, cards));
+            m.put("title", title);
+            m.put("translation", translation);
+            if (translation != null && biblePassage != null) {
+                m.put("book", biblePassage.book());
+                m.put("chapter", biblePassage.chapter());
+            }
+            m.put("cards", cards);
+            m.put("previewIndex", preview);
+            m.put("liveIndex", thumbnails.getLiveIndex());
+            m.put("clickGoesLive", songClickGoesLive() || liveDock.isAutoTake());
+            return m;
+        }
+
+        private Map<String, Object> presentation() {
+            if (stripSource != StripSource.PRESENTATION || currentPresentation == null) {
+                return null;
+            }
+            List<Map<String, Object>> slides = new ArrayList<>();
+            int preview = -1;
+            List<Slide> strip = thumbnails.getSlides();
+            for (int i = 0; i < strip.size(); i++) {
+                Slide slide = strip.get(i);
+                slides.add(Map.of("number", slide.getPresentationIndex() + 1, "label", slide.getLabel() == null ? "" : slide.getLabel()));
+                if (slide == previewSlide) {
+                    preview = i;
+                }
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", currentPresentation.id());
+            m.put("title", presentationTitle());
+            m.put("index", thumbnails.getSelectedIndex());
+            m.put("total", strip.size());
+            m.put("slides", slides);
+            m.put("previewIndex", preview);
+            m.put("liveIndex", thumbnails.getLiveIndex());
+            m.put("mode", context.config().getBoolean(SettingsPanel.KEY_PRESENTATION_NEXT_LIVE, true) ? "LIVE_CONTROL" : "PREVIEW_FIRST");
+            return m;
+        }
+
+        private Map<String, Object> service() {
+            Service plan = schedule.current();
+            if (plan == null) {
+                return null;
+            }
+            List<Map<String, Object>> items = new ArrayList<>();
+            int current = schedule.selectedIndex();
+            List<ServiceItem> all = plan.getItems();
+            for (int i = 0; i < all.size(); i++) {
+                Map<String, Object> item = new LinkedHashMap<>();
+                item.put("title", all.get(i).getTitle());
+                item.put("type", all.get(i).getType().name());
+                item.put("status", i == current ? "CURRENT" : i < current ? "DONE" : "UPCOMING");
+                items.add(item);
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", plan.getName());
+            m.put("items", items);
+            return m;
+        }
+
+        private List<Map<String, Object>> scenes() {
+            List<Map<String, Object>> list = new ArrayList<>();
+            for (Scene scene : MainFrame.this.scenes == null ? List.<Scene>of() : MainFrame.this.scenes) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", scene.getId());
+                m.put("name", scene.getName());
+                m.put("summary", scene.getSources().stream().filter(com.jamc.worship.model.Source::isVisible)
+                        .map(src -> src.getType().name()).distinct().toList());
+                m.put("preview", previewState.scene() != null && Objects.equals(previewState.scene().getId(), scene.getId()));
+                m.put("live", program.scene() != null && Objects.equals(program.scene().getId(), scene.getId()));
+                list.add(m);
+            }
+            return list;
+        }
+
+        private String cameraName(String device) {
+            return cameraNames == null || device == null ? (device == null ? "Camera" : device) : cameraNames.full(device);
+        }
+
+        private List<Map<String, Object>> cameraList() {
+            List<Map<String, Object>> list = new ArrayList<>();
+            for (String device : cameras.cameras()) {
+                com.jamc.worship.camera.CameraStatus status = cameras.status(device);
+                boolean offline = status == com.jamc.worship.camera.CameraStatus.DISCONNECTED
+                        || status == com.jamc.worship.camera.CameraStatus.ERROR;
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("id", device);
+                m.put("name", cameraName(device));
+                m.put("status", offline ? "OFFLINE" : uses(program.scene(), device) ? "LIVE" : uses(previewState.scene(), device) ? "PREVIEW" : "READY");
+                list.add(m);
+            }
+            return list;
+        }
+
+        private boolean uses(Scene scene, String device) {
+            return scene != null && scene.getSources().stream().anyMatch(src -> src.isVisible()
+                    && src.getType() == com.jamc.worship.model.SourceType.CAMERA && device.equals(src.getConfig().camera));
+        }
+
+        private com.jamc.worship.media.Transport mediaTransport() {
+            if (programMediaTransport != null) {
+                return programMediaTransport;
+            }
+            return hub.available() && hub.audio().hasMedia() ? hub.audio() : null;
+        }
+
+        private Map<String, Object> media() {
+            com.jamc.worship.media.Transport t = mediaTransport();
+            if (t == null) {
+                return null;
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("title", programMediaTransport != null ? programMediaTitle : hub.audio().title());
+            m.put("kind", programMediaTransport != null ? "VIDEO" : "AUDIO");
+            m.put("playing", t.isPlaying());
+            m.put("seconds", t.time() / 1000);
+            m.put("lengthSeconds", t.length() / 1000);
+            m.put("muted", t.isMuted());
+            m.put("volume", t.volume());
+            m.put("loop", t.isLoop());
+            return m;
+        }
+
+        /** Stream or recording status. Never keys or addresses. */
+        private Map<String, Object> session(com.jamc.worship.stream.StreamManager.Session session) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("state", session == null ? "IDLE" : session.state().name());
+            boolean active = session != null && session.active();
+            m.put("seconds", active && session.startedMillis() > 0 ? (System.currentTimeMillis() - session.startedMillis()) / 1000 : 0);
+            m.put("kbps", active && session.stats() != null ? Math.round(session.stats().bitrateKbps()) : null);
+            m.put("fps", active && session.stats() != null ? Math.round(session.stats().fps()) : null);
+            m.put("file", active && session.file() != null ? session.file().getFileName().toString() : null);
+            return m;
+        }
+
+        @Override
+        public java.awt.image.BufferedImage[] monitorPictures() {
+            if (previewCanvas == null) {
+                previewCanvas = new com.jamc.worship.output.OutputCanvas(previewState, false, true);
+                programCanvas = new com.jamc.worship.output.OutputCanvas(program);
+                previewCanvas.setSize(PICTURE_WIDTH, PICTURE_HEIGHT);
+                programCanvas.setSize(PICTURE_WIDTH, PICTURE_HEIGHT);
+            }
+            return new java.awt.image.BufferedImage[]{picture(previewCanvas), picture(programCanvas)};
+        }
+
+        private java.awt.image.BufferedImage picture(com.jamc.worship.output.OutputCanvas canvas) {
+            var image = new java.awt.image.BufferedImage(PICTURE_WIDTH, PICTURE_HEIGHT, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g = image.createGraphics();
+            try {
+                canvas.paint(g);
+            } finally {
+                g.dispose();
+            }
+            return image;
+        }
+
+        /** The card the device was looking at must still be there, so words from an older list never reach the screen. */
+        private boolean cardStillThere(com.fasterxml.jackson.databind.JsonNode payload, String title, String translation) {
+            int card = payload.path("card").asInt(-1);
+            return payload.path("revision").asInt() == (int) cards(title, translation).get("revision")
+                    && card >= 0 && card < thumbnails.getSlides().size();
+        }
+
+        /**
+         * Empties Preview and Program; the scene and background stay. Nothing stays selected in the strip, so a tap
+         * on the same card shows it again. A video on Program only goes with {@code video}: that takes Media.
+         */
+        private String clearPreviewAndProgram(boolean video) {
+            LiveContent live = program.content();
+            boolean clearLive = live != null && (video || !live.isVideo());
+            if (!clearLive && previewSlide == null && previewVideoPath == null) {
+                return "nothing_to_clear";
+            }
+            if (stripSource != StripSource.DECK) {
+                suppressAutoTake = true;
+                try {
+                    thumbnails.setSelectedIndex(-1);
+                } finally {
+                    suppressAutoTake = false;
+                }
+                thumbnails.setPreviewIndex(-1);
+            }
+            setPreview(null, null, null);
+            if (clearLive) {
+                program.clear();
+            }
+            return null;
+        }
+
+        private String presentationTo(int index) {
+            if (stripSource != StripSource.PRESENTATION || thumbnails.getSlides().isEmpty()) {
+                return "no_presentation";
+            }
+            int before = thumbnails.getSelectedIndex();
+            thumbnails.setSelectedIndex(Math.clamp(index, 0, thumbnails.getSlides().size() - 1));
+            previewSelectedPresentationSlide();
+            if (thumbnails.getSelectedIndex() != before && context.config().getBoolean(SettingsPanel.KEY_PRESENTATION_NEXT_LIVE, true)) {
+                take(false); // LIVE CONTROL, as on the desktop: content only, Program's scene stays
+            }
+            return null;
+        }
+
+        /**
+         * Opens something from the library as the operator's own service list does. The desktop follows it to that
+         * category, because it has one slide strip; opening never goes live by itself.
+         */
+        private String open(ServiceItem item, boolean mayGoLive) {
+            if (currentPage == TopBar.Page.SCENE) {
+                return "desktop_editing"; // opening leaves the page, and the Scene Editor may be open there
+            }
+            if (liveDock.isAutoTake() && !mayGoLive) {
+                return "auto_take_on"; // what opens is loaded later, and Auto-take would send it live
+            }
+            presentItem(item);
+            if (item.getRefId() != null && (item.getType() == ServiceItem.Type.IMAGE || item.getType() == ServiceItem.Type.VIDEO
+                    || item.getType() == ServiceItem.Type.AUDIO)) {
+                context.mediaService().load(item.getRefId()).ifPresent(MainFrame.this::previewMedia);
+            }
+            return null;
+        }
+
+        @Override
+        public Object query(com.jamc.worship.remote.RemoteQuery query, com.fasterxml.jackson.databind.JsonNode params) throws Exception {
+            String search = params.path("search").asText("");
+            List<Map<String, Object>> list = new ArrayList<>();
+            switch (query) {
+                case SONGS -> {
+                    for (Song song : context.songService().search(new com.jamc.worship.model.SongQuery(search, false,
+                            com.jamc.worship.model.SongQuery.Sort.TITLE_ASC))) {
+                        list.add(Map.of("id", song.getId(), "title", song.getTitle()));
+                        if (list.size() >= REMOTE_LIST_LIMIT) {
+                            break;
+                        }
+                    }
+                }
+                case BIBLE_VERSIONS -> {
+                    var bible = context.bibleService();
+                    bible.ensureInstalled();
+                    for (var v : bible.versions()) {
+                        if (v.enabled() && bible.isReady(v)) {
+                            list.add(Map.of("code", v.abbreviation(), "name", v.name()));
+                        }
+                    }
+                    List<Map<String, Object>> books = new ArrayList<>();
+                    for (var book : com.jamc.worship.bible.BibleBooks.all()) {
+                        books.add(Map.of("number", book.number(), "name", book.name(),
+                                "chapters", com.jamc.worship.bible.BibleBooks.chapterCount(book.number())));
+                    }
+                    return Map.of("versions", list, "books", books);
+                }
+                case BIBLE_VERSES -> {
+                    var bible = context.bibleService();
+                    var version = bible.version(params.path("version").asText("")).orElse(null);
+                    if (version == null) {
+                        throw new SecurityException("stale");
+                    }
+                    for (var verse : bible.verses(version, params.path("book").asInt(), params.path("chapter").asInt())) {
+                        list.add(Map.of("verse", verse.verse(), "text", verse.text()));
+                    }
+                }
+                case PRESENTATIONS -> {
+                    for (var p : context.presentationService().list(search)) {
+                        list.add(Map.of("id", p.id(), "title", p.name(), "slides", p.slideCount()));
+                        if (list.size() >= REMOTE_LIST_LIMIT) {
+                            break;
+                        }
+                    }
+                }
+                case PRESENTATION_THUMBNAIL -> {
+                    var presentation = context.presentationService().find(params.path("id").asLong(-1)).orElse(null);
+                    int number = params.path("number").asInt(-1);
+                    if (presentation == null || number < 1) {
+                        throw new SecurityException("stale");
+                    }
+                    if (params.path("large").asBoolean(false)) {
+                        return largeSlidePicture(presentation, number);
+                    }
+                    java.nio.file.Path file = context.presentationService().thumbnail(presentation, number);
+                    if (!java.nio.file.Files.isRegularFile(file)) {
+                        return Map.of("src", "");
+                    }
+                    return Map.of("src", "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(java.nio.file.Files.readAllBytes(file)));
+                }
+                case MEDIA_ITEMS -> {
+                    for (var item : context.mediaService().find(List.of(com.jamc.worship.model.MediaCategory.VIDEO,
+                            com.jamc.worship.model.MediaCategory.AUDIO, com.jamc.worship.model.MediaCategory.IMAGE), search, false)) {
+                        list.add(Map.of("id", item.getId(), "title", item.getName(), "kind", item.getKind().name()));
+                        if (list.size() >= REMOTE_LIST_LIMIT) {
+                            break;
+                        }
+                    }
+                }
+                case SERVICES -> {
+                    for (Service plan : context.servicePlans().services(null)) {
+                        list.add(Map.of("id", plan.getId(), "title", plan.getName()));
+                    }
+                }
+                case LYRICS_THUMBNAIL -> {
+                    return cardPicture(StripSource.SONG, params);
+                }
+                case BIBLE_THUMBNAIL -> {
+                    return cardPicture(StripSource.BIBLE, params);
+                }
+                case SERVICE_SONGS -> {
+                    return savedInService(Set.of(ServiceItem.Type.SONG));
+                }
+                case SERVICE_PRESENTATIONS -> {
+                    return savedInService(Set.of(ServiceItem.Type.PRESENTATION));
+                }
+                case SERVICE_MEDIA -> {
+                    return savedInService(Set.of(ServiceItem.Type.VIDEO, ServiceItem.Type.AUDIO, ServiceItem.Type.IMAGE));
+                }
+                case SERVICE_BIBLE -> {
+                    return savedBibleInService();
+                }
+            }
+            return list;
+        }
+
+        /** A card as the desktop draws it. The strip is read on the UI thread, which owns it; the drawing is not done there. */
+        private Map<String, Object> cardPicture(StripSource kind, com.fasterxml.jackson.databind.JsonNode params) throws Exception {
+            Slide[] slide = new Slide[1];
+            SlideStyle[] style = new SlideStyle[1];
+            SwingUtilities.invokeAndWait(() -> {
+                boolean song = kind == StripSource.SONG;
+                boolean open = stripSource == kind && (song ? songLibrary.currentSong() != null : biblePassage != null);
+                int card = params.path("card").asInt(-1);
+                if (open && card >= 0 && card < thumbnails.getSlides().size()) {
+                    Object revision = song ? cards(songLibrary.currentSong().getTitle(), null).get("revision")
+                            : cards(biblePassage.reference(), biblePassage.translation()).get("revision");
+                    if (Objects.equals(revision, params.path("revision").asInt())) {
+                        slide[0] = thumbnails.getSlides().get(card);
+                        style[0] = song ? songStyle : bibleStyle;
+                    }
+                }
+            });
+            if (slide[0] == null) {
+                throw new SecurityException("stale");
+            }
+            return jpeg(Rendering.renderer().render(slide[0], style[0], CARD_WIDTH, CARD_HEIGHT), CARD_WIDTH, CARD_HEIGHT);
+        }
+
+        /** A slide sharp enough for the large display on a phone, far smaller than its full picture. */
+        private Map<String, Object> largeSlidePicture(com.jamc.worship.model.Presentation presentation, int number) throws Exception {
+            for (PresentationService.PresentationSlide s : context.presentationService().slides(presentation)) {
+                if (s.number() == number && java.nio.file.Files.isRegularFile(s.image())) {
+                    java.awt.image.BufferedImage full = javax.imageio.ImageIO.read(s.image().toFile());
+                    if (full != null) {
+                        return jpeg(full, LARGE_SLIDE_WIDTH, Math.max(1, full.getHeight() * LARGE_SLIDE_WIDTH / Math.max(1, full.getWidth())));
+                    }
+                }
+            }
+            return Map.of("src", "");
+        }
+
+        private Map<String, Object> jpeg(java.awt.image.BufferedImage image, int width, int height) throws java.io.IOException {
+            // JPEG has no transparency: without this copy the writer quietly writes nothing
+            var flat = new java.awt.image.BufferedImage(width, height, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g = flat.createGraphics();
+            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(image, 0, 0, width, height, null);
+            g.dispose();
+            var out = new java.io.ByteArrayOutputStream(32_000);
+            javax.imageio.ImageIO.write(flat, "jpg", out);
+            return Map.of("src", "data:image/jpeg;base64," + java.util.Base64.getEncoder().encodeToString(out.toByteArray()));
+        }
+
+        /** The open service's name and a copy of its items, read on the UI thread, which owns them. */
+        private Object[] openService() throws Exception {
+            Object[] found = new Object[2];
+            SwingUtilities.invokeAndWait(() -> {
+                Service plan = schedule.current();
+                found[0] = plan == null ? "" : plan.getName();
+                found[1] = plan == null ? List.<ServiceItem>of() : new ArrayList<>(plan.getItems());
+            });
+            return found;
+        }
+
+        /** Items of these kinds saved in the open service, in its order. An item used twice is listed once. */
+        private Map<String, Object> savedInService(Set<ServiceItem.Type> types) throws Exception {
+            Object[] open = openService();
+            @SuppressWarnings("unchecked")
+            List<ServiceItem> items = (List<ServiceItem>) open[1];
+            Set<Long> seen = new java.util.HashSet<>();
+            List<Map<String, Object>> list = new ArrayList<>();
+            for (ServiceItem item : items) {
+                if (types.contains(item.getType()) && item.getRefId() != null && seen.add(item.getRefId())) {
+                    list.add(Map.of("id", item.getRefId(), "title", item.getTitle() == null ? "" : item.getTitle(), "kind", item.getType().name()));
+                }
+            }
+            return Map.of("service", open[0], "items", list);
+        }
+
+        /** Passages saved in the open service, with what opening one as a chapter of cards needs. */
+        private Map<String, Object> savedBibleInService() throws Exception {
+            Object[] open = openService();
+            @SuppressWarnings("unchecked")
+            List<ServiceItem> items = (List<ServiceItem>) open[1];
+            var bible = context.bibleService();
+            List<Map<String, Object>> list = new ArrayList<>();
+            for (ServiceItem item : items) {
+                BiblePassage p = item.getType() == ServiceItem.Type.BIBLE ? Json.readOrNull(item.getPayload(), BiblePassage.class) : null;
+                var version = p == null ? null : bible.version(p.translation()).orElse(null);
+                if (version == null) {
+                    continue;
+                }
+                List<? extends com.jamc.worship.bible.BibleProvider.Verse> verses;
+                try {
+                    verses = bible.verses(version, p.book(), p.chapter());
+                } catch (java.io.IOException e) {
+                    continue; // an online version that cannot be reached right now
+                }
+                if (!verses.isEmpty()) {
+                    list.add(Map.of("id", list.size(), "title", p.referenceWithTranslation(), "version", p.translation(), "book", p.book(),
+                            "chapter", p.chapter(), "verse", p.fromVerse(), "lastVerse", verses.getLast().verse()));
+                }
+            }
+            return Map.of("service", open[0], "items", list);
+        }
+
+        @Override
+        public String execute(com.jamc.worship.remote.RemoteCommand command, com.fasterxml.jackson.databind.JsonNode payload,
+                              Set<com.jamc.worship.remote.RemotePermission> permissions) {
+            boolean mayGoLive = permissions.contains(com.jamc.worship.remote.RemotePermission.TAKE);
+            switch (command) {
+                case TAKE_PREVIEW -> {
+                    if (!canTake()) {
+                        return "nothing_in_preview";
+                    }
+                    take();
+                }
+                case SET_SCENE_PREVIEW -> {
+                    long id = payload.path("id").asLong(-1);
+                    Scene scene = (MainFrame.this.scenes == null ? List.<Scene>of() : MainFrame.this.scenes).stream()
+                            .filter(s -> s.getId() != null && s.getId() == id).findFirst().orElse(null);
+                    if (scene == null) {
+                        return "scene_unavailable";
+                    }
+                    sendSceneToPreview(scene);
+                }
+                case SET_CAMERA_PREVIEW -> {
+                    String device = payload.path("id").asText("");
+                    if (!cameras.cameras().contains(device)) {
+                        return "camera_unavailable";
+                    }
+                    if (MainFrame.this.scenes == null || MainFrame.this.scenes.stream().noneMatch(s -> s.has(com.jamc.worship.model.SourceType.CAMERA))) {
+                        return "no_camera_scene";
+                    }
+                    previewCamera(device, com.jamc.worship.model.FitMode.FILL, false, false);
+                }
+                case PRESENTATION_FIRST -> {
+                    return presentationTo(0);
+                }
+                case PRESENTATION_PREVIOUS -> {
+                    return presentationTo(thumbnails.getSelectedIndex() - 1);
+                }
+                case PRESENTATION_NEXT -> {
+                    return presentationTo(thumbnails.getSelectedIndex() + 1);
+                }
+                case PRESENTATION_LAST -> {
+                    return presentationTo(thumbnails.getSlides().size() - 1);
+                }
+                case PRESENTATION_SELECT -> {
+                    return presentationTo(payload.path("index").asInt(thumbnails.getSelectedIndex()));
+                }
+                case LYRICS_PREVIOUS, LYRICS_NEXT -> {
+                    if (stripSource != StripSource.SONG || songLibrary.currentSong() == null) {
+                        return "no_song";
+                    }
+                    // lyrics do what a click does on the desktop: with "click = live", Preview and Program together
+                    if (command == com.jamc.worship.remote.RemoteCommand.LYRICS_NEXT) {
+                        thumbnails.selectNext();
+                    } else {
+                        thumbnails.selectPrevious();
+                    }
+                }
+                case LYRICS_CLEAR, BIBLE_CLEAR, PRESENTATION_CLEAR -> {
+                    return clearPreviewAndProgram(false);
+                }
+                case MEDIA_CLEAR -> {
+                    return clearPreviewAndProgram(true);
+                }
+                case LYRICS_SELECT -> {
+                    if (stripSource != StripSource.SONG || songLibrary.currentSong() == null) {
+                        return "no_song";
+                    }
+                    if (!cardStillThere(payload, songLibrary.currentSong().getTitle(), null)) {
+                        return "stale";
+                    }
+                    thumbnails.select(payload.path("card").asInt());
+                }
+                case BIBLE_PREVIOUS, BIBLE_NEXT -> {
+                    if (stripSource != StripSource.BIBLE) {
+                        return "no_passage";
+                    }
+                    suppressAutoTake = true;
+                    try {
+                        if (command == com.jamc.worship.remote.RemoteCommand.BIBLE_NEXT) {
+                            thumbnails.selectNext();
+                        } else {
+                            thumbnails.selectPrevious();
+                        }
+                    } finally {
+                        suppressAutoTake = false;
+                    }
+                    remoteBibleTapped();
+                }
+                case BIBLE_SELECT -> {
+                    if (stripSource != StripSource.BIBLE || biblePassage == null) {
+                        return "no_passage";
+                    }
+                    if (!cardStillThere(payload, biblePassage.reference(), biblePassage.translation())) {
+                        return "stale";
+                    }
+                    suppressAutoTake = true;
+                    try {
+                        thumbnails.select(payload.path("card").asInt());
+                    } finally {
+                        suppressAutoTake = false;
+                    }
+                    remoteBibleTapped();
+                }
+                case OPEN_SONG -> {
+                    long id = payload.path("id").asLong(-1);
+                    return open(new ServiceItem(ServiceItem.Type.SONG, payload.path("title").asText(""), id), mayGoLive);
+                }
+                case OPEN_BIBLE -> {
+                    int verse = payload.path("verse").asInt(1);
+                    BiblePassage chapter = new BiblePassage(payload.path("version").asText(""), payload.path("book").asInt(),
+                            payload.path("chapter").asInt(), 1, Math.max(verse, payload.path("lastVerse").asInt(verse)));
+                    if (stripSource == StripSource.BIBLE && chapter.equals(biblePassage) && chapter.equals(remoteBibleChapter)
+                            && !thumbnails.getSlides().isEmpty()) {
+                        // that chapter's cards are already out: only the verse changes
+                        suppressAutoTake = true;
+                        try {
+                            thumbnails.select(cardOfVerse(thumbnails.getSlides(), verse));
+                        } finally {
+                            suppressAutoTake = false;
+                        }
+                        remoteBibleTapped();
+                        return null;
+                    }
+                    remoteBibleChapter = chapter;
+                    remoteBibleVerse = verse;
+                    String problem = open(BiblePanel.serviceItem(chapter), mayGoLive || remoteBibleGoesLive());
+                    if (problem != null) {
+                        remoteBibleVerse = null;
+                    }
+                    return problem;
+                }
+                case OPEN_PRESENTATION -> {
+                    long id = payload.path("id").asLong(-1);
+                    return open(new ServiceItem(ServiceItem.Type.PRESENTATION, payload.path("title").asText(""), id), mayGoLive);
+                }
+                case OPEN_MEDIA -> {
+                    var item = context.mediaService().load(payload.path("id").asLong(-1)).orElse(null);
+                    if (item == null) {
+                        return "stale";
+                    }
+                    ServiceItem.Type type = item.getKind() == MediaKind.VIDEO ? ServiceItem.Type.VIDEO
+                            : item.getKind() == MediaKind.AUDIO ? ServiceItem.Type.AUDIO : ServiceItem.Type.IMAGE;
+                    return open(new ServiceItem(type, item.getName(), item.getId()), mayGoLive);
+                }
+                case OPEN_SERVICE -> {
+                    Service plan = context.servicePlans().load(payload.path("id").asLong(-1)).orElse(null);
+                    if (plan == null) {
+                        return "stale";
+                    }
+                    schedule.open(plan);
+                }
+                case SET_SERVICE_PREVIEW -> {
+                    Service plan = schedule.current();
+                    int index = payload.path("index").asInt(-1);
+                    if (plan == null || index < 0 || index >= plan.getItems().size()) {
+                        return "stale";
+                    }
+                    String problem = open(plan.getItems().get(index), mayGoLive);
+                    if (problem != null) {
+                        return problem;
+                    }
+                    schedule.selectIndex(index);
+                }
+                case BLACK_PROJECTOR_ON -> output.setProjectorBlack(true);
+                case RESTORE_PROJECTOR -> output.setProjectorBlack(false);
+                case MEDIA_PLAY, MEDIA_PAUSE, MEDIA_STOP, MEDIA_SEEK, MEDIA_MUTE, MEDIA_SET_VOLUME, MEDIA_SET_LOOP -> {
+                    com.jamc.worship.media.Transport t = mediaTransport();
+                    if (t == null) {
+                        return "no_media";
+                    }
+                    switch (command) {
+                        case MEDIA_PLAY -> t.playOrResume();
+                        case MEDIA_PAUSE -> t.pause();
+                        case MEDIA_STOP -> t.stop();
+                        case MEDIA_SEEK -> t.seek((float) Math.clamp(payload.path("position").asDouble(0), 0, 1));
+                        case MEDIA_MUTE -> t.setMuted(payload.path("muted").asBoolean(!t.isMuted()));
+                        case MEDIA_SET_VOLUME -> t.setVolume(Math.clamp(payload.path("volume").asInt(t.volume()), 0, 100));
+                        case MEDIA_SET_LOOP -> t.setLoop(payload.path("loop").asBoolean(!t.isLoop()));
+                        default -> { }
+                    }
+                }
+            }
+            return null;
+        }
     }
 
     /** Tells the operator above the lyrics cards what a click does for the content shown. */
@@ -3244,6 +3988,7 @@ public class MainFrame extends JFrame {
         displays.stopMonitoring();
         output.shutdown();
         streamManager.shutdown();
+        remoteManager.shutdown();
         globalBackground.shutdown();
         obs.close();
         try {

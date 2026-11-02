@@ -128,6 +128,7 @@ public final class OutputService {
 
     private String displayId;
     private Mode mode;
+    private boolean projectorBlack;
 
     public OutputService(ProgramOutput program, DisplayManager displays, AppConfig config, List<Image> icons,
                          Supplier<GraphicsDevice> operatorDevice) {
@@ -161,6 +162,21 @@ public final class OutputService {
     /** True if any display or window shows output. */
     public boolean isOpen() {
         return routes.values().stream().anyMatch(r -> r.window != null);
+    }
+
+    public boolean isProjectorBlack() {
+        return projectorBlack;
+    }
+
+    /** Black Projector: only the output windows go black. Program itself, the stream and recordings carry on. */
+    public void setProjectorBlack(boolean black) {
+        projectorBlack = black;
+        routes.values().forEach(r -> {
+            if (r.window != null) {
+                r.window.setBlackedOut(black);
+            }
+        });
+        listeners.forEach(Runnable::run);
     }
 
     /** True if some route is waiting for its display to be connected. */
@@ -454,6 +470,7 @@ public final class OutputService {
         r.window = new PresentationWindow(state, r.source == Source.PREVIEW, display, r.mode == Mode.FULLSCREEN, icons,
                 () -> closeRoute(target),
                 () -> PresentationWindow.CursorMode.parse(config.get(AppConfig.KEY_PROJECTOR_CURSOR, null)));
+        r.window.setBlackedOut(projectorBlack);
         r.window.setVisible(true);
         log.info("{} output opened: {} on {}", r.source, r.mode, display.label());
     }

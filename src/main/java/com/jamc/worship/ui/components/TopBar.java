@@ -28,14 +28,14 @@ import java.util.function.Consumer;
 import java.util.function.Supplier;
 
 /**
- * Application header: brand on the left, the MAIN NAVIGATION (Library, Service, Scenes, Output, Stream,
+ * Application header: brand on the left, the MAIN NAVIGATION (Control, Service, Scenes, Output, Stream,
  * Settings) in the centre and the output / live status and clock on the right. The Library categories are
- * not part of it (they belong to the Library page).
+ * not part of it (they are in the sidebar of the Control page, {@link Page#LIBRARY}).
  */
 public class TopBar extends JPanel {
 
     public enum Page {
-        LIBRARY("Library", "library"),
+        LIBRARY("Control", "library"),
         SERVICE("Service", "list"),
         SCENE("Scenes", "layers"),
         OUTPUT("Output", "monitor"),
@@ -75,9 +75,9 @@ public class TopBar extends JPanel {
                 BorderFactory.createEmptyBorder(6, 12, 6, 12)));
 
         JPanel brand = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        // the JAMC logo goes back to the Library
+        // the JAMC logo goes back to the Control page
         LogoBadge home = new LogoBadge();
-        home.setToolTipText("Library");
+        home.setToolTipText("Control");
         home.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         home.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override

@@ -1,0 +1,12 @@
+#!/bin/sh
+# The remote changed with no commit since: its build is committed here. Git has already chosen what this push sends,
+# so the new commit needs one more push.
+
+"$(dirname "$0")/sync-remote-app.sh" || exit 1
+if [ -n "$(git status --porcelain -- src/main/resources/remote-app .remote-app-source)" ]; then
+    git add -- src/main/resources/remote-app .remote-app-source
+    git commit --no-verify -m "Update the remote app build" -- src/main/resources/remote-app .remote-app-source || exit 1
+    echo "The new remote build is committed. Push once more to send it." >&2
+    exit 1
+fi
+exit 0

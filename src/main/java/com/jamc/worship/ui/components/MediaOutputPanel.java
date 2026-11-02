@@ -67,7 +67,6 @@ public class MediaOutputPanel extends JPanel {
     private final MediaHub hub;
     private final GlobalBackgroundManager background;
     private final GlobalBackgroundPanel backgroundControls;
-    private final Actions actions;
     private final JLabel title = Ui.label(" ", Palette::text, "h3");
     private final JLabel meta = Ui.secondary(" ");
     private final JLabel warning = Ui.label(" ", Palette::danger, "small");
@@ -96,7 +95,6 @@ public class MediaOutputPanel extends JPanel {
         this.hub = hub;
         this.background = background;
         this.backgroundControls = backgroundControls;
-        this.actions = actions;
         setOpaque(false);
 
         sendToPreview.setToolTipText("Put this on the main PREVIEW. Program stays as it is until TAKE.");

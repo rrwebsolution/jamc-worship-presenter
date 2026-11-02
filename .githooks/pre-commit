@@ -1,0 +1,6 @@
+#!/bin/sh
+# Every commit carries the remote as it is now.
+
+"$(dirname "$0")/sync-remote-app.sh" || exit 1
+git add -- src/main/resources/remote-app .remote-app-source 2>/dev/null
+exit 0

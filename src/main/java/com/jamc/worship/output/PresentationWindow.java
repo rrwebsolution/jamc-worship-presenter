@@ -52,7 +52,13 @@ public class PresentationWindow extends JFrame {
 
     static final int CURSOR_HIDE_MS = 3000;
 
+    /** Blacks out this window only (its background is black): Program, the stream and recordings carry on. */
+    public void setBlackedOut(boolean black) {
+        canvas.setVisible(!black);
+    }
+
     private final boolean fullscreen;
+    private final OutputCanvas canvas;
     private final java.util.function.Supplier<CursorMode> cursorMode;
     private final javax.swing.Timer hideCursor = new javax.swing.Timer(CURSOR_HIDE_MS, e -> applyCursor(false));
 
@@ -89,7 +95,7 @@ public class PresentationWindow extends JFrame {
 
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(Color.BLACK);
-        OutputCanvas canvas = preview ? new OutputCanvas(program, false, true) : new OutputCanvas(program);
+        canvas = preview ? new OutputCanvas(program, false, true) : new OutputCanvas(program);
         // the pointer still moves freely between the screens; it only shows over the picture as configured
         canvas.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
             @Override
