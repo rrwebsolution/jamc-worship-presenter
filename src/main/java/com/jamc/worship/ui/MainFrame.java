@@ -2865,7 +2865,6 @@ public class MainFrame extends JFrame {
             setPreview(new Slide(item.getName(), "▶  " + item.getName(), "Video"), SlideStyle.fallback(), item.getName());
             previewVideoPath = path;
             previewState.take(LiveContent.video(path, item.getName()));
-            liveDock.bindPreviewMedia(hub.previewVideoTransport(path), item.getName()); // cue it (±10 s) before TAKE
         }
         statusBar.showMessage("\"" + item.getName() + "\" is in Preview. Press TAKE (Space) to send it live.");
     }
@@ -2921,7 +2920,6 @@ public class MainFrame extends JFrame {
         previewStyle = style;
         previewTitle = title;
         previewVideoPath = null;
-        liveDock.bindPreviewMedia(null, null);
         if (slide != null && style != null) {
             previewState.take(LiveContent.snapshot(slide, style, title));
         } else {

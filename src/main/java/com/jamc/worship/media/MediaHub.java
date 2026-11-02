@@ -233,34 +233,6 @@ public final class MediaHub implements LiveFrames {
         return frame;
     }
 
-    /**
-     * PREVIEW MEDIA: play / pause / seek / ±10 s for the video waiting in Preview. Its sound follows PREVIEW
-     * AUDIO (the operator's monitor), so volume and mute are not set here.
-     */
-    public Transport previewVideoTransport(String path) {
-        return new Transport() {
-            private VideoPlayback p() {
-                return pool.player(path);
-            }
-
-            @Override public void playOrResume() { if (p() != null) p().playOrResume(); }
-            @Override public void pause() { if (p() != null) p().pause(); }
-            @Override public void stop() { if (p() != null) p().stop(); }
-            @Override public void seek(float position) { if (p() != null) p().seek(position); }
-            @Override public void setVolume(int volume) { }
-            @Override public int volume() { return 100; }
-            @Override public void setMuted(boolean muted) { }
-            @Override public boolean isMuted() { return p() == null || p().isMuted(); }
-            @Override public void setLoop(boolean loop) { if (p() != null) p().setLoop(loop); }
-            @Override public boolean isLoop() { return p() != null && p().isLoop(); }
-            @Override public boolean isPlaying() { return p() != null && p().isPlaying(); }
-            @Override public long time() { return p() == null ? 0 : p().time(); }
-            @Override public long length() { return p() == null ? 0 : p().length(); }
-            @Override public boolean hasMedia() { return p() != null && p().hasMedia(); }
-            @Override public void addStateListener(Runnable listener) { } // TransportControls also polls
-        };
-    }
-
     @Override
     public BufferedImage videoPoster(String path) {
         return pool.poster(path);
