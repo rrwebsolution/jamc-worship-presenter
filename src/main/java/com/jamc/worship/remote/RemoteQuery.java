@@ -14,6 +14,7 @@ public enum RemoteQuery {
     SERVICES(RemotePermission.SERVICE),
     LYRICS_THUMBNAIL(RemotePermission.LYRICS),
     BIBLE_THUMBNAIL(RemotePermission.BIBLE),
+    CAMERA_PICTURE(RemotePermission.CAMERAS),
     // what is saved in the service open on the desktop, by kind: a role sees only the kind it may use
     SERVICE_SONGS(RemotePermission.LYRICS),
     SERVICE_BIBLE(RemotePermission.BIBLE),

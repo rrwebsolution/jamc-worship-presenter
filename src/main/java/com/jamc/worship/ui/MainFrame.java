@@ -1857,6 +1857,7 @@ public class MainFrame extends JFrame {
         private static final int CARD_WIDTH = 640;
         private static final int CARD_HEIGHT = 360;
         private static final int LARGE_SLIDE_WIDTH = 960;
+        private static final int CAMERA_PICTURE_WIDTH = 320;
         private static final int PICTURE_WIDTH = 320;
         private static final int PICTURE_HEIGHT = 180;
         private com.jamc.worship.output.OutputCanvas previewCanvas;
@@ -2229,6 +2230,9 @@ public class MainFrame extends JFrame {
                 case BIBLE_THUMBNAIL -> {
                     return cardPicture(StripSource.BIBLE, params);
                 }
+                case CAMERA_PICTURE -> {
+                    return cameraPicture(params.path("id").asText(""));
+                }
                 case SERVICE_SONGS -> {
                     return savedInService(Set.of(ServiceItem.Type.SONG));
                 }
@@ -2279,6 +2283,23 @@ public class MainFrame extends JFrame {
                 }
             }
             return Map.of("src", "");
+        }
+
+        /**
+         * A connected camera's latest picture for the remote's multiview; empty while it starts. Asking keeps the camera
+         * open, and it closes by itself once nobody asks. The frame is read on the UI thread, which owns the cameras.
+         */
+        private Map<String, Object> cameraPicture(String device) throws Exception {
+            java.awt.image.BufferedImage[] frame = new java.awt.image.BufferedImage[1];
+            SwingUtilities.invokeAndWait(() -> {
+                if (cameras.cameras().contains(device)) {
+                    frame[0] = cameras.frame(device);
+                }
+            });
+            if (frame[0] == null) {
+                return Map.of("src", "");
+            }
+            return jpeg(frame[0], CAMERA_PICTURE_WIDTH, Math.max(1, frame[0].getHeight() * CAMERA_PICTURE_WIDTH / Math.max(1, frame[0].getWidth())));
         }
 
         private Map<String, Object> jpeg(java.awt.image.BufferedImage image, int width, int height) throws java.io.IOException {

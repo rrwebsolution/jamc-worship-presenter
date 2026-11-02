@@ -376,7 +376,7 @@ class RemoteServerTest {
         assertTrue(songs.path("ok").asBoolean());
         assertEquals("SONGS:grace", songs.path("data").get(0).path("title").asText());
 
-        for (String refused : List.of("BIBLE_VERSIONS", "BIBLE_THUMBNAIL", "PRESENTATIONS", "PRESENTATION_THUMBNAIL", "MEDIA_ITEMS", "SERVICES")) {
+        for (String refused : List.of("BIBLE_VERSIONS", "BIBLE_THUMBNAIL", "PRESENTATIONS", "PRESENTATION_THUMBNAIL", "CAMERA_PICTURE", "MEDIA_ITEMS", "SERVICES")) {
             query(d, "q2", refused);
             assertEquals("no_permission", d.next("result").path("code").asText(), refused);
         }
