@@ -3462,8 +3462,10 @@ public class MainFrame extends JFrame {
             statusBar.showMessage(hub.problem());
             return;
         }
-        // a YouTube video plays in the embedded YouTube player; a file plays in VLC
-        com.jamc.worship.media.VideoPlayback player = hub.programPlayer(path);
+        // already playing in Preview: it goes on from there. Otherwise a YouTube video plays in the embedded YouTube
+        // player and a file in VLC
+        com.jamc.worship.media.VideoPlayback running = hub.adoptPreviewVideo(path);
+        com.jamc.worship.media.VideoPlayback player = running != null ? running : hub.programPlayer(path);
         SettingsPanel.VideoEnd end = SettingsPanel.VideoEnd.parse(context.config().get(SettingsPanel.KEY_VIDEO_END, null));
         // this video's loop from last time (Settings for a video never changed)
         var state = mediaStates.get(com.jamc.worship.media.MediaStates.mediaKey(path), new com.jamc.worship.media.MediaStates.State(
@@ -3473,7 +3475,13 @@ public class MainFrame extends JFrame {
         // a volume or mute changed while it plays lasts until it leaves Program
         hub.setProgramVideoVolume(100);
         hub.setProgramVideoMuted(false);
-        if (context.config().getBoolean(SettingsPanel.KEY_AUTOPLAY, true)) {
+        boolean autoplay = context.config().getBoolean(SettingsPanel.KEY_AUTOPLAY, true);
+        if (running != null) {
+            player.setLoop(loop);
+            if (!autoplay) {
+                player.pause();
+            }
+        } else if (autoplay) {
             player.play(path, loop, false);
         } else {
             player.cue(path, loop);
@@ -3491,9 +3499,9 @@ public class MainFrame extends JFrame {
         }
     }
 
-    /** Program players whose end-of-video is already handled (VLC and YouTube each get one hook). */
+    /** Program players whose end-of-video is already handled; each player from Preview gets its own hook. */
     private final java.util.Set<com.jamc.worship.media.VideoPlayback> videoEndHooked =
-            java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     /** What the PROGRAM MEDIA controls are bound to (a fullscreen video path or a scene video key). */
     private String programMediaKey;

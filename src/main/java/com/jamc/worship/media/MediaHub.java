@@ -183,6 +183,40 @@ public final class MediaHub implements LiveFrames {
         return next;
     }
 
+    /**
+     * TAKE of a video already playing in Preview: that same player becomes the Program player, so the video goes on from
+     * where it is instead of opening again from the start. Null when Preview is not playing it.
+     */
+    public VideoPlayback adoptPreviewVideo(String path) {
+        VideoPlayback running = pool.take(path);
+        if (running == null) {
+            return null;
+        }
+        if (running.hasError()) {
+            running.release();
+            return null;
+        }
+        if (activeProgram != null) {
+            activeProgram.stop();
+        }
+        if (running instanceof YouTubePlayer youtube) {
+            if (programYouTube != null) {
+                programYouTube.release();
+            }
+            programYouTube = youtube;
+            youtube.addStateListener(sceneVideos::applyAudio);
+        } else if (running instanceof VideoPlayer vlc) {
+            if (programVideo != null) {
+                programVideo.release();
+            }
+            programVideo = vlc;
+            vlc.addStateListener(() -> javax.swing.SwingUtilities.invokeLater(sceneVideos::applyAudio));
+        }
+        activeProgram = running;
+        applyRouting();
+        return running;
+    }
+
     /** The player showing the taken video, or null. */
     public VideoPlayback activeProgramPlayer() {
         return activeProgram;

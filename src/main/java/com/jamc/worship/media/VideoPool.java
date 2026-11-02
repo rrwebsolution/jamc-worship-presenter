@@ -84,6 +84,12 @@ public final class VideoPool {
         return e == null ? null : e.player;
     }
 
+    /** Hands over the running player for this path, which keeps playing: the caller owns it now. Null when none runs. */
+    VideoPlayback take(String path) {
+        Entry e = path == null ? null : players.remove(path);
+        return e == null ? null : e.player;
+    }
+
     /** Latest frame if the video is already running; never starts a player (used by thumbnails). */
     public BufferedImage poster(String path) {
         Entry e = path == null ? null : players.get(path);
