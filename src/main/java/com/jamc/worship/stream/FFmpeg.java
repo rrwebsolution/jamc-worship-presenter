@@ -135,7 +135,7 @@ public final class FFmpeg {
     }
 
     /** DirectShow device names of a type ("audio" / "video") from {@code -list_devices} output (old and new formats). */
-    static List<String> parseDevices(String output, String type) {
+    public static List<String> parseDevices(String output, String type) {
         Set<String> out = new LinkedHashSet<>();
         Pattern tagged = Pattern.compile("\"([^\"]+)\"\\s+\\((audio|video|none)[^)]*\\)");
         Matcher m = tagged.matcher(output);

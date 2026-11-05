@@ -150,11 +150,7 @@ public final class BibleSlideBuilder {
     private String[] headingAndCaption(List<BibleProvider.Verse> chunk) {
         String ref = reference(chunk, display.uppercaseReference());
         String ver = display.showVersion() && version != null ? version : null;
-        return switch (display.referencePosition()) {
-            case TOP -> new String[]{ref, ver};
-            case BOTTOM -> new String[]{null, ver == null ? ref : ref + "   ·   " + ver};
-            case HIDDEN -> new String[]{null, ver};
-        };
+        return BibleDisplay.headingAndCaption(display.referencePosition(), ref, ver);
     }
 
     private static String reference(List<BibleProvider.Verse> chunk, boolean upper) {

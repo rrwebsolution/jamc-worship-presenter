@@ -239,4 +239,66 @@ class CameraManagerTest {
         assertEquals(List.of(60, 50, 30, 25, 24, 15), caps.rates());
         assertNull(CameraManager.parseOptions("Could not enumerate video device options"));
     }
+
+    /** Iriun #2..#4, DroidCam and OBS Virtual Camera are DirectShow-only: they must be listed with the hardware ones. */
+    @Test
+    void everyIriunAndVirtualCameraIsListedOnce() {
+        List<String> ffmpeg = List.of("DroidCam Source 3", "Snap Camera", "Iriun Webcam #3", "Iriun Webcam",
+                "Iriun Webcam #2", "Iriun Webcam #4", "DroidCam Source 2", "OBS Virtual Camera");
+        List<String> pnp = List.of("Iriun Webcam", "Integrated Camera");
+        List<String> registry = List.of("OBS Virtual Camera", "obs virtual camera", "Snap Camera", " ");
+        List<String> all = CameraManager.mergeCameras(ffmpeg, pnp, registry);
+        assertEquals(9, all.size(), all.toString());
+        assertEquals("DroidCam Source 3", all.getFirst(), "FFmpeg's (OBS's) order first");
+        assertTrue(all.containsAll(List.of("Iriun Webcam #2", "Iriun Webcam #3", "Iriun Webcam #4", "Integrated Camera")));
+
+        // no FFmpeg on the PC: the hardware list plus the registered virtual cameras
+        assertEquals(List.of("Iriun Webcam", "Integrated Camera", "OBS Virtual Camera", "Snap Camera"),
+                CameraManager.mergeCameras(List.of(), pnp, registry));
+    }
+
+    /**
+     * A camera still starting (OBS Virtual Camera while OBS initializes) can take many seconds to close. Trying
+     * the next format must not wait for that on the Swing thread (the app froze), and must not open the device
+     * again while it is still closing.
+     */
+    @Test
+    void aCameraThatIsSlowToCloseNeverBlocksTheSwingThread() throws Exception {
+        java.util.concurrent.CountDownLatch letGo = new java.util.concurrent.CountDownLatch(1);
+        List<CameraManager.Format> formats = new java.util.concurrent.CopyOnWriteArrayList<>();
+        CameraManager m = onEdt(() -> new CameraManager((name, format) -> {
+            formats.add(format);
+            return new Feed() {
+                @Override public BufferedImage frame() { return null; }
+                @Override public long frames() { return 0; }
+                @Override public boolean failed() { return true; } // no picture: the next format is tried
+                @Override public void release() {
+                    try {
+                        letGo.await(); // the driver holds the close
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                }
+            };
+        }, () -> new Detection(List.of("OBS Virtual Camera"), List.of()), () -> true, true, true));
+
+        onEdt(() -> m.frame("OBS Virtual Camera")); // opens the first format
+        long t0 = System.currentTimeMillis();
+        onEdt(() -> m.frame("OBS Virtual Camera")); // no picture: closes it (stuck) and moves on
+        onEdt(() -> m.frame("OBS Virtual Camera"));
+        assertTrue(System.currentTimeMillis() - t0 < 1_000, "the Swing thread did not wait for the stuck close");
+        assertEquals(1, formats.size(), "not opened again while the device is still closing");
+
+        letGo.countDown();
+        long end = System.currentTimeMillis() + 5_000;
+        while (formats.size() < 2 && System.currentTimeMillis() < end) {
+            Thread.sleep(50);
+            onEdt(() -> m.frame("OBS Virtual Camera"));
+        }
+        assertEquals(2, formats.size(), "the next format opens once the old feed has closed");
+        onEdt(() -> {
+            m.stopAll();
+            return null;
+        });
+    }
 }

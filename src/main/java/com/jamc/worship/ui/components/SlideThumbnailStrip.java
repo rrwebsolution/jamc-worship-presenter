@@ -100,6 +100,18 @@ public class SlideThumbnailStrip extends JPanel {
     private final JPanel headerActions = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 0));
     private int tileW = THUMB_W;
     private int tileH = THUMB_H;
+    /** The narrowest slide thumbnail in Grid view; the columns are as many as fit. */
+    private static final int GRID_MIN_W = 190;
+    /**
+     * Lyrics: false = Cards (the default: the words, one full-width card per row); true = Grid (the slides as they
+     * look on screen, 16:9 thumbnails side by side).
+     */
+    private boolean gridView;
+    private int columns = 1;
+    private final javax.swing.JToggleButton cardsViewButton = viewButton("list", "Cards: the words, one card per row");
+    private final javax.swing.JToggleButton gridViewButton = viewButton("grid", "Grid: the slides as they look on screen, side by side");
+    private final JPanel viewButtons = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
+    private final List<java.util.function.Consumer<Boolean>> viewListeners = new ArrayList<>();
 
     public SlideThumbnailStrip() {
         super(new BorderLayout());
@@ -117,7 +129,18 @@ public class SlideThumbnailStrip extends JPanel {
         editButtons.add(deleteButton);
         editButtons.setVisible(false);
 
+        javax.swing.ButtonGroup views = new javax.swing.ButtonGroup();
+        views.add(cardsViewButton);
+        views.add(gridViewButton);
+        cardsViewButton.setSelected(true);
+        cardsViewButton.addActionListener(e -> changeView(false));
+        gridViewButton.addActionListener(e -> changeView(true));
+        viewButtons.add(cardsViewButton);
+        viewButtons.add(gridViewButton);
+        viewButtons.setVisible(false);
+
         JPanel right = headerActions;
+        right.add(viewButtons);
         hintLabel.putClientProperty(com.formdev.flatlaf.FlatClientProperties.STYLE, "font: bold -1");
         right.add(hintLabel);
         right.add(countLabel);
@@ -148,11 +171,82 @@ public class SlideThumbnailStrip extends JPanel {
         setFocusable(true);
         Ui.bindKey(this, KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0), "next", this::selectNext, WHEN_FOCUSED);
         Ui.bindKey(this, KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0), "prev", this::selectPrevious, WHEN_FOCUSED);
-        Ui.bindKey(this, KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "down", this::selectNext, WHEN_FOCUSED);
-        Ui.bindKey(this, KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "up", this::selectPrevious, WHEN_FOCUSED);
+        Ui.bindKey(this, KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "down", () -> moveRows(1), WHEN_FOCUSED);
+        Ui.bindKey(this, KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "up", () -> moveRows(-1), WHEN_FOCUSED);
         Ui.bindKey(this, KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "delete", () -> {
             if (editable && editHandler != null && selectedIndex >= 0) editHandler.delete(selectedIndex);
         }, WHEN_FOCUSED);
+    }
+
+    private static javax.swing.JToggleButton viewButton(String icon, String tooltip) {
+        javax.swing.JToggleButton b = new javax.swing.JToggleButton(Icons.get(icon, Icons.SMALL));
+        b.setToolTipText(tooltip);
+        b.setFocusable(false);
+        b.putClientProperty(com.formdev.flatlaf.FlatClientProperties.BUTTON_TYPE,
+                com.formdev.flatlaf.FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
+        return b;
+    }
+
+    /** Lyrics cards as Cards (one per row) or Grid (several per row). Does not tell the view listeners. */
+    public void setGridView(boolean grid) {
+        cardsViewButton.setSelected(!grid);
+        gridViewButton.setSelected(grid);
+        if (grid != gridView) {
+            gridView = grid;
+            if (lyricsCards) {
+                rebuildTiles(); // Grid shows the slides themselves, Cards the words
+            }
+            tiles.applyLayout();
+            fitTiles(true);
+        }
+    }
+
+    private void rebuildTiles() {
+        tiles.removeAll();
+        tileList.clear();
+        for (int i = 0; i < slides.size(); i++) {
+            addTile(i);
+        }
+        if (selectedIndex >= 0 && selectedIndex < tileList.size()) {
+            Tile t = tileList.get(selectedIndex);
+            SwingUtilities.invokeLater(() -> t.scrollRectToVisible(new Rectangle(0, 0, t.getWidth(), t.getHeight())));
+        }
+    }
+
+    public boolean isGridView() {
+        return gridView;
+    }
+
+    /** Called when the operator switches between Cards and Grid (to remember the choice). */
+    public void addViewListener(java.util.function.Consumer<Boolean> listener) {
+        viewListeners.add(listener);
+    }
+
+    private void changeView(boolean grid) {
+        if (grid != gridView) {
+            setGridView(grid);
+            viewListeners.forEach(l -> l.accept(grid));
+        }
+    }
+
+    /** Grid shows only for lyrics cards; page thumbnails keep their list. */
+    private boolean gridActive() {
+        return gridView && lyricsCards;
+    }
+
+    /** Up / Down: the card above or below (a whole row in Grid view). */
+    private void moveRows(int rows) {
+        int step = gridActive() ? Math.max(1, columns) : 1;
+        int target = selectedIndex + rows * step;
+        if (selectedIndex < 0 && !slides.isEmpty()) {
+            setSelectedIndex(0);
+        } else if (target >= 0 && target < slides.size()) {
+            setSelectedIndex(target);
+        } else if (rows > 0) {
+            selectNext();
+        } else {
+            selectPrevious();
+        }
     }
 
     public void addSelectionListener(IntConsumer listener) {
@@ -248,14 +342,12 @@ public class SlideThumbnailStrip extends JPanel {
      */
     public void setCardMode(boolean lyrics, String unit) {
         this.unit = unit;
+        viewButtons.setVisible(lyrics);
         if (lyrics != lyricsCards) {
             lyricsCards = lyrics;
-            tiles.removeAll();
-            tileList.clear();
-            for (int i = 0; i < slides.size(); i++) {
-                addTile(i);
-            }
-            fitTiles();
+            rebuildTiles();
+            tiles.applyLayout();
+            fitTiles(true);
         }
         updateCount();
     }
@@ -280,12 +372,26 @@ public class SlideThumbnailStrip extends JPanel {
      * words); page thumbnails are 16:9, up to {@link #MAX_W} wide so several stay in view.
      */
     private void fitTiles() {
+        fitTiles(false);
+    }
+
+    private void fitTiles(boolean force) {
         int avail = body.getWidth() - 20 - 14; // list padding and room for the vertical scroll bar
-        int w = avail <= 0 ? THUMB_W : lyricsCards ? Math.max(160, avail) : Math.clamp(avail, THUMB_W, MAX_W);
+        int cols = 1;
+        int w;
+        if (avail <= 0) {
+            w = THUMB_W;
+        } else if (gridActive()) {
+            cols = Math.max(1, (avail + GAP) / (GRID_MIN_W + GAP));
+            w = Math.max(160, (avail - (cols - 1) * GAP) / cols);
+        } else {
+            w = lyricsCards ? Math.max(160, avail) : Math.clamp(avail, THUMB_W, MAX_W);
+        }
         int h = w * 9 / 16;
-        if (w == tileW && h == tileH) {
+        if (!force && w == tileW && h == tileH && cols == columns) {
             return;
         }
+        columns = cols;
         tileW = w;
         tileH = h;
         for (Tile t : tileList) {
@@ -495,10 +601,23 @@ public class SlideThumbnailStrip extends JPanel {
     private final class TilesPanel extends JPanel implements javax.swing.Scrollable {
         int dropY = -1;
 
+        private final java.awt.LayoutManager list = new BoxLayout(this, BoxLayout.Y_AXIS);
+        private final java.awt.LayoutManager grid = new GridRows();
+
         TilesPanel() {
             setOpaque(false);
-            setLayout(new BoxLayout(this, BoxLayout.Y_AXIS));
+            setLayout(list);
             setBorder(BorderFactory.createEmptyBorder(4, 10, 8, 10));
+        }
+
+        /** Cards / thumbnails in one column, or lyrics cards in rows (Grid view). */
+        void applyLayout() {
+            java.awt.LayoutManager want = gridActive() ? grid : list;
+            if (getLayout() != want) {
+                setLayout(want);
+                revalidate();
+                repaint();
+            }
         }
 
         // follows the viewport's width: the list only ever scrolls vertically
@@ -566,6 +685,65 @@ public class SlideThumbnailStrip extends JPanel {
         }
     }
 
+    /**
+     * Grid view: the tiles left to right in rows of {@link #columns}; every card in a row is as tall as the
+     * tallest one, so the rows line up. The spacing struts between list tiles are ignored.
+     */
+    private final class GridRows implements java.awt.LayoutManager {
+        @Override
+        public void addLayoutComponent(String name, java.awt.Component comp) {
+        }
+
+        @Override
+        public void removeLayoutComponent(java.awt.Component comp) {
+        }
+
+        private int rowHeight(int start, int cols) {
+            int h = 0;
+            for (int i = start; i < Math.min(start + cols, tileList.size()); i++) {
+                h = Math.max(h, tileList.get(i).getPreferredSize().height);
+            }
+            return h;
+        }
+
+        @Override
+        public Dimension preferredLayoutSize(java.awt.Container parent) {
+            java.awt.Insets in = parent.getInsets();
+            int cols = Math.max(1, columns);
+            int h = 0;
+            for (int start = 0; start < tileList.size(); start += cols) {
+                h += rowHeight(start, cols) + GAP;
+            }
+            int w = cols * tileW + (cols - 1) * GAP;
+            return new Dimension(in.left + w + in.right, in.top + h + in.bottom);
+        }
+
+        @Override
+        public Dimension minimumLayoutSize(java.awt.Container parent) {
+            return preferredLayoutSize(parent);
+        }
+
+        @Override
+        public void layoutContainer(java.awt.Container parent) {
+            java.awt.Insets in = parent.getInsets();
+            for (java.awt.Component c : parent.getComponents()) {
+                if (!(c instanceof Tile)) {
+                    c.setBounds(0, 0, 0, 0);
+                }
+            }
+            int cols = Math.max(1, columns);
+            int y = in.top;
+            for (int start = 0; start < tileList.size(); start += cols) {
+                int rowH = rowHeight(start, cols);
+                for (int i = start; i < Math.min(start + cols, tileList.size()); i++) {
+                    int x = in.left + (i - start) * (tileW + GAP);
+                    tileList.get(i).setBounds(x, y, tileW, rowH);
+                }
+                y += rowH + GAP;
+            }
+        }
+    }
+
     private final class Tile extends JPanel {
         final int index;
         final Slide slide;
@@ -581,7 +759,7 @@ public class SlideThumbnailStrip extends JPanel {
             setOpaque(false);
             canvas.setCompact(true);
             canvas.setContent(slide, style);
-            if (lyricsCards) {
+            if (lyricsCards && !gridView) {
                 card = new LyricsCard(slide);
                 add(card, BorderLayout.CENTER);
                 caption = card; // no "1  Verse 1" line underneath: the section is a small label on the card

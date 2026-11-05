@@ -267,12 +267,13 @@ public class CameraWorkspacePanel extends JPanel {
         return libraryPanel;
     }
 
-    /** Library → Camera was opened: refresh the device list (the preview starts when it is on screen). */
+    /**
+     * Library → Camera was opened: the last list shows at once, and the cameras are detected again so every
+     * connected one (virtual cameras such as Iriun #2..#4 or DroidCam included) is there to pick.
+     */
     public void activate() {
         setDevices(cameras.cameras());
-        if (cameras.cameras().isEmpty()) {
-            detect();
-        }
+        detect();
     }
 
     /** Camera list, statuses or audio inputs changed (hot plug, a camera started or failed). */

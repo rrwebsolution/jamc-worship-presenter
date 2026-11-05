@@ -14,8 +14,28 @@ package com.jamc.worship.bible;
 public record BibleDisplay(ReferencePosition referencePosition, boolean showVersion, boolean uppercaseReference,
                            boolean autoFit) {
 
+    /** Between the reference and the version when they are joined on one line. */
+    public static final String JOIN = "   ·   ";
+
+    /**
+     * [heading above the verse, caption below it] for a reference and an optional version (null = not shown).
+     * Example: TOP_JOINED gives ["JOHN 3:16 · NIV", null]; BOTTOM gives [null, "JOHN 3:16 · NIV"].
+     */
+    public static String[] headingAndCaption(ReferencePosition position, String reference, String version) {
+        String joined = version == null ? reference : reference + JOIN + version;
+        return switch (position) {
+            case TOP -> new String[]{reference, version};
+            case TOP_JOINED -> new String[]{joined, null};
+            case BOTTOM -> new String[]{null, joined};
+            case HIDDEN -> new String[]{null, version};
+        };
+    }
+
     public enum ReferencePosition {
-        TOP("Above the verse"), BOTTOM("Below the verse"), HIDDEN("Hidden");
+        TOP("Reference above, version below"),
+        TOP_JOINED("Reference + version together above"),
+        BOTTOM("Reference + version together below"),
+        HIDDEN("Hidden (version only, below)");
 
         private final String label;
 

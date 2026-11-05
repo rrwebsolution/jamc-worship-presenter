@@ -997,12 +997,20 @@ public class ScenesPanel extends JPanel {
         }, e -> statusHandler.accept("Could not look for audio inputs: " + e.getMessage()));
     }
 
-    /** Camera: pick one of the connected devices. */
+    /** Camera: pick one of the connected devices (detected again first, so a camera just started is listed). */
     private void addCameraSource() {
         if (editing == null) {
             return;
         }
-        List<String> devices = cameras.cameras();
+        statusHandler.accept("Looking for cameras…");
+        BackgroundTask.run("Detect cameras", cameras::detect, this::pickCamera,
+                e -> pickCamera(cameras.cameras()));
+    }
+
+    private void pickCamera(List<String> devices) {
+        if (editing == null) {
+            return;
+        }
         java.util.function.Function<String, String> label = d -> cameraNames == null ? d : cameraNames.full(d);
         String cam = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<String>(
                 "Select Camera", "Search cameras…", "video",

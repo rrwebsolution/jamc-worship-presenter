@@ -175,6 +175,10 @@ public class SettingsPanel extends JPanel {
     private boolean loadingThemes;
     private TypographyEditor lyricsTypography;
     private TypographyEditor bibleTypography;
+    private BibleDesignPicker bibleDesign;
+    private JComboBox<BibleDisplay.ReferencePosition> bibleRefPos;
+    private JCheckBox bibleShowVersion;
+    private JCheckBox bibleUpperRef;
     private final List<TypographyEditor> otherEditors = new java.util.ArrayList<>();
 
     public SettingsPanel(AppContext context, Consumer<String> onThemeChange, Shortcuts shortcuts, ObsOutput obs,
@@ -312,6 +316,9 @@ public class SettingsPanel extends JPanel {
                     + "Lyrics are stored as typed; UPPERCASE is applied only on screen.", lyricsBody), c);
             c.gridy++;
             bibleTypography = new TypographyEditor(typo, ContentKind.BIBLE);
+            bibleDesign = new BibleDesignPicker(typo, cfg, this::bibleDesignApplied);
+            content.add(section("Bible Design", "Presentation → Bible: pick a ready-made look for the verses", bibleDesign), c);
+            c.gridy++;
             content.add(section("Bible Typography", "Presentation → Bible: separate from lyrics, so verses never turn "
                     + "into capitals because songs are", bibleTypography), c);
             c.gridy++;
@@ -344,20 +351,29 @@ public class SettingsPanel extends JPanel {
 
         // BIBLE
         JComboBox<BibleDisplay.ReferencePosition> refPos = new JComboBox<>(BibleDisplay.ReferencePosition.values());
+        bibleRefPos = refPos;
         refPos.setSelectedItem(BibleDisplay.ReferencePosition.parse(cfg.get(KEY_BIBLE_REF_POSITION, null)));
         refPos.addActionListener(e -> {
             cfg.set(KEY_BIBLE_REF_POSITION, ((BibleDisplay.ReferencePosition) refPos.getSelectedItem()).name());
             cfg.save();
+            if (bibleDesign != null) bibleDesign.refresh();
         });
+        bibleShowVersion = checkbox("Show the version abbreviation (e.g. NIV) on the slide", KEY_BIBLE_SHOW_VERSION, true);
+        bibleUpperRef = checkbox("Show the reference in capital letters", KEY_BIBLE_UPPERCASE, true);
+        for (JCheckBox b : new JCheckBox[]{bibleShowVersion, bibleUpperRef}) {
+            b.addActionListener(e -> {
+                if (bibleDesign != null) bibleDesign.refresh();
+            });
+        }
         JButton versions = Ui.button("Manage Bible Versions…", "book");
         versions.addActionListener(e -> manageBibleVersions.run());
-        JPanel bibleRows = rows(flow(Ui.small("Verse reference (e.g. JOHN 3:16):"), refPos),
-                checkbox("Show the version abbreviation (e.g. NIV) on the slide", KEY_BIBLE_SHOW_VERSION, true),
-                checkbox("Show the reference in capital letters", KEY_BIBLE_UPPERCASE, true),
+        JPanel bibleRows = rows(flow(Ui.small("Reference & version (e.g. JOHN 3:16 · NIV):"), refPos),
+                bibleShowVersion,
+                bibleUpperRef,
                 checkbox("Fit several short verses on one slide and split long verses across slides", KEY_BIBLE_AUTOFIT, true),
                 flow(versions),
-                Ui.label("<html>Background, video background, font, size, color, alignment, shadow and outline come from the "
-                        + "Bible theme chosen above (edit it under Themes). NLT, ESV, NIV, NASB and Ang Pulong Sa Dios are copyrighted: "
+                Ui.label("<html>Background and video background come from the Bible theme chosen above (edit it under Themes). "
+                        + "Font, size, color, alignment, shadow and outline come from Bible Design / Bible Typography. NLT, ESV, NIV, NASB and Ang Pulong Sa Dios are copyrighted: "
                         + "connect them with your own licensed API key or an imported licensed file in Bible Versions.</html>",
                         Palette::mutedText, "small"));
         content.add(section("Bible Presentation", "How verses appear on screen", bibleRows), c);
@@ -499,6 +515,7 @@ public class SettingsPanel extends JPanel {
                 lyricsTypography.load(); // shows changes made from a song's quick bar (APPLY TO: All Songs)
                 lyricsTypography.setBaseStyle(defTheme == null ? null : defTheme.getStyle());
                 bibleTypography.setBaseStyle(bibleT == null ? null : bibleT.getStyle());
+                bibleDesign.setBaseStyle(bibleT == null ? null : bibleT.getStyle());
                 otherEditors.forEach(ed -> ed.setBaseStyle(defTheme == null ? null : defTheme.getStyle()));
             }
         }, err -> dbInfo.setText("Could not read database information."));
@@ -984,6 +1001,15 @@ public class SettingsPanel extends JPanel {
         previewTake.addActionListener(save);
         direct.addActionListener(save);
         return flow(Ui.small("Scene switching:"), previewTake, direct);
+    }
+
+    /** A Bible design was picked: the typography editor and the reference options show its values. */
+    private void bibleDesignApplied() {
+        bibleTypography.load();
+        AppConfig cfg = context.config();
+        bibleRefPos.setSelectedItem(BibleDisplay.ReferencePosition.parse(cfg.get(KEY_BIBLE_REF_POSITION, null)));
+        bibleShowVersion.setSelected(cfg.getBoolean(KEY_BIBLE_SHOW_VERSION, true));
+        bibleUpperRef.setSelected(cfg.getBoolean(KEY_BIBLE_UPPERCASE, true));
     }
 
     private JCheckBox checkbox(String text, String key, boolean def) {

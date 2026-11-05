@@ -159,6 +159,8 @@ public class MainFrame extends JFrame {
     private final ProgramOutput previewState = new ProgramOutput();
     /** A scene chosen in the dock that waits in Preview until TAKE. */
     private Scene pendingScene;
+    /** Library lyrics cards: Grid view (several per row) instead of Cards (one per row). */
+    private static final String KEY_LYRICS_GRID = "ui.lyricsCards.grid";
     /** A scene card clicked (selected) since the last TAKE: the next TAKE puts it live. */
     private Scene selectedScene;
     private com.jamc.worship.ui.components.ScenesDock scenesDock;
@@ -691,6 +693,12 @@ public class MainFrame extends JFrame {
         order.setToolTipText("Change the order (a song's arrangement)");
         order.addActionListener(e -> showOrderEditor());
         thumbnails.addHeaderAction(order);
+        // lyrics cards as Cards (one per row) or Grid (several per row): the operator's choice is remembered
+        thumbnails.setGridView(context.config().getBoolean(KEY_LYRICS_GRID, false));
+        thumbnails.addViewListener(grid -> {
+            context.config().set(KEY_LYRICS_GRID, String.valueOf(grid));
+            context.config().save();
+        });
         thumbnails.addSlidesChangedListener(this::applyStripMode);
         // CURRENT CONTENT: the lyrics / page cards, beside the selected item's details
         bottomSplit = split(JSplitPane.HORIZONTAL_SPLIT, thumbsPanel, detailPanel, 0.6);

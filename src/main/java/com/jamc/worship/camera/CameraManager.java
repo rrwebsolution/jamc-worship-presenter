@@ -79,6 +79,14 @@ public final class CameraManager {
 
         void release();
 
+        /** Stands in while the previous feed is still closing: no picture yet, not failed. */
+        Feed NONE = new Feed() {
+            @Override public BufferedImage frame() { return null; }
+            @Override public long frames() { return 0; }
+            @Override public boolean failed() { return false; }
+            @Override public void release() { }
+        };
+
         static Feed of(VideoPlayer p) {
             return new Feed() {
                 @Override public BufferedImage frame() { return p.currentFrame(); }
@@ -127,6 +135,9 @@ public final class CameraManager {
         long fpsFrames;
         long fpsAt;
         int fps;
+        /** The next format ({@link #attempt}) opens once the previous feed has closed (or after a time limit). */
+        boolean reopenPending;
+        long reopenSince;
 
         Session(Feed feed, List<Format> formats, long now) {
             this.feed = feed;
@@ -155,6 +166,20 @@ public final class CameraManager {
         return t;
     });
     private final AtomicBoolean detecting = new AtomicBoolean();
+    /**
+     * Closes camera feeds off the Swing thread. Stopping a VLC DirectShow player waits for the driver, and a camera
+     * that is still starting (OBS Virtual Camera while OBS initializes, a phone camera connecting) can hold that for
+     * many seconds: on the Swing thread the whole app froze. One thread per close, so a stuck one never holds others.
+     */
+    private final ExecutorService releaser = Executors.newCachedThreadPool(r -> {
+        Thread t = new Thread(r, "camera-release");
+        t.setDaemon(true);
+        return t;
+    });
+    /** Cameras with a feed still closing (count per camera), EDT only: not opened again until done. */
+    private final Map<String, Integer> closing = new HashMap<>();
+    /** False in tests (fake feeds close at once). */
+    private final boolean asyncRelease;
     private final BiFunction<String, Format, Feed> opener;
     private final Supplier<Detection> detector;
     private final BooleanSupplier available;
@@ -171,22 +196,65 @@ public final class CameraManager {
 
     public CameraManager() {
         this((name, format) -> Feed.of(openDirectShow(name, format)), CameraManager::detectWindows,
-                () -> MediaEngine.get().isAvailable(), true);
+                () -> MediaEngine.get().isAvailable(), true, true);
     }
 
     public CameraManager(CameraProvider provider) {
         this((name, format) -> Feed.of(provider.open(name)), CameraManager::detectWindows,
-                () -> MediaEngine.get().isAvailable(), false);
+                () -> MediaEngine.get().isAvailable(), false, true);
     }
 
     /** For tests: fake feeds and detection. */
     CameraManager(BiFunction<String, Format, Feed> opener, Supplier<Detection> detector, BooleanSupplier available,
                   boolean fallback) {
+        this(opener, detector, available, fallback, false);
+    }
+
+    CameraManager(BiFunction<String, Format, Feed> opener, Supplier<Detection> detector, BooleanSupplier available,
+                  boolean fallback, boolean asyncRelease) {
         this.opener = opener;
         this.detector = detector;
         this.available = available;
         this.fallback = fallback;
+        this.asyncRelease = asyncRelease;
         sweeper.start();
+    }
+
+    /** Closes a feed without blocking the Swing thread; the camera is not reopened until it is closed. */
+    private void release(String cam, Feed feed) {
+        if (feed == null || feed == Feed.NONE) {
+            return;
+        }
+        if (!asyncRelease) {
+            feed.release();
+            return;
+        }
+        if (cam != null) {
+            closing.merge(cam, 1, Integer::sum);
+        }
+        releaser.execute(() -> {
+            long t0 = System.currentTimeMillis();
+            try {
+                feed.release();
+            } catch (RuntimeException e) {
+                log.warn("Camera {} did not close cleanly", cam, e);
+            }
+            long took = System.currentTimeMillis() - t0;
+            if (took > 1_000) {
+                log.info("Camera {} took {} ms to close", cam, took);
+            }
+            if (cam != null) {
+                onEdt(() -> {
+                    closing.computeIfPresent(cam, (k, n) -> n > 1 ? n - 1 : null);
+                    fire();
+                });
+            }
+        });
+    }
+
+    /** True while an earlier feed of this camera is closing (a device still closing refuses to open). */
+    private boolean isClosing(String cam) {
+        return closing.containsKey(cam);
     }
 
     private static VideoPlayer openDirectShow(String name, Format format) {
@@ -300,7 +368,7 @@ public final class CameraManager {
         for (String cam : nowMissing) {
             Session s = sessions.remove(cam);
             if (s != null) {
-                s.feed.release();
+                release(cam, s.feed);
             }
             if (!missing.contains(cam)) {
                 log.warn("Camera disconnected: {}", cam);
@@ -311,7 +379,7 @@ public final class CameraManager {
                 log.info("Camera reconnected: {}", cam);
                 Session s = sessions.remove(cam); // a stale session from before the unplug
                 if (s != null) {
-                    s.feed.release();
+                    release(cam, s.feed);
                 }
             }
         }
@@ -462,7 +530,7 @@ public final class CameraManager {
         working.remove(name);
         Session s = sessions.remove(name);
         if (s != null) {
-            s.feed.release(); // reopened with the new format on the next frame request
+            release(name, s.feed); // reopened with the new format on the next frame request
             log.info("Camera {} restarting at {} / {} fps", name, size == null ? "Auto" : size, fps == 0 ? "default" : fps);
         }
     }
@@ -632,8 +700,8 @@ public final class CameraManager {
     }
 
     private Session open(String cam, long now) {
-        if (restarting.contains(cam)) {
-            return null;
+        if (restarting.contains(cam) || isClosing(cam)) {
+            return null; // opened on a later frame request, once the old feed has let go of the device
         }
         List<Format> tries = fallback ? candidates(requested.get(cam), working.get(cam)) : List.of(new Format(null, 0));
         try {
@@ -685,6 +753,23 @@ public final class CameraManager {
         if (s.failed) {
             return null; // retried by the sweeper
         }
+        if (s.reopenPending) {
+            // the next format opens once the previous feed let go of the device; a driver stuck closing for
+            // longer than REFRESH_WAIT_MS is not waited for (the open may still work, or fails and is retried)
+            if (isClosing(cam) && now - s.reopenSince < REFRESH_WAIT_MS) {
+                return null;
+            }
+            s.reopenPending = false;
+            try {
+                s.feed = opener.apply(cam, s.formats.get(s.attempt));
+            } catch (RuntimeException e) {
+                log.warn("Could not reopen camera {}", cam, e);
+                fail(cam, s, now);
+                return null;
+            }
+            s.started = now;
+            return null;
+        }
         BufferedImage img = s.feed.frame();
         long count = s.feed.frames();
         if (count != s.seenFrames) {
@@ -702,7 +787,17 @@ public final class CameraManager {
                 // this camera cannot deliver that size / rate: try the next one instead of staying black
                 Format next = s.formats.get(s.attempt + 1);
                 log.info("Camera {} gave no picture at {}; trying {}", cam, describe(s.formats.get(s.attempt)), describe(next));
-                s.feed.release();
+                Feed old = s.feed;
+                s.feed = Feed.NONE;
+                s.attempt++;
+                s.started = now;
+                if (asyncRelease) {
+                    release(cam, old);
+                    s.reopenPending = true; // opened by a later frame request, without blocking this one
+                    s.reopenSince = now;
+                    return null;
+                }
+                old.release();
                 try {
                     s.feed = opener.apply(cam, next);
                 } catch (RuntimeException e) {
@@ -710,8 +805,6 @@ public final class CameraManager {
                     fail(cam, s, now);
                     return null;
                 }
-                s.attempt++;
-                s.started = now;
             } else if (timedOut && now - s.started > FALLBACK_MS) {
                 fail(cam, s, now);
             }
@@ -720,7 +813,7 @@ public final class CameraManager {
         if (s.feed.failed() || now - s.lastFrameAt > STALL_MS) {
             // it was sending and stopped: unplugged, or the driver hung. Close it and look for it again.
             log.warn("Camera {} stopped sending pictures; checking whether it is still connected", cam);
-            sessions.remove(cam).feed.release();
+            release(cam, sessions.remove(cam).feed);
             wanted.put(cam, now);
             fire();
             detectAsync();
@@ -741,7 +834,9 @@ public final class CameraManager {
                 : "\"" + cam + "\" gives no picture. It may be in use by another program (Zoom, Teams, OBS), or need "
                         + "reconnecting. It is tried again by itself.";
         log.warn("Camera {} failed: {}", cam, s.problem);
-        s.feed.release();
+        release(cam, s.feed);
+        s.feed = Feed.NONE;
+        s.reopenPending = false;
         fire();
     }
 
@@ -758,7 +853,7 @@ public final class CameraManager {
     }
 
     public void stopAll() {
-        sessions.values().forEach(s -> s.feed.release());
+        sessions.forEach((cam, s) -> release(cam, s.feed));
         sessions.clear();
     }
 
@@ -772,7 +867,7 @@ public final class CameraManager {
             Session s = e.getValue();
             String cam = e.getKey();
             if (now - s.lastUsed > IDLE_MS && !isKept(cam)) {
-                s.feed.release();
+                release(cam, s.feed);
                 it.remove();
                 changed = true;
                 log.info("Camera stopped (not in use): {}", cam);
@@ -823,6 +918,7 @@ public final class CameraManager {
 
     private static Detection detectWindows() {
         List<String> video = new ArrayList<>();
+        List<String> virtual = new ArrayList<>();
         List<String> audio = new ArrayList<>();
         if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
             return new Detection(video, audio);
@@ -831,19 +927,29 @@ public final class CameraManager {
             // cameras: Camera class, or usbvideo Image devices (not printers / scanners). Audio capture inputs are
             // the AudioEndpoint devices whose id has {0.0.1.} (capture; {0.0.0.} is playback). UTF-8 output keeps a name
             // exact ("Intel®" came back "Intelr", and that input could then not be opened).
+            // 'D|': software / virtual cameras (Iriun Webcam #2..#4, DroidCam Source 2/3, OBS Virtual Camera, Snap
+            // Camera...) are DirectShow filters, not PnP devices: they are listed under the video input category.
             Process p = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
                     "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
                             + "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { "
                             + "if ($_.PNPClass -eq 'Camera' -or ($_.PNPClass -eq 'Image' -and $_.Service -eq 'usbvideo')) "
                             + "{ 'V|' + $_.Name } elseif ($_.PNPClass -eq 'AudioEndpoint' -and $_.DeviceID -like '*{0.0.1.*') "
-                            + "{ 'A|' + $_.Name } }")
+                            + "{ 'A|' + $_.Name } }; "
+                            + "Get-ChildItem 'Registry::HKEY_CLASSES_ROOT\\CLSID\\" + VIDEO_INPUT_CATEGORY + "\\Instance' "
+                            + "-ErrorAction SilentlyContinue | ForEach-Object { "
+                            + "$n = (Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).FriendlyName; "
+                            + "if ($n) { 'D|' + $n } }")
                     .redirectErrorStream(true).start();
             try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = r.readLine()) != null) {
                     String v = line.strip();
                     if (v.length() > 2 && v.charAt(1) == '|') {
-                        List<String> into = v.charAt(0) == 'V' ? video : audio;
+                        List<String> into = switch (v.charAt(0)) {
+                            case 'V' -> video;
+                            case 'D' -> virtual;
+                            default -> audio;
+                        };
                         String name = v.substring(2).strip();
                         if (!name.isEmpty() && !into.contains(name)) {
                             into.add(name);
@@ -857,6 +963,56 @@ public final class CameraManager {
         } catch (Exception | Error e) {
             log.warn("Camera detection failed", e);
         }
-        return new Detection(video, audio);
+        return new Detection(mergeCameras(directShowCameras(), video, virtual), audio);
+    }
+
+    /** CLSID_VideoInputDeviceCategory: where DirectShow lists capture filters, virtual cameras included. */
+    private static final String VIDEO_INPUT_CATEGORY = "{860BB310-5D01-11d0-BD3B-00A0C911CE86}";
+
+    /**
+     * The DirectShow video devices as FFmpeg sees them (the same list OBS shows, in the same order), or empty
+     * when FFmpeg is not installed.
+     */
+    private static List<String> directShowCameras() {
+        try {
+            Path ffmpeg = com.jamc.worship.stream.FFmpeg.locate(null);
+            if (ffmpeg == null) {
+                return List.of();
+            }
+            Process p = new ProcessBuilder(ffmpeg.toString(), "-hide_banner", "-list_devices", "true", "-f", "dshow",
+                    "-i", "dummy").redirectErrorStream(true).start();
+            StringBuilder out = new StringBuilder();
+            try (BufferedReader r = new BufferedReader(new InputStreamReader(p.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = r.readLine()) != null) {
+                    out.append(line).append('\n');
+                }
+            }
+            if (!p.waitFor(10, TimeUnit.SECONDS)) {
+                p.destroyForcibly();
+            }
+            return com.jamc.worship.stream.FFmpeg.parseDevices(out.toString(), "video");
+        } catch (Exception e) {
+            log.debug("FFmpeg camera list failed", e);
+            return List.of();
+        }
+    }
+
+    /**
+     * Every camera from every list, once (names compared ignoring case): FFmpeg's DirectShow list first, then
+     * hardware cameras, then registered virtual cameras FFmpeg did not report.
+     */
+    @SafeVarargs
+    static List<String> mergeCameras(List<String>... lists) {
+        Map<String, String> out = new java.util.LinkedHashMap<>();
+        for (List<String> list : lists) {
+            for (String name : list) {
+                String n = name == null ? "" : name.strip();
+                if (!n.isEmpty()) {
+                    out.putIfAbsent(n.toLowerCase(Locale.ROOT), n);
+                }
+            }
+        }
+        return List.copyOf(out.values());
     }
 }
