@@ -249,6 +249,8 @@ public class MainFrame extends JFrame {
     private boolean importInStrip;
     /** REFRESH of the open presentation: the slide the operator was on, to open it there again (not slide 1). */
     private Long refreshedPresentationId;
+    /** A presentation just refreshed: Preview and Program get its new slides once they are loaded. */
+    private Long outputsWaitForRefresh;
     private int refreshedSlideIndex = -1;
     private boolean suppressAutoTake;
     private Sidebar.Category activeCategory = Sidebar.Category.SONGS;
@@ -1113,6 +1115,7 @@ public class MainFrame extends JFrame {
             @Override
             public void importEnded(Presentation p, boolean refreshed) {
                 importInStrip = false;
+                outputsWaitForRefresh = refreshed && p != null ? p.id() : null;
                 // the library reloads and selects the new presentation, which opens it
             }
         });
@@ -1774,6 +1777,10 @@ public class MainFrame extends JFrame {
             currentPresentation = p;
             presentationInfo = info;
             presentationSlides = slides;
+            if (Objects.equals(p.id(), outputsWaitForRefresh)) {
+                outputsWaitForRefresh = null;
+                showRefreshedSlides(p, slides);
+            }
             presentationDetail.setPresentation(p, slides, (PresentationService.SourceState) r[1], (Boolean) r[2]);
             if (activeCategory == Sidebar.Category.PRESENTATIONS) {
                 centerCards.show(centerHolder, CENTER_PRESENTATION);
@@ -1816,6 +1823,37 @@ public class MainFrame extends JFrame {
     }
 
     /** A cached slide picture as a presentable slide: the full image as the background, no text. */
+    /**
+     * REFRESH of a presentation: a slide of it on Preview or Program shows its new version at once, so what was changed
+     * in the file is seen everywhere. A slide that no longer exists gives the last one.
+     */
+    private void showRefreshedSlides(Presentation p, List<Slide> slides) {
+        if (slides.isEmpty()) {
+            return;
+        }
+        LiveContent inPreview = previewState.content();
+        if (isSlideOf(inPreview, p)) {
+            Slide fresh = slides.get(Math.min(inPreview.slide().getPresentationIndex(), slides.size() - 1));
+            previewSlide = fresh;
+            previewState.updateContent(LiveContent.snapshot(fresh, inPreview.style(), inPreview.title()));
+        }
+        LiveContent onProgram = program.content();
+        if (isSlideOf(onProgram, p)) {
+            int index = Math.min(onProgram.slide().getPresentationIndex(), slides.size() - 1);
+            Slide fresh = slides.get(index);
+            LiveContent content = LiveContent.snapshot(fresh, onProgram.style(), onProgram.title());
+            takenContent = content;
+            takenSlide = fresh;
+            takenSlides = slides;
+            takenIndex = index;
+            program.updateContent(content);
+        }
+    }
+
+    private static boolean isSlideOf(LiveContent content, Presentation p) {
+        return content != null && content.slide() != null && Objects.equals(content.slide().getPresentationId(), p.id());
+    }
+
     private static Slide presentationSlide(PresentationService.PresentationSlide s, Long presentationId, int index) {
         StyleOverrides o = new StyleOverrides();
         o.backgroundType = BackgroundType.IMAGE;

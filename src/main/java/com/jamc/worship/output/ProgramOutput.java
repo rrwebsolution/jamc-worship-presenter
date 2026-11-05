@@ -70,6 +70,12 @@ public final class ProgramOutput {
         apply(true);
     }
 
+    /** The content on show was rendered again (a refreshed presentation): the new version at once, nothing else changes. */
+    public void updateContent(LiveContent newContent) {
+        content = newContent;
+        apply(false);
+    }
+
     /**
      * TAKE of a complete Preview: content and scene change together in one transition. A null
      * content keeps what is on Program (only the scene changes); a null scene keeps the live scene.
