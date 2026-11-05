@@ -402,8 +402,8 @@ public class ScenesPanel extends JPanel {
         head.add(buttons, BorderLayout.EAST);
         p.add(head, BorderLayout.NORTH);
         p.add(preview, BorderLayout.CENTER);
-        p.add(Ui.label("<html>SCENE EDITOR: changes here stay a draft until SAVE SCENE, which stores the scene and shows it in Preview; "
-                + "TAKE puts it on Program. Layers are drawn from the "
+        p.add(Ui.label("<html>SCENE EDITOR: changes here stay a draft until SAVE SCENE, which stores the scene; "
+                + "it shows only when you press TAKE. Layers are drawn from the "
                 + "bottom of the Sources list upwards; lyrics show what is on Program.</html>",
                 Palette::mutedText, "small"), BorderLayout.SOUTH);
         updateDraftState();
@@ -580,8 +580,8 @@ public class ScenesPanel extends JPanel {
     }
 
     /**
-     * SAVE SCENE: writes the draft to the scene library and tells {@link #setSceneSaved} (the app puts it in Preview).
-     * Program changes only at TAKE.
+     * SAVE SCENE: writes the draft to the scene library and tells {@link #setSceneSaved} (the app selects it for TAKE).
+     * Preview and Program change only at TAKE.
      */
     private void saveEditing() {
         if (editing == null || editing.getId() == null) {

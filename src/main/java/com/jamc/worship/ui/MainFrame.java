@@ -1166,16 +1166,14 @@ public class MainFrame extends JFrame {
             scenes = list;
             scenesDock.setScenes(list);
             if (scenesHome != null) scenesHome.setScenes(list);
-            // On the Scenes page SAVE only updates the scene library (SEND TO PREVIEW shows it). A save that finishes
-            // after the operator left the page (Save in the leave question) updates Preview like leaving does.
-            if (currentPage != TopBar.Page.SCENE) {
-                applySavedSceneToPreview();
-            }
+            // SAVE only updates the scene library: Preview and Program change only at TAKE
         });
         scenesPanel.setPreviewChosen(this::sendSceneToPreview);
         scenesPanel.setSceneSaved(saved -> {
-            sendSceneToPreview(saved);
-            statusBar.showMessage("Scene \"" + saved.getName() + "\" saved and in Preview. TAKE puts it on Program.");
+            // the saved scene waits as the selected scene: nothing shows until the operator presses TAKE
+            selectedScene = saved;
+            liveDock.setPreviewReady(true);
+            statusBar.showMessage("Scene \"" + saved.getName() + "\" saved. Press TAKE to show it.");
         });
 
         thumbnails.addSelectionListener(index -> {
@@ -3245,30 +3243,6 @@ public class MainFrame extends JFrame {
     }
 
     /**
-     * Leaving the Scenes page: when the scene in Preview was saved with changes, Preview shows the saved version
-     * (its From Library / Specific sources work at once for what is sent from the Library). If Program shows an
-     * older version, the saved one waits as the next scene change: Program changes only at TAKE (or NEXT slide).
-     */
-    private void applySavedSceneToPreview() {
-        Scene inPreview = previewState.scene();
-        List<Scene> all = scenes == null ? List.of() : scenes;
-        Scene saved = inPreview == null ? null
-                : all.stream().filter(s -> Objects.equals(s.getId(), inPreview.getId())).findFirst().orElse(null);
-        if (saved == null || sameLayout(inPreview, saved)) {
-            return;
-        }
-        previewState.setScene(saved, false);
-        if (!separateLayouts()) {
-            pendingScene = sameLayout(program.scene(), saved) ? null : saved;
-        }
-        liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null || pendingScene != null);
-        updatePreviewNote();
-        scenesDock.sync();
-        if (scenesHome != null) scenesHome.sync();
-        statusBar.showMessage("Preview now uses the saved \"" + saved.getName() + "\" scene. Program changes at TAKE.");
-    }
-
-    /**
      * True when two scenes are the same scene with the same layers (name, type, visibility and settings of every
      * source). A scene edited and saved after it went live is NOT the same as Program's copy, so sending it to
      * Preview and pressing TAKE puts the new version live. Source ids are ignored (they change on every save).
@@ -3824,10 +3798,7 @@ public class MainFrame extends JFrame {
             return;
         }
         currentPage = page;
-        if (leavingScenes) {
-            // the saved From Library / Specific sources work at once in the Library, without SEND TO PREVIEW
-            applySavedSceneToPreview();
-        }
+        // leaving the Scenes page does not touch Preview: a saved scene shows only at TAKE
         placeLiveDock(page == TopBar.Page.SCENE);
         switch (page) {
             case SCENE -> pageCards.show(pages, page.name());
