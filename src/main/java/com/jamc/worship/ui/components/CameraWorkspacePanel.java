@@ -120,6 +120,7 @@ public class CameraWorkspacePanel extends JPanel {
     private final JButton sendToPreview = Ui.primaryButton("SEND TO PREVIEW", "monitor");
     private final JButton switchNow = Ui.button("SWITCH NOW", "video");
     private final JButton rename = Ui.button("RENAME", "edit");
+    private final JButton refresh = Ui.button("REFRESH", "refresh");
     private final JToggleButton multiToggle = new JToggleButton("MULTI-CAMERA VIEW", Icons.get("grid", Icons.SMALL));
     private final JLabel title = Ui.label("No camera", Palette::text, "h3");
     private final JLabel deviceLabel = Ui.label(" ", Palette::secondaryText, "small");
@@ -154,6 +155,7 @@ public class CameraWorkspacePanel extends JPanel {
         titles.add(title, BorderLayout.CENTER);
         titles.add(deviceLabel, BorderLayout.SOUTH);
         JPanel tools = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        tools.add(refresh);
         tools.add(rename);
         tools.add(multiToggle);
         JPanel heading = Ui.transparent(new BorderLayout(12, 0));
@@ -216,6 +218,8 @@ public class CameraWorkspacePanel extends JPanel {
         detectButton.addActionListener(e -> detect());
         rename.setToolTipText("Give this camera a name of your own (e.g. PREACHER CAMERA)");
         rename.addActionListener(e -> renameCamera(selectedCamera()));
+        refresh.setToolTipText("The picture is missing or stuck: close this camera and open it again. Other cameras keep running.");
+        refresh.addActionListener(e -> refreshCamera(selectedCamera()));
         multiToggle.setToolTipText("Show every camera at once (click: configure, double-click: send to Preview)");
         multiToggle.addActionListener(e -> {
             config.set(K_MULTI, String.valueOf(multiToggle.isSelected()));
@@ -388,6 +392,7 @@ public class CameraWorkspacePanel extends JPanel {
             config.save();
             showView();
         }));
+        m.add(item("Refresh Camera", "refresh", () -> refreshCamera(cam)));
         m.add(item("Rename…", "edit", () -> renameCamera(cam)));
         if (cameras.status(cam) == CameraStatus.DISCONNECTED) {
             m.addSeparator();
@@ -516,6 +521,7 @@ public class CameraWorkspacePanel extends JPanel {
         String cam = selectedCamera();
         updateTitle();
         sendToPreview.setEnabled(cam != null && MediaEngine.get().isAvailable());
+        refresh.setEnabled(cam != null);
         loading = true;
         try {
             deviceList.setSelectedValue(cam, true);
@@ -646,6 +652,13 @@ public class CameraWorkspacePanel extends JPanel {
 
     private static String formatKey(String cam) {
         return "camera.format." + Integer.toHexString(cam.hashCode());
+    }
+
+    private void refreshCamera(String cam) {
+        if (cam != null) {
+            cameras.refresh(cam);
+            statusHandler.accept("Refreshing " + names.label(cam) + "…");
+        }
     }
 
     private void renameCamera(String cam) {

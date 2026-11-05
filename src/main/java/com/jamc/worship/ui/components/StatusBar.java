@@ -1,5 +1,6 @@
 package com.jamc.worship.ui.components;
 
+import com.jamc.worship.stream.StreamManager;
 import com.jamc.worship.ui.Ui;
 import com.jamc.worship.ui.theme.Palette;
 
@@ -24,6 +25,8 @@ public class StatusBar extends JPanel {
     private final JLabel database = Ui.small("Database");
     private final Dot databaseDot = new Dot(Palette::live);
     private final JLabel dataDir = Ui.label("", Palette::mutedText, "small");
+    private final JLabel live = Ui.small("Not live");
+    private final Dot liveDot = new Dot(Palette::mutedText);
     private final Timer clearTimer;
 
     public StatusBar() {
@@ -32,6 +35,9 @@ public class StatusBar extends JPanel {
                 BorderFactory.createEmptyBorder(3, 12, 3, 12)));
 
         JPanel right = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        right.add(liveDot);
+        right.add(live);
+        right.add(javax.swing.Box.createHorizontalStrut(10));
         right.add(dataDir);
         right.add(javax.swing.Box.createHorizontalStrut(10));
         right.add(databaseDot);
@@ -52,6 +58,34 @@ public class StatusBar extends JPanel {
     public void showMessage(String text) {
         message.setText(text);
         clearTimer.restart();
+    }
+
+    /** The livestream's state, always in view: time and frame rate on air, the reason when it stopped. */
+    public void setLiveStatus(StreamManager.Session session) {
+        live.setText(liveText(session));
+        live.setToolTipText(session.state() == StreamManager.State.ERROR ? session.detail() : null);
+        liveDot.color = session.state() == StreamManager.State.ERROR ? Palette::danger
+                : session.finishing() || session.state() == StreamManager.State.STARTING ? Palette::warning
+                : session.state() == StreamManager.State.ACTIVE ? Palette::live : Palette::mutedText;
+        liveDot.repaint();
+    }
+
+    static String liveText(StreamManager.Session s) {
+        if (s.state() == StreamManager.State.ERROR) {
+            return "Livestream stopped (see the Stream page)";
+        }
+        if (s.finishing()) {
+            return "Stopping the livestream…";
+        }
+        if (s.state() == StreamManager.State.STARTING) {
+            return s.detail() == null ? "Connecting the livestream…" : s.detail();
+        }
+        if (s.state() != StreamManager.State.ACTIVE) {
+            return "Not live";
+        }
+        var st = s.stats();
+        return "LIVE " + StreamPanel.elapsed(s.startedMillis())
+                + (st == null ? "" : String.format(java.util.Locale.ROOT, "  ·  %.0f fps  ·  dropped %d", st.fps(), st.droppedFrames()));
     }
 
     public void setDatabaseStatus(boolean ok, String text) {

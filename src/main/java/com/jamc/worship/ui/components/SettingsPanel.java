@@ -57,10 +57,12 @@ public class SettingsPanel extends JPanel {
     public static final String KEY_DOUBLE_CLICK_LIVE = "live.doubleClickTakes";
     /** Clicking a song lyrics slide sends it straight to Program (Bible, PowerPoint and media still use Preview + TAKE). */
     public static final String KEY_SONG_CLICK_LIVE = "live.songClickGoesLive";
+    public static final String KEY_SEPARATE_BIBLE = "live.separateBible";
+    public static final String KEY_SEPARATE_PRESENTATION = "live.separatePresentation";
+    public static final String KEY_SEPARATE_VIDEOS = "live.separateVideos";
+    public static final String KEY_SEPARATE_IMAGES = "live.separateImages";
     /** Clicking a PowerPoint slide sends it straight to Program, like song lyrics. */
     public static final String KEY_PRESENTATION_CLICK_LIVE = "live.presentationClickGoesLive";
-    /** Presentations: NEXT / PREVIOUS (buttons and keys) put the slide in Preview and on Program at once. On by default. */
-    public static final String KEY_PRESENTATION_NEXT_LIVE = "live.presentationNextGoesLive";
     /** Clicking a scene switches Program at once (Direct Switch) instead of Preview + TAKE. */
     public static final String KEY_SCENE_DIRECT = "scenes.directSwitch";
     public static final String KEY_VLC_PATH = "media.vlcPath";
@@ -127,6 +129,10 @@ public class SettingsPanel extends JPanel {
         boolean separateLayouts();
 
         void setSeparateLayouts(boolean on);
+
+        /** Separate Lyrics, Bible or Presentation changed. */
+        default void contentSeparationChanged() {
+        }
 
         List<com.jamc.worship.model.Scene> scenes();
 
@@ -269,10 +275,6 @@ public class SettingsPanel extends JPanel {
         });
         JPanel presentation = rows(flow(Ui.small("Default theme for songs and slides:"), defaultTheme),
                 flow(Ui.small("Theme for Bible verses:"), bibleTheme),
-                checkbox("Song lyrics: clicking a slide sends it live at once (no Preview step)", KEY_SONG_CLICK_LIVE, true),
-                Ui.label("Presentations (PowerPoint): click selects a slide, double-click sends it to Preview, TAKE puts it live.",
-                        Palette::mutedText, "small"),
-                checkbox("Presentations: NEXT / PREVIOUS slide moves Preview and Program together", KEY_PRESENTATION_NEXT_LIVE, true),
                 checkbox("Double-click a slide to send it live (otherwise double-click only previews; use TAKE)",
                         KEY_DOUBLE_CLICK_LIVE, false));
         content.add(section("Presentation", "Default look", presentation), c);
@@ -355,7 +357,7 @@ public class SettingsPanel extends JPanel {
                 checkbox("Fit several short verses on one slide and split long verses across slides", KEY_BIBLE_AUTOFIT, true),
                 flow(versions),
                 Ui.label("<html>Background, video background, font, size, color, alignment, shadow and outline come from the "
-                        + "Bible theme chosen above (edit it under Themes). NLT, ESV, NIV and Ang Pulong Sa Dios are copyrighted: "
+                        + "Bible theme chosen above (edit it under Themes). NLT, ESV, NIV, NASB and Ang Pulong Sa Dios are copyrighted: "
                         + "connect them with your own licensed API key or an imported licensed file in Bible Versions.</html>",
                         Palette::mutedText, "small"));
         content.add(section("Bible Presentation", "How verses appear on screen", bibleRows), c);
@@ -774,7 +776,17 @@ public class SettingsPanel extends JPanel {
         }
         JComboBox<String> duration = new JComboBox<>(durationNames);
         JCheckBox autoTake = new JCheckBox("Auto-take: selecting a slide sends it live at once (skips Preview + TAKE)");
-        JCheckBox separate = new JCheckBox("Separate Layouts: Preview (church TV) and Program (livestream) keep their own scene");
+        JCheckBox separateLyrics = new JCheckBox("Separate Lyrics", !context.config().getBoolean(KEY_SONG_CLICK_LIVE, true));
+        separateLyrics.addActionListener(e -> {
+            context.config().set(KEY_SONG_CLICK_LIVE, String.valueOf(!separateLyrics.isSelected()));
+            context.config().save();
+            h.contentSeparationChanged();
+        });
+        JCheckBox separateBible = checkbox("Separate Bible", KEY_SEPARATE_BIBLE, false);
+        separateBible.addActionListener(e -> h.contentSeparationChanged());
+        JCheckBox separatePresentation = checkbox("Separate Presentation", KEY_SEPARATE_PRESENTATION, false);
+        separatePresentation.addActionListener(e -> h.contentSeparationChanged());
+        JCheckBox separate = new JCheckBox("Separate Layouts (Scene): Preview (church TV) and Program (livestream) keep their own scene");
         JComboBox<SceneChoice> defaultScene = new JComboBox<>();
         Runnable saveTransition = () -> {
             if (!syncing && transition.getSelectedItem() instanceof com.jamc.worship.output.Transition t) {
@@ -827,7 +839,12 @@ public class SettingsPanel extends JPanel {
             }
         });
         liveBody.add(rows(flow(Ui.small("Transition:"), transition, Ui.small("Duration:"), duration),
-                autoTake, sceneSwitchRow(), separate,
+                autoTake, sceneSwitchRow(),
+                Ui.label("Off: it shows on Preview and Program together (a presentation slide: click selects it, TAKE shows it on both). On: Preview first, TAKE sends it to Program.",
+                        Palette::mutedText, "small"),
+                separateLyrics, separateBible, separatePresentation,
+                checkbox("Separate Videos", KEY_SEPARATE_VIDEOS, true), checkbox("Separate Images", KEY_SEPARATE_IMAGES, true),
+                separate,
                 flow(Ui.small("Scene when the app starts:"), defaultScene),
                 Ui.label("The same settings are next to the TAKE button and in the Scenes list.", Palette::mutedText, "small")),
                 BorderLayout.CENTER);

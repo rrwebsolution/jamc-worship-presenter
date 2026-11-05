@@ -96,6 +96,7 @@ public class ScenesPanel extends JPanel {
     private final JLabel draftState = Ui.label(" ", Palette::secondaryText, "small");
     private Consumer<List<Scene>> scenesChanged = l -> { };
     private Consumer<Scene> previewChosen = s -> { };
+    private Consumer<Scene> sceneSaved = s -> { };
     private Consumer<String> statusHandler = s -> { };
     /**
      * The scene being edited: a private draft, never Preview's or Program's scene. Changes stay here (and on this
@@ -216,6 +217,11 @@ public class ScenesPanel extends JPanel {
     }
 
     /** SEND TO PREVIEW: the saved scene goes to Preview (Program changes only at TAKE). */
+    /** Called after SAVE SCENE with the scene as saved. */
+    public void setSceneSaved(Consumer<Scene> l) {
+        sceneSaved = l;
+    }
+
     public void setPreviewChosen(Consumer<Scene> l) {
         previewChosen = l;
     }
@@ -370,7 +376,7 @@ public class ScenesPanel extends JPanel {
     private JComponent buildPreview() {
         JPanel p = Ui.panel(new BorderLayout(0, 10), Palette::panelBackground);
         p.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
-        saveButton.setToolTipText("Save this scene to the scene library. Preview and Program do not change.");
+        saveButton.setToolTipText("Save this scene and show it in Preview. Program changes only at TAKE.");
         saveButton.addActionListener(e -> saveEditing());
         revertButton.setToolTipText("Throw away the unsaved changes and go back to the saved scene");
         revertButton.addActionListener(e -> {
@@ -396,8 +402,8 @@ public class ScenesPanel extends JPanel {
         head.add(buttons, BorderLayout.EAST);
         p.add(head, BorderLayout.NORTH);
         p.add(preview, BorderLayout.CENTER);
-        p.add(Ui.label("<html>SCENE EDITOR: changes here never touch Preview or Program. SAVE SCENE stores the scene; "
-                + "to use it, double-click it in the scene library (Preview), then TAKE (Program). Layers are drawn from the "
+        p.add(Ui.label("<html>SCENE EDITOR: changes here stay a draft until SAVE SCENE, which stores the scene and shows it in Preview; "
+                + "TAKE puts it on Program. Layers are drawn from the "
                 + "bottom of the Sources list upwards; lyrics show what is on Program.</html>",
                 Palette::mutedText, "small"), BorderLayout.SOUTH);
         updateDraftState();
@@ -574,8 +580,8 @@ public class ScenesPanel extends JPanel {
     }
 
     /**
-     * SAVE SCENE: writes the draft to the scene library. Only the library changes: Preview and Program keep the
-     * scene they show (a saved scene goes live only through Preview and TAKE).
+     * SAVE SCENE: writes the draft to the scene library and tells {@link #setSceneSaved} (the app puts it in Preview).
+     * Program changes only at TAKE.
      */
     private void saveEditing() {
         if (editing == null || editing.getId() == null) {
@@ -598,8 +604,7 @@ public class ScenesPanel extends JPanel {
                 dirty = false;
                 updateDraftState();
             }
-            statusHandler.accept("Scene \"" + saved.getName() + "\" saved. Preview and Program are unchanged; "
-                    + "double-click it in the scene library to send it to Preview.");
+            statusHandler.accept("Scene \"" + saved.getName() + "\" saved.");
             for (int i = 0; i < sceneModel.size(); i++) {
                 if (Objects.equals(sceneModel.get(i).getId(), saved.getId())) {
                     sceneModel.set(i, saved);
@@ -610,6 +615,7 @@ public class ScenesPanel extends JPanel {
                 all.add(sceneModel.get(i));
             }
             scenesChanged.accept(all);
+            sceneSaved.accept(saved);
         }, err -> Dialogs.showError(this, "The scene could not be saved.", err));
     }
 

@@ -170,24 +170,25 @@ class Phase4to8IntegrationTest {
     @Test
     void versionsSeededWithCopyrightedOnesNotSetUp() throws Exception {
         List<com.jamc.worship.bible.BibleVersion> versions = bible.ensureInstalled();
-        assertEquals(List.of("KJV", "NLT", "ESV", "NIV", "APSD"),
+        assertEquals(List.of("KJV", "NLT", "ESV", "NIV", "APSD", "NASB"),
                 versions.stream().map(com.jamc.worship.bible.BibleVersion::abbreviation).toList());
         com.jamc.worship.bible.BibleVersion kjv = versions.getFirst();
         assertTrue(bible.isReady(kjv));
-        for (com.jamc.worship.bible.BibleVersion v : versions.subList(1, 5)) {
+        for (com.jamc.worship.bible.BibleVersion v : versions.subList(1, 6)) {
             assertFalse(bible.isReady(v), v.abbreviation() + " ships without text");
             assertTrue(bible.problem(v).contains("copyrighted"));
             assertThrows(ValidationException.class, () -> bible.verses(v, 43, 3));
         }
         assertEquals("Ang Pulong Sa Dios", versions.get(4).name());
         assertEquals("Cebuano", versions.get(4).language());
+        assertEquals("New American Standard Bible", versions.get(5).name());
 
         assertEquals(36, bible.verses(kjv, 43, 3).size(), "John 3 has 36 verses");
         BiblePassage whole = bible.resolve(kjv, "Psalm 23").orElseThrow();
         assertEquals(6, whole.toVerse());
         assertTrue(bible.resolve(kjv, "John 99:1").isEmpty());
         assertFalse(bible.search(kjv, "shepherd want").isEmpty());
-        assertEquals(5, bible.ensureInstalled().size(), "installing twice does not duplicate");
+        assertEquals(6, bible.ensureInstalled().size(), "installing twice does not duplicate");
 
         // An online version without a key explains what to set up instead of failing.
         com.jamc.worship.bible.BibleVersion esv = versions.get(2)

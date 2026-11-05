@@ -358,14 +358,18 @@ public class StreamPanel extends JPanel {
 
     /** Runs the pre-stream check in the background; with {@code start}, asks to confirm afterwards. */
     private void runCheck(boolean start) {
-        StreamSettings s = current();
-        FFmpeg.Capabilities caps = manager.capabilities();
         if (start && manager.live().active()) {
             return;
         }
         checkButton.setEnabled(false);
         startStream.setEnabled(false);
         showChecks(List.of(new StreamManager.Check("Checking…", StreamManager.Check.Level.OK, "")));
+        manager.whenFFmpegChecked(() -> runCheckNow(start));
+    }
+
+    private void runCheckNow(boolean start) {
+        StreamSettings s = current();
+        FFmpeg.Capabilities caps = manager.capabilities();
         BackgroundTask.run("Pre-stream check", () -> manager.preStreamCheck(s, caps), checks -> {
             checkButton.setEnabled(true);
             startStream.setEnabled(true);
@@ -630,7 +634,7 @@ public class StreamPanel extends JPanel {
         } else if (l.state() == StreamManager.State.ACTIVE) {
             StreamEncoder.Stats st = l.stats();
             liveStatus.setText("● LIVE " + elapsed(l.startedMillis()) + (st == null ? "" : String.format(
-                    "  ·  %.0f fps  ·  %.1f Mbps  ·  dropped %d", st.fps(), st.bitrateKbps() / 1000, st.droppedFrames())));
+                    "  ·  %.0f fps  ·  dropped %d", st.fps(), st.droppedFrames())));
             liveStatus.setForeground(Palette.live());
         } else if (on) {
             liveStatus.setText(l.detail() == null ? "Connecting…" : l.detail());

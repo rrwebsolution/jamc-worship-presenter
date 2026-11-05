@@ -65,7 +65,7 @@ public class BibleVersionsDialog extends JDialog {
         JPanel root = Ui.panel(new BorderLayout(0, 12), Palette::panelBackground);
         root.setBorder(BorderFactory.createEmptyBorder(16, 18, 14, 18));
 
-        JLabel legal = Ui.label("<html><b>Use only versions your church is licensed to use.</b> NLT, ESV, NIV and "
+        JLabel legal = Ui.label("<html><body style='width:640px'><b>Use only versions your church is licensed to use.</b> NLT, ESV, NIV, NASB and "
                 + "Ang Pulong Sa Dios are copyrighted by their publishers, so their text is not included. Connect each one "
                 + "with your own licensed API key, or import a Bible file you are permitted to use, and show the attribution "
                 + "the publisher requires. The King James Version is public domain and included.</html>", Palette::secondaryText, null);
@@ -74,12 +74,12 @@ public class BibleVersionsDialog extends JDialog {
         table.setRowHeight(28);
         table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
         table.setDefaultEditor(BibleVersion.Provider.class, new DefaultCellEditor(new JComboBox<>(BibleVersion.Provider.values())));
-        int[] widths = {60, 70, 190, 80, 240, 130, 260};
+        int[] widths = {50, 60, 150, 60, 170, 100, 130};
         for (int i = 0; i < widths.length; i++) {
             table.getColumnModel().getColumn(i).setPreferredWidth(widths[i]);
         }
         JScrollPane scroll = new JScrollPane(table);
-        scroll.setPreferredSize(new Dimension(1000, 230));
+        scroll.setPreferredSize(new Dimension(720, 230));
 
         JPanel keys = Ui.transparent(new GridBagLayout());
         GridBagConstraints g = new GridBagConstraints();
@@ -91,7 +91,7 @@ public class BibleVersionsDialog extends JDialog {
         keyRow(keys, g, "API.Bible key (scripture.api.bible)", apiBibleKey, BibleVersion.Provider.API_BIBLE);
         g.gridx = 0;
         g.gridwidth = 2;
-        keys.add(Ui.label("<html>For API.Bible, put the Bible ID your key is licensed for in the \"Provider ID\" column "
+        keys.add(Ui.label("<html><body style='width:640px'>For API.Bible, put the Bible ID your key is licensed for in the \"Provider ID\" column "
                 + "(for example the ID of NIV or Ang Pulong Sa Dios in your API.Bible account). For the NLT API the column may "
                 + "hold another Tyndale version code. Keys are stored only on this computer. Online versions need internet; "
                 + "import a licensed file for offline use during services.</html>", Palette::mutedText, "small"), g);
@@ -120,9 +120,10 @@ public class BibleVersionsDialog extends JDialog {
         left.add(add);
         left.add(remove);
         left.add(test);
-        JPanel south = Ui.transparent(new BorderLayout(10, 0));
+        status.setPreferredSize(new Dimension(0, status.getPreferredSize().height)); // a long message never widens the dialog
+        JPanel south = Ui.transparent(new BorderLayout(10, 6));
+        south.add(status, BorderLayout.NORTH);
         south.add(left, BorderLayout.WEST);
-        south.add(status, BorderLayout.CENTER);
         south.add(close, BorderLayout.EAST);
         root.add(south, BorderLayout.SOUTH);
 
@@ -308,9 +309,9 @@ public class BibleVersionsDialog extends JDialog {
         if (sources.contains(v.provider())) {
             source.setSelectedItem(v.provider());
         }
-        JPasswordField key = new JPasswordField(36);
+        JPasswordField key = new JPasswordField(26);
         key.putClientProperty(FlatClientProperties.STYLE, "showRevealButton: true");
-        JTextField bibleId = new JTextField(v.providerConfig() == null ? "" : v.providerConfig(), 36);
+        JTextField bibleId = new JTextField(v.providerConfig() == null ? "" : v.providerConfig(), 26);
         bibleId.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "e.g. 78a9f6124f344018-01");
         JLabel keyLabel = new JLabel("API key");
         JLabel idLabel = new JLabel("Bible ID");
@@ -325,7 +326,7 @@ public class BibleVersionsDialog extends JDialog {
             bibleId.setEnabled(needsId);
             idLabel.setEnabled(needsId);
             idLabel.setText(p == BibleVersion.Provider.NLT_API ? "Version code (optional)" : "Bible ID");
-            hint.setText("<html><body style='width:420px'>" + switch (p) {
+            hint.setText("<html><body style='width:340px'>" + switch (p) {
                 case API_BIBLE -> "Sign in at scripture.api.bible, copy your API key, then open Bibles and copy the ID of "
                         + v.abbreviation() + " that your key is licensed for. One key works for every API.Bible version.";
                 case ESV_API -> "Create a free API key at api.esv.org (Account → API Applications).";
@@ -346,7 +347,7 @@ public class BibleVersionsDialog extends JDialog {
         g.gridy = 0;
         g.gridx = 0;
         g.gridwidth = 2;
-        p.add(Ui.label("<html><b>" + v.name() + " (" + v.abbreviation() + ")</b> is copyrighted: use it only with your "
+        p.add(Ui.label("<html><body style='width:340px'><b>" + v.name() + " (" + v.abbreviation() + ")</b> is copyrighted: use it only with your "
                 + "church's licence.</html>", Palette::text, null), g);
         g.gridwidth = 1;
         JComponent[][] rows = {{new JLabel("Text source"), source}, {keyLabel, key}, {idLabel, bibleId}};

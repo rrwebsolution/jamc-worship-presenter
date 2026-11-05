@@ -205,7 +205,7 @@ public class BibleService {
 
     /** Removes a version that was added by the user (and its imported text). Built-in versions are kept. */
     public void deleteVersion(BibleVersion v) {
-        if (List.of("KJV", "NLT", "ESV", "NIV", "APSD").contains(v.abbreviation().toUpperCase())) {
+        if (List.of("KJV", "NLT", "ESV", "NIV", "APSD", "NASB").contains(v.abbreviation().toUpperCase())) {
             throw new ValidationException(v.abbreviation() + " is a standard version and cannot be removed. Turn it off instead.");
         }
         repository.find(v.abbreviation()).ifPresent(t -> repository.delete(t.id()));

@@ -98,6 +98,10 @@ public final class MigrationManager {
                 new Migration(15, "Tags on service items (Fast, Slow, ...)", conn -> {
                     executeScript(conn, Schema.V15);
                     return null;
+                }),
+                new Migration(16, "NASB as a standard Bible version", conn -> {
+                    executeScript(conn, Schema.V16);
+                    return null;
                 })
         );
     }

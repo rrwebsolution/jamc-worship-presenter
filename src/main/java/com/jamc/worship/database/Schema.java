@@ -170,6 +170,12 @@ final class Schema {
             """;
 
     /** A short label on a service item (e.g. Fast, Slow), shown in the schedule. */
+    /** NASB as a standard version: copyrighted, so no text; connected with the church's own licence like NLT or ESV. */
+    static final String V16 = """
+            INSERT OR IGNORE INTO bible_versions(abbreviation, name, language, provider, enabled, sort_order)
+                VALUES ('NASB', 'New American Standard Bible', 'English', 'NONE', 0, 5)
+            """;
+
     static final String V15 = """
             ALTER TABLE service_items ADD COLUMN tag TEXT
             """;

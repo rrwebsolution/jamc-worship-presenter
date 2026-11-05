@@ -134,7 +134,7 @@ class StreamFoundationTest {
     void theLivestreamKeepsEnoughOnTheWayToReachADistantPlatform() {
         StreamSettings s = settings("Microphone", null, false);
         assertTrue(FFmpegStreamEncoder.command("ffmpeg", s, "h264_qsv", FFmpegStreamEncoder.Target.STREAM, "rtmps://example/key")
-                .containsAll(List.of("-send_buffer_size", "1048576")));
+                .contains("flvflags=no_duration_filesize:send_buffer_size=1048576"));
     }
 
     @Test
@@ -255,6 +255,8 @@ class StreamFoundationTest {
         AppConfig config = new AppConfig(paths);
         StreamSettings s = StreamSettings.load(config);
         assertEquals(StreamSettings.Preset.P1080_30, s.preset(), "1080p 30 FPS by default");
+        assertEquals(4000, s.videoKbps(), "leaves room when an upload slows down");
+        assertEquals(4000, StreamSettings.Preset.P1080_30.videoKbps);
         assertEquals(StreamingProviders.FACEBOOK, s.provider());
         s.withPreset(StreamSettings.Preset.P720_30).save(config);
         AppConfig again = new AppConfig(paths);
@@ -281,7 +283,9 @@ class StreamFoundationTest {
                 "server + key pasted together is used as it is");
 
         List<String> cmd = FFmpegStreamEncoder.command("ffmpeg", s, "libx264", FFmpegStreamEncoder.Target.STREAM, "rtmps://x/k");
-        assertEquals(List.of("-flvflags", "no_duration_filesize", "-f", "flv", "rtmps://x/k"), cmd.subList(cmd.size() - 5, cmd.size()));
+        assertEquals("rtmps://x/k", cmd.getLast());
+        assertEquals("flv", cmd.get(cmd.indexOf("-fifo_format") + 1));
+        assertTrue(StreamManager.explainStreamError("Error number -138 occurred").contains("Cannot reach"));
         assertTrue(StreamManager.explainStreamError("rtmps://x/•••: I/O error").contains("stream key"));
     }
 

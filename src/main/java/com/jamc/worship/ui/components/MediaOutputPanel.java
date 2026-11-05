@@ -56,6 +56,11 @@ public class MediaOutputPanel extends JPanel {
         /** Puts the item on the main PREVIEW (not Program). */
         void sendToPreview(MediaItem item);
 
+        /** True when sending this also puts it on Program (its Separate tick in Settings is off). */
+        default boolean sendsToProgram(MediaItem item) {
+            return false;
+        }
+
         void playAudio(MediaItem item);
 
         void addToService(ServiceItem item);
@@ -72,6 +77,7 @@ public class MediaOutputPanel extends JPanel {
     private final JLabel warning = Ui.label(" ", Palette::danger, "small");
     private final Monitor monitor = new Monitor();
     private final TransportControls transport = new TransportControls(false);
+    private final Actions actions;
     private final JButton sendToPreview = Ui.primaryButton("SEND TO PREVIEW", "monitor");
     private final JButton addToService = Ui.button("ADD TO SERVICE", "list-plus");
     private final JButton fullscreen = Ui.button("FULLSCREEN VIDEO", "video");
@@ -91,6 +97,7 @@ public class MediaOutputPanel extends JPanel {
     public MediaOutputPanel(MediaService media, MediaHub hub, GlobalBackgroundManager background,
                             GlobalBackgroundPanel backgroundControls, Actions actions) {
         super(new BorderLayout());
+        this.actions = actions;
         this.media = media;
         this.hub = hub;
         hub.routing().addListener(this::applyProgramOnly);
@@ -192,6 +199,10 @@ public class MediaOutputPanel extends JPanel {
 
     /** Shows the selected library item for inspection; nothing is sent anywhere. */
     public void show(MediaItem m) {
+        boolean toProgram = actions.sendsToProgram(m);
+        sendToPreview.setText(toProgram ? "SEND TO PROGRAM" : "SEND TO PREVIEW");
+        sendToPreview.setToolTipText(toProgram ? "Put this on Preview and Program at once."
+                : "Put this on the main PREVIEW. Program stays as it is until TAKE.");
         boolean same = m != null && item != null && Objects.equals(m.getId(), item.getId()) && Objects.equals(m.getPath(), item.getPath());
         this.item = m;
         if (m == null) {

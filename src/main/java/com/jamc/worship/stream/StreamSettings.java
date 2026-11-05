@@ -75,7 +75,7 @@ public record StreamSettings(
     /** One-click quality presets for volunteers; Advanced settings can fine-tune bitrates. */
     public enum Preset {
         P720_30("720p 30 FPS", 1280, 720, 30, 4000),
-        P1080_30("1080p 30 FPS", 1920, 1080, 30, 6000),
+        P1080_30("1080p 30 FPS", 1920, 1080, 30, 4000),
         P1080_60("1080p 60 FPS", 1920, 1080, 60, 9000);
 
         public final String label;
@@ -145,7 +145,7 @@ public record StreamSettings(
                 parse(c.get("stream.width", null), 1920),
                 parse(c.get("stream.height", null), 1080),
                 parse(c.get("stream.fps", null), 30),
-                parse(c.get("stream.videoKbps", null), 6000),
+                parse(c.get("stream.videoKbps", null), 4000),
                 parse(c.get("stream.audioKbps", null), 160),
                 EncoderChoice.parse(c.get("stream.encoder", null)),
                 blankToNull(c.get("stream.micDevice", null)),

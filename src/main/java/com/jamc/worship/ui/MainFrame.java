@@ -342,6 +342,11 @@ public class MainFrame extends JFrame {
             }
 
             @Override
+            public boolean sendsToProgram(MediaItem item) {
+                return mediaGoesLive(item);
+            }
+
+            @Override
             public void playAudio(MediaItem item) {
                 MainFrame.this.playAudio(item);
             }
@@ -390,11 +395,14 @@ public class MainFrame extends JFrame {
         presentationDetail = new PresentationDetailPanel(new PresentationDetailPanel.Actions() {
             @Override
             public void select(int index) {
-                thumbnails.setSelectedIndex(index);
+                thumbnails.select(index); // also the slide already selected, like the first slide of a new presentation
             }
 
             @Override
             public void take(int index) {
+                if (!separatePresentation()) {
+                    return; // TAKE puts the selected slide on Preview and Program
+                }
                 // double-click on a slide here: Preview (TAKE puts it live), like the slide list
                 thumbnails.setSelectedIndex(index);
                 previewSelectedPresentationSlide();
@@ -461,6 +469,7 @@ public class MainFrame extends JFrame {
         this.streamPanel = new com.jamc.worship.ui.components.StreamPanel(streamManager, msg -> statusBar.showMessage(msg));
         streamManager.addListener(this::updateRecordingIndicator);
         topBar.setRecordActions(streamPanel::toggleRecording, streamPanel::startStream);
+        streamManager.refreshCapabilities(); // known before the first RECORD or STREAM press
         // while a video or music is heard on Program, the room microphones are muted in recordings / the livestream
         streamManager.setProgramMediaPlaying(hub::programMediaHeard);
         new javax.swing.Timer(1000, e -> updateRecordingIndicator()).start();
@@ -584,6 +593,11 @@ public class MainFrame extends JFrame {
             @Override
             public void setSeparateLayouts(boolean on) {
                 sceneHost.setSeparateLayouts(on);
+            }
+
+            @Override
+            public void contentSeparationChanged() {
+                SwingUtilities.invokeLater(MainFrame.this::updateClickHint);
             }
 
             @Override
@@ -1156,6 +1170,10 @@ public class MainFrame extends JFrame {
             }
         });
         scenesPanel.setPreviewChosen(this::sendSceneToPreview);
+        scenesPanel.setSceneSaved(saved -> {
+            sendSceneToPreview(saved);
+            statusBar.showMessage("Scene \"" + saved.getName() + "\" saved and in Preview. TAKE puts it on Program.");
+        });
 
         thumbnails.addSelectionListener(index -> {
             Slide slide = thumbnails.getSelectedSlide();
@@ -1174,12 +1192,18 @@ public class MainFrame extends JFrame {
                     stripToPreview(slide, itemStyle, itemTitle);
                 }
                 case PRESENTATION -> {
-                    // a click only selects (white ring, like a scene card): double-click sends it to Preview,
-                    // TAKE to Program. Preview and Program never change from a single click.
+                    // a click only selects (white ring, like a scene card). Separated: double-click sends it to
+                    // Preview, TAKE to Program. Otherwise TAKE puts the selected slide on both.
                     presentationDetail.setSelectedIndex(index);
+                    presentationPicked = slide != null && !suppressAutoTake;
                     if (slide != null) {
                         preloadPresentationSlide(index);
                         preloadPresentationSlide(index + 1);
+                    }
+                    if (slide != null && !suppressAutoTake && liveDock.isAutoTake()
+                            && !(slide == takenSlide && program.content() == takenContent)) {
+                        previewSelectedPresentationSlide();
+                        take(false);
                     }
                     return;
                 }
@@ -1197,6 +1221,9 @@ public class MainFrame extends JFrame {
         });
         thumbnails.addActivationListener(index -> {
             if (stripSource == StripSource.PRESENTATION) {
+                if (!separatePresentation()) {
+                    return; // TAKE puts the selected slide on Preview and Program
+                }
                 previewSelectedPresentationSlide(); // double-click: Preview
                 if (doubleClickTakes()) {
                     take();
@@ -1482,6 +1509,11 @@ public class MainFrame extends JFrame {
     }
 
     private void onPassage(BiblePassage p) {
+        boolean picked = biblePanel.takePicked();
+        if (picked && p != null && p.equals(liveBiblePassage) && stripSource == StripSource.BIBLE
+                && program.content() == takenContent && program.content() != null) {
+            return; // the verse already on Program, clicked again: no second transition of the same words
+        }
         biblePassage = p;
         if (p == null) {
             bibleDetail.setPassage(null, 0);
@@ -1525,7 +1557,15 @@ public class MainFrame extends JFrame {
                 restoringBible = false;
                 restoreStrip(() -> thumbnails.setSlides(slides, bibleStyle)); // back on Bible: Preview stays as it is
             } else {
-                thumbnails.setSlides(slides, bibleStyle);
+                suppressAutoTake = !picked; // opening a passage never puts a verse live by itself; picking one does
+                try {
+                    thumbnails.setSlides(slides, bibleStyle);
+                } finally {
+                    suppressAutoTake = false;
+                }
+                if (picked && clickGoesLive()) {
+                    liveBiblePassage = p;
+                }
             }
             if (pendingBibleLive) {
                 pendingBibleLive = false;
@@ -1539,12 +1579,16 @@ public class MainFrame extends JFrame {
 
     /** The chapter a remote opened, shown one card per verse. */
     private BiblePassage remoteBibleChapter;
+    /** A presentation slide was clicked and nothing has gone to Preview since: TAKE sends that slide. */
+    private boolean presentationPicked;
+    /** The verses a pick last put on Program. */
+    private BiblePassage liveBiblePassage;
     /** The verse tapped on the remote, waiting for that chapter's cards. */
     private Integer remoteBibleVerse;
 
-    /** A remote's tap on a Bible card follows the lyrics rule, so Bible and lyrics work the same on the remote. */
+    /** A remote's tap on a Bible card follows the same setting as a click here. */
     private boolean remoteBibleGoesLive() {
-        return songClickGoesLive() || liveDock.isAutoTake();
+        return !context.config().getBoolean(SettingsPanel.KEY_SEPARATE_BIBLE, false) || liveDock.isAutoTake();
     }
 
     /** The tapped verse is in Preview: on to Program too, unless it is already there. */
@@ -1579,8 +1623,13 @@ public class MainFrame extends JFrame {
         stripSource = StripSource.BIBLE;
         centerCards.show(centerHolder, CENTER_BIBLE);
         if (!thumbnails.getSlides().isEmpty()) {
-            thumbnails.setSelectedIndex(-1);
-            thumbnails.setSelectedIndex(0);
+            suppressAutoTake = true; // this button is Preview only, whatever a click does
+            try {
+                thumbnails.setSelectedIndex(-1);
+                thumbnails.setSelectedIndex(0);
+            } finally {
+                suppressAutoTake = false;
+            }
         }
         statusBar.showMessage("Verse in Preview. Press TAKE (Space) to send it live.");
     }
@@ -1842,12 +1891,19 @@ public class MainFrame extends JFrame {
     }
 
     /**
-     * Song lyrics and PowerPoint slides go live on click (Preview and Program together); Bible, images and
-     * media keep Preview + TAKE. Each is a setting.
+     * Lyrics and Bible go to Preview and Program together on a click, unless Settings → Live & Scenes separates them
+     * (Preview first, TAKE sends it to Program). A presentation slide is only selected by a click; see {@link #take()}.
      */
     private boolean clickGoesLive() {
-        // presentations never go live on a click: click selects, double-click → Preview, TAKE → Program
-        return stripSource == StripSource.SONG && songClickGoesLive();
+        return switch (stripSource) {
+            case SONG -> songClickGoesLive();
+            case BIBLE -> !context.config().getBoolean(SettingsPanel.KEY_SEPARATE_BIBLE, false);
+            default -> false;
+        };
+    }
+
+    private boolean separatePresentation() {
+        return context.config().getBoolean(SettingsPanel.KEY_SEPARATE_PRESENTATION, false);
     }
 
     /**
@@ -1939,7 +1995,7 @@ public class MainFrame extends JFrame {
             m.put("cards", cards);
             m.put("previewIndex", preview);
             m.put("liveIndex", thumbnails.getLiveIndex());
-            m.put("clickGoesLive", songClickGoesLive() || liveDock.isAutoTake());
+            m.put("clickGoesLive", clickGoesLive() || liveDock.isAutoTake());
             return m;
         }
 
@@ -1965,7 +2021,7 @@ public class MainFrame extends JFrame {
             m.put("slides", slides);
             m.put("previewIndex", preview);
             m.put("liveIndex", thumbnails.getLiveIndex());
-            m.put("mode", context.config().getBoolean(SettingsPanel.KEY_PRESENTATION_NEXT_LIVE, true) ? "LIVE_CONTROL" : "PREVIEW_FIRST");
+            m.put("mode", !separatePresentation() ? "LIVE_CONTROL" : "PREVIEW_FIRST");
             return m;
         }
 
@@ -2127,7 +2183,7 @@ public class MainFrame extends JFrame {
             int before = thumbnails.getSelectedIndex();
             thumbnails.setSelectedIndex(Math.clamp(index, 0, thumbnails.getSlides().size() - 1));
             previewSelectedPresentationSlide();
-            if (thumbnails.getSelectedIndex() != before && context.config().getBoolean(SettingsPanel.KEY_PRESENTATION_NEXT_LIVE, true)) {
+            if (thumbnails.getSelectedIndex() != before && !separatePresentation()) {
                 take(false); // LIVE CONTROL, as on the desktop: content only, Program's scene stays
             }
             return null;
@@ -2558,30 +2614,37 @@ public class MainFrame extends JFrame {
 
     /** Tells the operator above the lyrics cards what a click does for the content shown. */
     private void updateClickHint() {
-        if (stripSource == StripSource.PRESENTATION) {
-            thumbnails.setHint("Click = Select · Double-click = Preview · TAKE = Live", false);
+        boolean live = liveDock.isAutoTake() || clickGoesLive();
+        if (stripSource == StripSource.PRESENTATION && !live) {
+            thumbnails.setHint(separatePresentation() ? "Click = Select · Double-click = Preview · TAKE = Live"
+                    : "Click = Select · TAKE = Preview + Program", false);
             return;
         }
-        boolean live = liveDock.isAutoTake() || clickGoesLive();
         thumbnails.setHint(live ? "Click = LIVE" : "Click = Preview · TAKE = Live", live);
     }
 
     /**
-     * NEXT / PREVIOUS slide. Presentations: Preview moves to that slide, and with Settings → "NEXT / PREVIOUS slide
-     * moves Preview and Program together" (on by default) Program follows at once; otherwise TAKE puts it live.
+     * NEXT / PREVIOUS slide. Presentations: Preview moves to that slide and Program follows at once, unless Settings →
+     * Live & Scenes separates presentations; then TAKE puts it live.
      * Only the content changes: Program keeps its scene. Lyrics as before.
      */
     private void stepSlide(boolean next) {
         int before = thumbnails.getSelectedIndex();
-        if (next) {
-            thumbnails.selectNext();
-        } else {
-            thumbnails.selectPrevious();
+        boolean presentation = stripSource == StripSource.PRESENTATION;
+        suppressAutoTake = presentation; // below, once: the strip's own click rule would send it live twice
+        try {
+            if (next) {
+                thumbnails.selectNext();
+            } else {
+                thumbnails.selectPrevious();
+            }
+        } finally {
+            suppressAutoTake = false;
         }
-        if (stripSource == StripSource.PRESENTATION && thumbnails.getSelectedIndex() >= 0) {
+        if (presentation && thumbnails.getSelectedIndex() >= 0) {
             boolean moved = thumbnails.getSelectedIndex() != before;
             previewSelectedPresentationSlide();
-            if (moved && context.config().getBoolean(SettingsPanel.KEY_PRESENTATION_NEXT_LIVE, true)) {
+            if (moved && !separatePresentation()) {
                 take(false); // content only: Program's scene (camera, logo...) stays
             }
         }
@@ -2831,7 +2894,7 @@ public class MainFrame extends JFrame {
             o.backgroundMode = com.jamc.worship.model.BackgroundMode.OVERRIDE;
             o.overlayOpacity = 0.0;
             setPreview(new Slide(item.getName(), "", null), o.applyTo(SlideStyle.fallback()), item.getName());
-            statusBar.showMessage("\"" + item.getName() + "\" is in Preview. Press TAKE (Space) to send it live.");
+            mediaInPreview(item);
             return;
         }
         String path = context.mediaService().resolve(item).toString();
@@ -2870,7 +2933,22 @@ public class MainFrame extends JFrame {
             previewVideoPath = path;
             previewState.take(LiveContent.video(path, item.getName()));
         }
-        statusBar.showMessage("\"" + item.getName() + "\" is in Preview. Press TAKE (Space) to send it live.");
+        mediaInPreview(item);
+    }
+
+    /** Videos and images keep Preview + TAKE unless Settings → Live & Scenes has their Separate tick off. */
+    private boolean mediaGoesLive(MediaItem item) {
+        return item != null && !context.config().getBoolean(item.getKind() == MediaKind.VIDEO
+                ? SettingsPanel.KEY_SEPARATE_VIDEOS : SettingsPanel.KEY_SEPARATE_IMAGES, true);
+    }
+
+    private void mediaInPreview(MediaItem item) {
+        if (mediaGoesLive(item)) {
+            take(false); // content only: Program's scene stays
+            statusBar.showMessage("\"" + item.getName() + "\" is on Preview and Program.");
+        } else {
+            statusBar.showMessage("\"" + item.getName() + "\" is in Preview. Press TAKE (Space) to send it live.");
+        }
     }
 
     private void playAudio(MediaItem item) {
@@ -2920,6 +2998,7 @@ public class MainFrame extends JFrame {
     // ------------------------------------------------------------------ live
 
     private void setPreview(Slide slide, SlideStyle style, String title) {
+        presentationPicked = false;
         previewSlide = slide;
         previewStyle = style;
         previewTitle = title;
@@ -2955,6 +3034,9 @@ public class MainFrame extends JFrame {
      * single Program state; the global video background is not touched.
      */
     private void take() {
+        if (presentationPicked && stripSource == StripSource.PRESENTATION && !separatePresentation()) {
+            previewSelectedPresentationSlide(); // the slide just clicked goes to Preview and Program together
+        }
         take(true);
     }
 
@@ -3404,17 +3486,17 @@ public class MainFrame extends JFrame {
         public void setSeparateLayouts(boolean separate) {
             context.config().set(KEY_SEPARATE_LAYOUTS, String.valueOf(separate));
             context.config().save();
-            pendingScene = null;
-            if (!separate) {
-                previewState.setScene(program.scene(), false); // Preview follows Program again
-            }
+            // Preview stays on its scene either way. Sharing again, a scene other than Program's waits there for TAKE
+            Scene inPreview = previewState.scene();
+            pendingScene = separate || inPreview == null || sameLayout(program.scene(), inPreview) ? null : inPreview;
             liveDock.setTakeSceneVisible(separate);
+            liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null || pendingScene != null);
             updatePreviewNote();
             scenesDock.sync();
             if (scenesHome != null) scenesHome.sync();
             statusBar.showMessage(separate
                     ? "Separate layouts: click a scene to set Preview's layout; TAKE changes only the content, TAKE SCENE changes Program's layout."
-                    : "Preview and Program share the scene again: a scene clicked goes to Preview, TAKE puts it live.");
+                    : "Preview keeps its scene. A scene clicked goes to Preview, TAKE puts it live.");
         }
     }
 
@@ -3639,6 +3721,7 @@ public class MainFrame extends JFrame {
         topBar.setRecording(!r.active() ? null : r.finishing() ? "SAVING…"
                 : "■ STOP REC " + com.jamc.worship.ui.components.StreamPanel.elapsed(r.startedMillis()), r.finishing());
         var l = streamManager.live();
+        statusBar.setLiveStatus(l);
         topBar.setStreaming(!l.active() ? null : l.finishing() ? "STOPPING…"
                 : l.state() == com.jamc.worship.stream.StreamManager.State.ACTIVE
                 ? "■ LIVE " + com.jamc.worship.ui.components.StreamPanel.elapsed(l.startedMillis()) : "CONNECTING…",

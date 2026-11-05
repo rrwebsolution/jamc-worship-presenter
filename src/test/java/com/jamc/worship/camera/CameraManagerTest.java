@@ -197,6 +197,35 @@ class CameraManagerTest {
     }
 
     @Test
+    void refreshReopensOnlyThatCameraAfterItHasClosed() throws Exception {
+        CameraManager m = manager();
+        m.detect();
+        onEdt(() -> {
+            m.frame("CAM A");
+            m.frame("CAM B");
+            return null;
+        });
+        FakeFeed first = last("CAM A");
+        FakeFeed other = last("CAM B");
+        onEdt(() -> {
+            m.refresh("CAM A");
+            assertEquals(CameraStatus.INITIALIZING, m.status("CAM A"), "shown as starting while it closes");
+            return null;
+        });
+        for (int i = 0; i < 100 && !first.released; i++) {
+            Thread.sleep(20);
+        }
+        assertTrue(first.released, "the old session is closed");
+        assertFalse(other.released, "the other camera keeps running");
+        for (int i = 0; i < 100 && opens("CAM A") < 2; i++) {
+            onEdt(() -> m.frame("CAM A"));
+            Thread.sleep(20);
+        }
+        assertEquals(2, opens("CAM A"), "opened again after closing");
+        assertEquals(1, opens("CAM B"));
+    }
+
+    @Test
     void formatsComeFromWhatTheCameraReports() {
         String ffmpeg = """
                 [dshow @ 0000] DirectShow video device options (from video devices)

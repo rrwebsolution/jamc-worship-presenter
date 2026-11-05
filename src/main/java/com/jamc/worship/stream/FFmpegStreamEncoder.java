@@ -342,8 +342,8 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             return;
         }
         if (lastHealth != 0) {
-            log.info("Livestream health: {} frames in {} s, fps {}, {} kbps, frames dropped {} (ffmpeg {}, replaced {})",
-                    p.frame - lastHealthFrame, (now - lastHealth) / 1_000_000_000L, p.fps, Math.round(p.bitrateKbps),
+            log.info("Livestream health: {} frames in {} s, fps {}, frames dropped {} (ffmpeg {}, replaced {})",
+                    p.frame - lastHealthFrame, (now - lastHealth) / 1_000_000_000L, p.fps,
                     dropped.get() + p.dropFrames, p.dropFrames, dropped.get());
         }
         lastHealth = now;
@@ -361,7 +361,7 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
                 }
                 synchronized (lastErrors) {
                     lastErrors.addLast(clean);
-                    while (lastErrors.size() > 6) {
+                    while (lastErrors.size() > 12) { // the real reason comes first, then several lines of "could not finish"
                         lastErrors.removeFirst();
                     }
                 }
@@ -495,7 +495,11 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             // back), RTMP(S) to the platform. A big send buffer: the Windows default keeps about 64 KB on the way, which at
             // the distance to the platform caps a stream near 3 Mbit/s however fast the internet is (a 6000 kbps
             // stream to Facebook came out at 2-3 Mbit/s with most frames lost, the choppy stream)
-            c.addAll(List.of("-send_buffer_size", "1048576", "-bf", "0", "-flvflags", "no_duration_filesize", "-f", "flv", destination));
+            // The fifo keeps the encoder away from the network: a slow moment no longer holds up the picture and the sound
+            // (which is what made the stream choppy and out of sync); what cannot be sent in time is dropped.
+            c.addAll(List.of("-bf", "0", "-flags", "+global_header", "-f", "fifo", "-fifo_format", "flv",
+                    "-format_opts", "flvflags=no_duration_filesize:send_buffer_size=1048576",
+                    "-queue_size", "300", "-drop_pkts_on_overflow", "1", "-attempt_recovery", "0", destination));
         }
         return c;
     }

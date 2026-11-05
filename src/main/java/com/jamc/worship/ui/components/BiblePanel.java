@@ -90,6 +90,9 @@ public class BiblePanel extends JPanel {
     private List<BibleVersion> versions = List.of();
     private Map<String, String> problems = Map.of();
     private boolean loading;
+    /** The operator chose these verses (click, keys, NEXT, search), rather than the panel opening or restoring them. */
+    private boolean picked;
+    private boolean verseChanged;
     private boolean installed;
     private BiblePassage pending;
     private long loadSeq;
@@ -172,13 +175,29 @@ public class BiblePanel extends JPanel {
         verseList.setToolTipText("Click a verse; Shift-click to select several consecutive verses");
         verseList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !loading) {
+                picked = true;
+                verseChanged = true;
                 firePassage();
+            }
+        });
+        verseList.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                // a click on the verse already selected (a list announces only changes) is still a pick
+                int at = verseList.locationToIndex(e.getPoint());
+                if (!verseChanged && !loading && javax.swing.SwingUtilities.isLeftMouseButton(e) && at >= 0
+                        && verseList.isSelectedIndex(at)) {
+                    picked = true;
+                    firePassage();
+                }
+                verseChanged = false;
             }
         });
         resultList.setCellRenderer(new VerseRenderer(true));
         resultList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && resultList.getSelectedValue() != null) {
                 BibleProvider.Verse v = resultList.getSelectedValue();
+                picked = true;
                 goTo(new BiblePassage(code(), v.book(), v.chapter(), v.verse(), v.verse()));
             }
         });
@@ -325,6 +344,13 @@ public class BiblePanel extends JPanel {
         bookCombo.setSelectedItem(BibleBooks.get(p.book()));
         loading = false;
         loadChapters(p.chapter(), p);
+    }
+
+    /** Whether the passage just announced was the operator's own choice. Asking clears it. */
+    public boolean takePicked() {
+        boolean was = picked;
+        picked = false;
+        return was;
     }
 
     public BiblePassage selectedPassage() {
@@ -513,6 +539,7 @@ public class BiblePanel extends JPanel {
             if (r instanceof BiblePassage p) {
                 resultModel.clear();
                 cards.show(body, "browse");
+                picked = true; // a reference typed and sent
                 goTo(p);
             } else if (r instanceof String msg) {
                 message.setText("<html>" + msg + "</html>");

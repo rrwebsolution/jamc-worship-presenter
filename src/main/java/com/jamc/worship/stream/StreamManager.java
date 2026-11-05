@@ -69,6 +69,7 @@ public final class StreamManager {
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private volatile FFmpeg.Capabilities capabilities;
     private boolean probing;
+    private final List<Runnable> afterProbe = new ArrayList<>();
     private FFmpegStreamEncoder recorder;
     /** This app's own sound while recording (MEDIA = {@link StreamSettings#APP_AUDIO}). */
     private LoopbackAudio loopback;
@@ -286,6 +287,20 @@ public final class StreamManager {
     }
 
     /** Looks for FFmpeg and tests its encoders and devices in the background. */
+    /**
+     * Runs {@code then} once it is known whether FFmpeg is here. It is never reported missing just because the check has
+     * not finished, and FFmpeg installed since the last check is found without restarting the app.
+     */
+    public void whenFFmpegChecked(Runnable then) {
+        FFmpeg.Capabilities caps = capabilities;
+        if (caps != null && caps.available() && !probing) {
+            then.run();
+            return;
+        }
+        afterProbe.add(then);
+        refreshCapabilities();
+    }
+
     public void refreshCapabilities() {
         if (probing) {
             return;
@@ -306,6 +321,9 @@ public final class StreamManager {
                 capabilities = result;
                 probing = false;
                 fire();
+                List<Runnable> waiting = new ArrayList<>(afterProbe);
+                afterProbe.clear();
+                waiting.forEach(Runnable::run);
             });
         });
     }
@@ -324,6 +342,10 @@ public final class StreamManager {
 
     /** Starts recording Program to recordings/. Problems are reported through {@code onError}. */
     public void startRecording(Consumer<String> onError) {
+        whenFFmpegChecked(() -> beginRecording(onError));
+    }
+
+    private void beginRecording(Consumer<String> onError) {
         if (recording.active()) {
             return;
         }
@@ -331,7 +353,7 @@ public final class StreamManager {
         StreamSettings s = settings();
         String encoder = caps == null ? null : caps.encoderFor(s.encoder());
         if (caps == null || !caps.available() || encoder == null) {
-            onError.accept(ffmpegMissingMessage());
+            onError.accept(ffmpegProblem(caps));
             return;
         }
         Path folder = recordingsDir();
@@ -430,6 +452,10 @@ public final class StreamManager {
      * was running reconnects by itself a few times.
      */
     public void startStream(Consumer<String> onError) {
+        whenFFmpegChecked(() -> beginStream(onError));
+    }
+
+    private void beginStream(Consumer<String> onError) {
         if (live.active()) {
             return;
         }
@@ -437,7 +463,7 @@ public final class StreamManager {
         StreamSettings s = settings();
         String encoder = caps == null ? null : caps.encoderFor(s.encoder());
         if (caps == null || !caps.available() || encoder == null) {
-            onError.accept(ffmpegMissingMessage());
+            onError.accept(ffmpegProblem(caps));
             return;
         }
         String url = ingestUrl(s);
@@ -587,13 +613,13 @@ public final class StreamManager {
     /** FFmpeg's messages in words the operator can act on. */
     static String explainStreamError(String error) {
         String e = error.toLowerCase(java.util.Locale.ROOT);
-        if (e.contains("i/o error") || e.contains("error number -10053") || e.contains("connection reset")
+        if (e.contains("i/o error") || e.contains("error number -10053") || e.contains("error number -10054") || e.contains("connection reset")
                 || e.contains("end of file") || e.contains("broken pipe")) {
             return "Facebook (or the server) closed the connection. Check that the stream key is the current one "
                     + "(copy it again from Live Producer, or turn on \"Use persistent stream key\"), and that the live video "
                     + "is not already ended. (" + error + ")";
         }
-        if (e.contains("failed to resolve") || e.contains("timed out") || e.contains("connection refused")
+        if (e.contains("failed to resolve") || e.contains("timed out") || e.contains("connection refused") || e.contains("error number -138")
                 || e.contains("network is unreachable")) {
             return "Cannot reach the streaming server. Check the internet connection and the Server URL. (" + error + ")";
         }
@@ -624,7 +650,7 @@ public final class StreamManager {
         String encoder = caps == null ? null : caps.encoderFor(s.encoder());
         out.add(encoder != null
                 ? new Check("Encoder available", Check.Level.OK, "FFmpeg " + caps.version() + " · " + encoder)
-                : new Check("Encoder", Check.Level.PROBLEM, ffmpegMissingMessage()));
+                : new Check("Encoder", Check.Level.PROBLEM, ffmpegProblem(caps)));
         List<String> problems = s.provider().validate(s.server(), hasStreamKey(s.provider()));
         out.add(problems.isEmpty()
                 ? new Check("Stream configuration available", Check.Level.OK, s.provider().displayName())
@@ -674,6 +700,13 @@ public final class StreamManager {
             tap.removeSink(streamer);
             streamer.stop();
         }
+    }
+
+    /** FFmpeg found but with no encoder that works is a different problem from FFmpeg not being there. */
+    static String ffmpegProblem(FFmpeg.Capabilities caps) {
+        return caps != null && caps.available()
+                ? "FFmpeg was found, but none of its video encoders work right now. Close other programs using it, then click Refresh."
+                : ffmpegMissingMessage();
     }
 
     public static String ffmpegMissingMessage() {

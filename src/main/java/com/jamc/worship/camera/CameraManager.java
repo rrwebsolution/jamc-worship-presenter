@@ -161,6 +161,9 @@ public final class CameraManager {
     private final boolean fallback;
     private volatile List<String> cameras = List.of();
     private volatile List<String> audioInputs = List.of();
+    /** Cameras being closed by a refresh: not opened again until that is done. */
+    private final java.util.Set<String> restarting = new java.util.HashSet<>();
+    private static final int REFRESH_WAIT_MS = 5000;
     private volatile boolean detected;
     private volatile long lastDetect;
     private volatile Function<String, String> audioOverride = name -> null;
@@ -374,6 +377,9 @@ public final class CameraManager {
         if (missing.contains(cam) || (detected && !cameras.contains(cam))) {
             return CameraStatus.DISCONNECTED;
         }
+        if (restarting.contains(cam)) {
+            return CameraStatus.INITIALIZING;
+        }
         Session s = sessions.get(cam);
         if (s == null) {
             return CameraStatus.READY;
@@ -459,6 +465,47 @@ public final class CameraManager {
             s.feed.release(); // reopened with the new format on the next frame request
             log.info("Camera {} restarting at {} / {} fps", name, size == null ? "Auto" : size, fps == 0 ? "default" : fps);
         }
+    }
+
+    /**
+     * REFRESH: closes this camera and opens it again, for when it shows nothing. Only this camera is touched. Closing runs
+     * off the Swing thread (a stuck driver can hold it for half a minute), and the camera opens again once that is
+     * done, or after a few seconds if it stays stuck, since a device still closing refuses to open. EDT only.
+     */
+    public void refresh(String name) {
+        String cam = resolve(name);
+        if (cam == null || !restarting.add(cam)) {
+            return;
+        }
+        log.info("Camera {}: refresh", cam);
+        working.remove(cam); // try every format again, the last good one may be the problem
+        Session s = sessions.remove(cam);
+        Runnable reopen = () -> {
+            if (restarting.remove(cam)) {
+                detectAsync();
+                fire();
+            }
+        };
+        javax.swing.Timer limit = new javax.swing.Timer(REFRESH_WAIT_MS, e -> reopen.run());
+        limit.setRepeats(false);
+        limit.start();
+        if (s == null) {
+            limit.stop();
+            reopen.run();
+            return;
+        }
+        fire();
+        Thread.ofPlatform().daemon().name("camera-refresh").start(() -> {
+            try {
+                s.feed.release();
+            } catch (RuntimeException e) {
+                log.warn("Camera {} did not close cleanly", cam, e);
+            }
+            javax.swing.SwingUtilities.invokeLater(() -> {
+                limit.stop();
+                reopen.run();
+            });
+        });
     }
 
     /** What the camera reported it supports, or null when not known (yet). */
@@ -585,6 +632,9 @@ public final class CameraManager {
     }
 
     private Session open(String cam, long now) {
+        if (restarting.contains(cam)) {
+            return null;
+        }
         List<Format> tries = fallback ? candidates(requested.get(cam), working.get(cam)) : List.of(new Format(null, 0));
         try {
             Session s = new Session(opener.apply(cam, tries.getFirst()), tries, now);

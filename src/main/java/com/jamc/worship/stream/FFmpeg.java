@@ -61,14 +61,17 @@ public final class FFmpeg {
     public static Path locate(String configured) {
         List<Path> candidates = new ArrayList<>();
         if (configured != null && !configured.isBlank()) {
-            Path p = Path.of(configured.strip());
-            candidates.add(Files.isDirectory(p) ? p.resolve(exe()) : p);
+            Path p = pathOrNull(configured.strip());
+            if (p != null) {
+                candidates.add(Files.isDirectory(p) ? p.resolve(exe()) : p);
+            }
         }
         String path = System.getenv("PATH");
         if (path != null) {
             for (String dir : path.split(java.io.File.pathSeparator)) {
-                if (!dir.isBlank()) {
-                    candidates.add(Path.of(dir.strip().replace("\"", "")).resolve(exe()));
+                Path p = dir.isBlank() ? null : pathOrNull(dir.strip().replace("\"", ""));
+                if (p != null) {
+                    candidates.add(p.resolve(exe()));
                 }
             }
         }
@@ -98,6 +101,16 @@ public final class FFmpeg {
             }
         }
         return null;
+    }
+
+    /** Null for text Windows does not accept as a path: one bad PATH entry must not stop the search. */
+    static Path pathOrNull(String text) {
+        try {
+            return Path.of(text);
+        } catch (java.nio.file.InvalidPathException e) {
+            log.debug("Skipping an invalid path: {}", text);
+            return null;
+        }
     }
 
     /** Version, encoders that actually work here (a short test encode), and capture devices. */
@@ -168,16 +181,29 @@ public final class FFmpeg {
         }
     }
 
-    private static String run(Path exe, int seconds, String... args) {
+    /** What the program printed. It is ended after {@code seconds}: a hanging camera or sound driver must not stop the check. */
+    static String run(Path exe, int seconds, String... args) {
         List<String> cmd = new ArrayList<>();
         cmd.add(exe.toString());
         cmd.addAll(List.of(args));
         Process p = null;
         try {
             p = new ProcessBuilder(cmd).redirectErrorStream(true).start();
-            byte[] out = p.getInputStream().readAllBytes();
-            p.waitFor(seconds, TimeUnit.SECONDS);
-            return new String(out, StandardCharsets.UTF_8);
+            java.io.InputStream in = p.getInputStream();
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            Thread reader = Thread.ofVirtual().name("ffmpeg-output").start(() -> {
+                try {
+                    in.transferTo(out);
+                } catch (IOException e) {
+                    // the process was ended
+                }
+            });
+            if (!p.waitFor(seconds, TimeUnit.SECONDS)) {
+                log.warn("FFmpeg did not answer in {} s: {}", seconds, String.join(" ", args));
+                p.destroyForcibly();
+            }
+            reader.join(1000);
+            return out.toString(StandardCharsets.UTF_8);
         } catch (IOException e) {
             log.warn("Could not run FFmpeg: {}", e.getMessage());
             return "";

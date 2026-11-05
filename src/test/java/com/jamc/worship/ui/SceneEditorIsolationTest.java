@@ -75,6 +75,8 @@ class SceneEditorIsolationTest {
 
         ScenesPanel panel = onEdt(() -> new ScenesPanel(scenes, program, new CameraManager(name -> null), file -> null, null, media));
         panel.setPreviewChosen(s -> preview.setScene(s, false)); // double-click / SEND TO PREVIEW: Preview only
+        java.util.concurrent.atomic.AtomicReference<Scene> announced = new java.util.concurrent.atomic.AtomicReference<>();
+        panel.setSceneSaved(announced::set);
         onEdt(() -> panel.edit(edited.getId()));
         waitFor(() -> onEdt(() -> {
             Scene e = editing(panel);
@@ -105,14 +107,15 @@ class SceneEditorIsolationTest {
         assertTrue(panel.hasUnsavedChanges());
         assertEquals(List.of("MAIN"), cameras(scenes.scene(edited.getId()).orElseThrow()), "nothing is saved without SAVE");
 
-        // SAVE: the scene library changes, Preview and Program do not
+        // SAVE: the scene library changes and the app is told; Program does not change
         onEdt(() -> {
             invoke(panel, "saveEditing");
             return null;
         });
         waitFor(() -> onEdt(() -> !panel.hasUnsavedChanges()));
         assertEquals(List.of("MAIN", "WORSHIP", "MAIN"), cameras(scenes.scene(edited.getId()).orElseThrow()));
-        assertEquals(List.of("PREACHER"), cameras(preview.scene()), "Preview unchanged after SAVE");
+        assertEquals(List.of("PREACHER"), cameras(preview.scene()), "the panel itself leaves Preview to the app");
+        assertEquals(List.of("MAIN", "WORSHIP", "MAIN"), cameras(announced.get()), "SAVE announces the saved scene");
         assertEquals(List.of("MAIN"), cameras(program.scene()), "Program unchanged after SAVE");
 
         // send the saved scene to Preview: Program still unchanged
