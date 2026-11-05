@@ -42,6 +42,30 @@ class AudioRoutingTest {
     }
 
     @Test
+    void vlcPaddingBelowThePictureIsNotPartOfTheFrame() {
+        java.awt.Dimension hd = new java.awt.Dimension(1280, 720);
+        assertEquals(hd, VideoPlayer.visibleSize(hd, 1280, 738), "measured: a 720p video arrives as 1280x738");
+        assertEquals(new java.awt.Dimension(1920, 1080), VideoPlayer.visibleSize(new java.awt.Dimension(1920, 1080), 1920, 1090));
+        assertEquals(hd, VideoPlayer.visibleSize(hd, 1280, 720), "no padding: nothing changes");
+        assertEquals(null, VideoPlayer.visibleSize(null, 1280, 738), "not known yet");
+        assertEquals(new java.awt.Dimension(720, 1280), VideoPlayer.visibleSize(new java.awt.Dimension(1280, 720), 720, 1280),
+                "not a smaller picture in the buffer (rotated): the whole buffer is kept");
+    }
+
+    @Test
+    void whileRecordingThePreviewMonitorIsSilentAndComesBackAfter() throws Exception {
+        AudioRouting routing = routing();
+        routing.setPreviewMonitor(true);
+        assertTrue(routing.previewMonitor());
+
+        routing.setProgramOnly(true);
+        assertFalse(routing.previewMonitor(), "Windows captures the whole app, so Preview's sound would be recorded");
+
+        routing.setProgramOnly(false);
+        assertTrue(routing.previewMonitor(), "the operator's switch is kept");
+    }
+
+    @Test
     void theSameSourceIsOneVideoAcrossPreviewProgramAndTheEditor() {
         Source a = new Source("Announcement", SourceType.VIDEO);
         a.setId(7L);

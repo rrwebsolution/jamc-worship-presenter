@@ -32,7 +32,6 @@ public class Sidebar extends JPanel {
         IMAGES("Images", "image", true),
         VIDEOS("Videos", "video", true),
         AUDIO("Audio", "audio", true),
-        BACKGROUNDS("Backgrounds", "landscape", true),
         CAMERA("Camera", "video", true),
         // "More": tools a volunteer rarely needs during a service
         SLIDES("Custom Slides", "slides", false),

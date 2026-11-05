@@ -9,8 +9,8 @@
     <version>0.1.0</version>
     <packaging>jar</packaging>
 
-    <name>JAMC Worship Presenter</name>
-    <description>Local-first church worship presentation and live-production desktop application.</description>
+    <name>LiveCat Multimedia</name>
+    <description>Present. Produce. Go Live. Local-first presentation and live-production desktop application.</description>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
@@ -200,7 +200,7 @@
                                     <manifestEntries>
                                         <Multi-Release>true</Multi-Release>
                                         <Enable-Native-Access>ALL-UNNAMED</Enable-Native-Access>
-                                        <Implementation-Title>JAMC Worship Presenter</Implementation-Title>
+                                        <Implementation-Title>LiveCat Multimedia</Implementation-Title>
                                         <Implementation-Version>${project.version}</Implementation-Version>
                                     </manifestEntries>
                                 </transformer>

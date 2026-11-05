@@ -1,46 +1,13 @@
-// jamc-loopback: captures what a Windows output device plays (WASAPI loopback, like OBS "Desktop Audio")
-// and writes it to stdout as raw PCM. Silence is written while nothing plays, so the stream follows the clock.
-// Usage: jamc-loopback.exe ["part of the output device name"]   (no argument = the Windows default output)
-// stderr, first line: "FORMAT f32le|s16le <rate> <channels> <device name>"; then the PCM on stdout.
+// jamc-loopback: captures only what one process and its children play (Windows process loopback, Windows 10
+// version 2004 or newer) and writes it to stdout as raw PCM, so nothing else playing on the PC is recorded.
+// Silence is written while nothing plays, so the stream follows the clock.
+// Usage: jamc-loopback.exe <process id>
+// stderr, first line: "FORMAT f32le <rate> <channels>"; then the PCM on stdout.
 using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
-
-[ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-class MMDeviceEnumeratorCo { }
-
-[Guid("A95664D2-9614-4F35-A746-DE8DB63617E6"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceEnumerator {
-    int EnumAudioEndpoints(int dataFlow, int stateMask, out IMMDeviceCollection devices);
-    int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
-}
-
-[Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDeviceCollection {
-    int GetCount(out int count);
-    int Item(int index, out IMMDevice device);
-}
-
-[Guid("D666063F-1587-4E43-81F1-B948E807363F"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IMMDevice {
-    int Activate(ref Guid iid, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object iface);
-    int OpenPropertyStore(int access, out IPropertyStore store);
-}
-
-[Guid("886d8eeb-8cf2-4446-8d02-cdba1dbdcf99"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IPropertyStore {
-    int GetCount(out int count);
-    int GetAt(int index, out PropertyKey key);
-    int GetValue(ref PropertyKey key, out PropVariant value);
-}
-
-[StructLayout(LayoutKind.Sequential)]
-struct PropertyKey { public Guid fmtid; public int pid; }
-
-[StructLayout(LayoutKind.Explicit, Size = 24)]
-struct PropVariant { [FieldOffset(0)] public short vt; [FieldOffset(8)] public IntPtr pointer; }
 
 [Guid("1CB9AD4C-DBFA-4c32-B178-C2F568A703B2"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 interface IAudioClient {
@@ -65,74 +32,112 @@ interface IAudioCaptureClient {
     int GetNextPacketSize(out uint frames);
 }
 
-static class Loopback {
-    const int RENDER = 0, ACTIVE = 1, CLSCTX_ALL = 23, LOOPBACK = 0x00020000, SILENT = 0x2;
+[ComImport, Guid("72A22D78-CDE4-431D-B8CC-843A71199B6D"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IActivateAudioInterfaceAsyncOperation {
+    int GetActivateResult(out int activateResult, [MarshalAs(UnmanagedType.IUnknown)] out object activatedInterface);
+}
 
-    static string FriendlyName(IMMDevice d) {
-        IPropertyStore store;
-        if (d.OpenPropertyStore(0, out store) != 0) return "";
-        var key = new PropertyKey { fmtid = new Guid("a45c254e-df1c-4efd-8020-67d146a850e0"), pid = 14 };
-        PropVariant v;
-        if (store.GetValue(ref key, out v) != 0 || v.vt != 31) return "";
-        return Marshal.PtrToStringUni(v.pointer);
+[ComImport, Guid("41D949AB-9862-444A-80F6-C261334DA5EB"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IActivateAudioInterfaceCompletionHandler {
+    int ActivateCompleted(IActivateAudioInterfaceAsyncOperation operation);
+}
+
+// says the callback may arrive on any thread, which Windows requires of this handler
+[ComImport, Guid("94EA2B94-E9CC-49E0-C0FF-EE64CA8F5B90"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+interface IAgileObject { }
+
+class Activated : IActivateAudioInterfaceCompletionHandler, IAgileObject {
+    public readonly ManualResetEvent Done = new ManualResetEvent(false);
+    public int Result;
+    public object Client;
+
+    public int ActivateCompleted(IActivateAudioInterfaceAsyncOperation operation) {
+        operation.GetActivateResult(out Result, out Client);
+        Done.Set();
+        return 0;
     }
+}
+
+static class Loopback {
+    const int RATE = 48000, CHANNELS = 2, BLOCK_ALIGN = 8, WAVE_FORMAT_IEEE_FLOAT = 3;
+    const int SILENT = 0x2;
+    // AUDCLNT_STREAMFLAGS: LOOPBACK | EVENTCALLBACK | AUTOCONVERTPCM
+    const int STREAM_FLAGS = 0x00020000 | 0x00040000 | unchecked((int) 0x80000000);
+    const string PROCESS_LOOPBACK = "VAD\\Process_Loopback";
+    const int ACTIVATION_TYPE_PROCESS_LOOPBACK = 1, INCLUDE_TARGET_PROCESS_TREE = 0;
+
+    [DllImport("Mmdevapi.dll", ExactSpelling = true, PreserveSig = true)]
+    static extern int ActivateAudioInterfaceAsync([MarshalAs(UnmanagedType.LPWStr)] string deviceInterfacePath, ref Guid riid,
+        IntPtr activationParams, IActivateAudioInterfaceCompletionHandler handler, out IActivateAudioInterfaceAsyncOperation operation);
 
     static void Check(int hr, string what) {
         if (hr != 0) throw new Exception(what + " failed (0x" + hr.ToString("X8") + ")");
     }
 
+    /** AUDIOCLIENT_ACTIVATION_PARAMS (type, process id, mode) in a PROPVARIANT of type VT_BLOB. */
+    static IntPtr ActivationParams(int processId) {
+        IntPtr blob = Marshal.AllocHGlobal(12);
+        Marshal.WriteInt32(blob, 0, ACTIVATION_TYPE_PROCESS_LOOPBACK);
+        Marshal.WriteInt32(blob, 4, processId);
+        Marshal.WriteInt32(blob, 8, INCLUDE_TARGET_PROCESS_TREE);
+        IntPtr variant = Marshal.AllocHGlobal(24);
+        for (int i = 0; i < 24; i++) Marshal.WriteByte(variant, i, 0);
+        Marshal.WriteInt16(variant, 0, 65); // VT_BLOB
+        Marshal.WriteInt32(variant, 8, 12);
+        Marshal.WriteIntPtr(variant, 8 + IntPtr.Size, blob);
+        return variant;
+    }
+
+    static IntPtr WaveFormat() {
+        IntPtr f = Marshal.AllocHGlobal(18);
+        Marshal.WriteInt16(f, 0, WAVE_FORMAT_IEEE_FLOAT);
+        Marshal.WriteInt16(f, 2, CHANNELS);
+        Marshal.WriteInt32(f, 4, RATE);
+        Marshal.WriteInt32(f, 8, RATE * BLOCK_ALIGN);
+        Marshal.WriteInt16(f, 12, BLOCK_ALIGN);
+        Marshal.WriteInt16(f, 14, 32);
+        Marshal.WriteInt16(f, 16, 0);
+        return f;
+    }
+
+    static IAudioClient Activate(int processId) {
+        var activated = new Activated();
+        Guid audioClientId = typeof(IAudioClient).GUID;
+        IActivateAudioInterfaceAsyncOperation operation;
+        Check(ActivateAudioInterfaceAsync(PROCESS_LOOPBACK, ref audioClientId, ActivationParams(processId), activated, out operation),
+            "ActivateAudioInterfaceAsync");
+        if (!activated.Done.WaitOne(10000)) throw new Exception("Windows did not answer");
+        Check(activated.Result, "Process audio capture");
+        return (IAudioClient) activated.Client;
+    }
+
+    [MTAThread]
     static int Main(string[] args) {
         try {
-            var enumerator = (IMMDeviceEnumerator) new MMDeviceEnumeratorCo();
-            IMMDevice device = null;
-            string wanted = args.Length > 0 ? args[0].Trim() : "";
-            if (wanted.Length > 0) {
-                IMMDeviceCollection all;
-                Check(enumerator.EnumAudioEndpoints(RENDER, ACTIVE, out all), "EnumAudioEndpoints");
-                int n;
-                all.GetCount(out n);
-                for (int i = 0; i < n && device == null; i++) {
-                    IMMDevice d;
-                    all.Item(i, out d);
-                    string name = FriendlyName(d);
-                    if (name.IndexOf(wanted, StringComparison.OrdinalIgnoreCase) >= 0
-                            || wanted.IndexOf(name, StringComparison.OrdinalIgnoreCase) >= 0 && name.Length > 0) {
-                        device = d;
-                    }
-                }
+            int processId = int.Parse(args[0]);
+            IAudioClient client;
+            try {
+                client = Activate(processId);
+                Check(client.Initialize(0, STREAM_FLAGS, 2000000, 0, WaveFormat(), IntPtr.Zero), "Initialize");
+            } catch (Exception e) {
+                throw new Exception(e.Message + ". Recording only this app's sound needs Windows 10 version 2004 or newer.");
             }
-            if (device == null) {
-                Check(enumerator.GetDefaultAudioEndpoint(RENDER, 0, out device), "GetDefaultAudioEndpoint");
-            }
-            Guid audioClientId = typeof(IAudioClient).GUID;
-            object o;
-            Check(device.Activate(ref audioClientId, CLSCTX_ALL, IntPtr.Zero, out o), "Activate");
-            var client = (IAudioClient) o;
-            IntPtr format;
-            Check(client.GetMixFormat(out format), "GetMixFormat");
-            short tag = Marshal.ReadInt16(format, 0);
-            int channels = Marshal.ReadInt16(format, 2);
-            int rate = Marshal.ReadInt32(format, 4);
-            int blockAlign = Marshal.ReadInt16(format, 12);
-            int bits = Marshal.ReadInt16(format, 14);
-            bool isFloat = tag == 3 || (tag == unchecked((short) 0xFFFE) && Marshal.ReadInt32(format, 24) == 3);
-            string sample = isFloat && bits == 32 ? "f32le" : bits == 16 ? "s16le" : bits == 32 ? "s32le" : "s24le";
-            Check(client.Initialize(0, LOOPBACK, 10000000, 0, format, IntPtr.Zero), "Initialize");
+            var ready = new AutoResetEvent(false);
+            Check(client.SetEventHandle(ready.SafeWaitHandle.DangerousGetHandle()), "SetEventHandle");
             Guid captureId = typeof(IAudioCaptureClient).GUID;
             object c;
             Check(client.GetService(ref captureId, out c), "GetService");
             var capture = (IAudioCaptureClient) c;
-            Console.Error.WriteLine("FORMAT " + sample + " " + rate + " " + channels + " " + FriendlyName(device));
+            Console.Error.WriteLine("FORMAT f32le " + RATE + " " + CHANNELS);
             Console.Error.Flush();
 
             Stream output = Console.OpenStandardOutput();
-            byte[] buffer = new byte[blockAlign * rate]; // one second at most per write
+            byte[] buffer = new byte[BLOCK_ALIGN * RATE]; // one second at most per write
             Check(client.Start(), "Start");
             var clock = Stopwatch.StartNew();
-            // the time each packet was captured (100 ns units, the same clock WASAPI stamps packets with)
-            long origin = (long) (Stopwatch.GetTimestamp() * (10000000.0 / Stopwatch.Frequency));
             long written = 0;
             while (true) {
+                ready.WaitOne(10);
                 uint packet;
                 Check(capture.GetNextPacketSize(out packet), "GetNextPacketSize");
                 bool any = false;
@@ -140,15 +145,14 @@ static class Loopback {
                     IntPtr data; uint frames, flags; ulong devicePosition, qpc;
                     Check(capture.GetBuffer(out data, out frames, out flags, out devicePosition, out qpc), "GetBuffer");
                     // silence first for the quiet time before this packet, so every sound stays at its own time
-                    // (also when the reader was slow for a moment)
-                    long at = ((long) qpc - origin) * rate / 10000000;
-                    while (at - written > rate / 50) {
-                        int gap = (int) Math.Min(at - written, rate);
-                        Array.Clear(buffer, 0, gap * blockAlign);
-                        output.Write(buffer, 0, gap * blockAlign);
+                    long at = clock.ElapsedMilliseconds * RATE / 1000 - frames;
+                    while (at - written > RATE / 50) {
+                        int gap = (int) Math.Min(at - written, RATE);
+                        Array.Clear(buffer, 0, gap * BLOCK_ALIGN);
+                        output.Write(buffer, 0, gap * BLOCK_ALIGN);
                         written += gap;
                     }
-                    int bytes = (int) Math.Min(frames * (uint) blockAlign, (uint) buffer.Length);
+                    int bytes = (int) Math.Min(frames * (uint) BLOCK_ALIGN, (uint) buffer.Length);
                     if ((flags & SILENT) != 0) Array.Clear(buffer, 0, bytes);
                     else Marshal.Copy(data, buffer, 0, bytes);
                     output.Write(buffer, 0, bytes);
@@ -158,15 +162,14 @@ static class Loopback {
                     any = true;
                 }
                 // nothing is playing (Windows sends no packets): keep the stream on time with silence
-                long due = clock.ElapsedMilliseconds * rate / 1000;
-                if (!any && due - written > rate / 20) {
-                    int frames = (int) Math.Min(due - written, rate);
-                    Array.Clear(buffer, 0, frames * blockAlign);
-                    output.Write(buffer, 0, frames * blockAlign);
+                long due = clock.ElapsedMilliseconds * RATE / 1000;
+                if (!any && due - written > RATE / 20) {
+                    int frames = (int) Math.Min(due - written, RATE);
+                    Array.Clear(buffer, 0, frames * BLOCK_ALIGN);
+                    output.Write(buffer, 0, frames * BLOCK_ALIGN);
                     written += frames;
                 }
                 if (any) output.Flush();
-                Thread.Sleep(10);
             }
         } catch (IOException) {
             return 0; // the reader closed the pipe: recording / streaming ended

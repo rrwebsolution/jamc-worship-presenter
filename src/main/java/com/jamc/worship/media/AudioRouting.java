@@ -67,6 +67,7 @@ public final class AudioRouting {
     private final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private volatile List<Device> devices = List.of(Device.DEFAULT);
     private boolean previewMonitor;
+    private boolean programOnly;
 
     public AudioRouting(AppConfig config) {
         this.config = config;
@@ -182,7 +183,23 @@ public final class AudioRouting {
 
     /** True while the operator listens to Preview's videos on the monitor device. Off at every start. */
     public boolean previewMonitor() {
-        return previewMonitor;
+        return previewMonitor && !programOnly;
+    }
+
+    /**
+     * A recording or the livestream is taking this app's sound. Windows captures the whole app, whatever device
+     * each player uses, so sound meant only for the operator (Preview monitor, monitor-only sources, the Library's
+     * inspection player) stays silent meanwhile: only Program's sound is recorded. The monitor switch comes back after.
+     */
+    public boolean programOnly() {
+        return programOnly;
+    }
+
+    public void setProgramOnly(boolean on) {
+        if (on != programOnly) {
+            programOnly = on;
+            fire();
+        }
     }
 
     public void setPreviewMonitor(boolean on) {

@@ -29,6 +29,11 @@ public class OutputCanvas extends JComponent {
     private final Compositor compositor;
     private final boolean keyMode;
     private final Runnable repaint = this::repaint;
+    private final Runnable frameArrived = this::frameArrived;
+    private long lastFrameRepaint;
+    /** While recording or streaming the recorder needs the Swing thread first, so the small operator monitors repaint less. */
+    private static volatile boolean recording;
+    private static final long MONITOR_GAP_WHILE_RECORDING_NANOS = 66_000_000; // about 15 fps
     private final Runnable imagesChanged;
     private final Timer clock = new Timer(1000, e -> repaint());
     private BufferedImage fromBuffer;
@@ -64,11 +69,29 @@ public class OutputCanvas extends JComponent {
         return program;
     }
 
+    public static void setRecording(boolean on) {
+        recording = on;
+    }
+
+    /** True for a small monitor only the operator sees; the projector and the OBS window always get every frame. */
+    protected boolean operatorMonitor() {
+        return false;
+    }
+
+    private void frameArrived() {
+        long now = System.nanoTime();
+        if (recording && operatorMonitor() && now - lastFrameRepaint < MONITOR_GAP_WHILE_RECORDING_NANOS) {
+            return;
+        }
+        lastFrameRepaint = now;
+        repaint();
+    }
+
     @Override
     public void addNotify() {
         super.addNotify();
         program.addListener(repaint);
-        MediaFrames.addListener(repaint);
+        MediaFrames.addListener(frameArrived);
         Rendering.globalBackground().addListener(repaint);
         Rendering.renderer().images().addChangeListener(imagesChanged);
         clock.start();
@@ -77,7 +100,7 @@ public class OutputCanvas extends JComponent {
     @Override
     public void removeNotify() {
         program.removeListener(repaint);
-        MediaFrames.removeListener(repaint);
+        MediaFrames.removeListener(frameArrived);
         Rendering.globalBackground().removeListener(repaint);
         Rendering.renderer().images().removeChangeListener(imagesChanged);
         clock.stop();

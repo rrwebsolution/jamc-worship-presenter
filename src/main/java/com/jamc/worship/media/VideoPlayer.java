@@ -12,10 +12,12 @@ import uk.co.caprica.vlcj.player.embedded.videosurface.callback.RenderCallback;
 import uk.co.caprica.vlcj.player.embedded.videosurface.callback.format.RV32BufferFormat;
 
 import javax.swing.SwingUtilities;
+import java.awt.Dimension;
 import java.awt.image.BufferedImage;
 import java.awt.image.DataBufferInt;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.IntBuffer;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -36,6 +38,11 @@ public final class VideoPlayer implements VideoPlayback {
     private volatile BufferedImage front;
     private BufferedImage back;
     private int[] backPixels;
+    /** VLC's buffer can be taller than the picture: a 1920x1080 video may arrive as 1920x1090, with padding below. */
+    private int bufferWidth;
+    private int bufferHeight;
+    /** The real picture inside the buffer; null until VLC has told it. */
+    private volatile Dimension visible;
     private volatile String mrl;
     private volatile boolean loop;
     private volatile boolean released;
@@ -130,6 +137,21 @@ public final class VideoPlayer implements VideoPlayback {
 
     public BufferedImage currentFrame() {
         return front;
+    }
+
+    /**
+     * The picture to keep from a VLC buffer. Without the padding, a frame the size of the output is copied in
+     * under a millisecond; with it, every frame is resampled (over 60 ms for 1080p) and slightly squeezed.
+     * Null while VLC does not know the size yet; the whole buffer when {@code video} is not simply a smaller
+     * picture in it (e.g. a rotated video).
+     */
+    static Dimension visibleSize(Dimension video, int bufferWidth, int bufferHeight) {
+        if (video == null || video.width <= 0 || video.height <= 0) {
+            return null;
+        }
+        boolean padded = video.width <= bufferWidth && video.height <= bufferHeight
+                && video.width >= bufferWidth * 0.8 && video.height >= bufferHeight * 0.8;
+        return padded ? new Dimension(video) : new Dimension(bufferWidth, bufferHeight);
     }
 
     public boolean hasError() {
@@ -375,6 +397,9 @@ public final class VideoPlayer implements VideoPlayback {
             int w = Math.max(2, sourceWidth);
             int h = Math.max(2, sourceHeight);
             synchronized (VideoPlayer.this) {
+                bufferWidth = w;
+                bufferHeight = h;
+                visible = null;
                 back = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
                 backPixels = ((DataBufferInt) back.getRaster().getDataBuffer()).getData();
             }
@@ -394,9 +419,36 @@ public final class VideoPlayer implements VideoPlayback {
                 if (back == null || nativeBuffers.length == 0) {
                     return;
                 }
+                Dimension picture = visible;
+                if (picture == null) {
+                    if (frameCount % 15 == 0) { // never call back into libVLC on its own thread
+                        int bw = bufferWidth;
+                        int bh = bufferHeight;
+                        mediaPlayer.submit(() -> {
+                            Dimension size = visibleSize(mediaPlayer.video().videoDimension(), bw, bh);
+                            synchronized (VideoPlayer.this) {
+                                if (bw == bufferWidth && bh == bufferHeight) {
+                                    visible = size;
+                                }
+                            }
+                        });
+                    }
+                    picture = new Dimension(bufferWidth, bufferHeight);
+                }
+                if (back.getWidth() != picture.width || back.getHeight() != picture.height) {
+                    back = new BufferedImage(picture.width, picture.height, BufferedImage.TYPE_INT_RGB);
+                    backPixels = ((DataBufferInt) back.getRaster().getDataBuffer()).getData();
+                }
                 // RV32 is BGRA in memory; read as little-endian ints it is 0xAARRGGBB, which TYPE_INT_RGB expects.
-                nativeBuffers[0].order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().get(backPixels, 0,
-                        Math.min(backPixels.length, nativeBuffers[0].capacity() / 4));
+                IntBuffer pixels = nativeBuffers[0].order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+                if (picture.width == bufferWidth) {
+                    pixels.get(backPixels, 0, Math.min(backPixels.length, pixels.remaining()));
+                } else {
+                    for (int y = 0; y < picture.height; y++) {
+                        pixels.position(y * bufferWidth);
+                        pixels.get(backPixels, y * picture.width, picture.width);
+                    }
+                }
                 BufferedImage done = back;
                 BufferedImage previous = front;
                 front = done;

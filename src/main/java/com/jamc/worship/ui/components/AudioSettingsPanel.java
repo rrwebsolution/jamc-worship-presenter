@@ -150,8 +150,7 @@ public class AudioSettingsPanel extends JPanel {
         streamMedia.setText("<html>" + (included
                 ? "✓ Program media audio is included in the livestream and recordings (MEDIA input: \"" + s.mediaDevice() + "\")."
                 : "<font color='#F59E0B'>Program media audio is not in the livestream / recordings yet.</font> On the Stream page, "
-                + "choose a loopback as the MEDIA input: \"Stereo Mix\", or VB-Cable's \"CABLE Output\" with the Program output above set "
-                + "to \"CABLE Input\".") + "</html>");
+                + "choose \"" + StreamSettings.APP_AUDIO + "\" as the MEDIA input.") + "</html>");
         if (Objects.equals(program.getSelectedItem(), monitor.getSelectedItem()) && !routing.programDevice().isEmpty()) {
             monitorWarning.setText("Monitor and Program use the same device: monitoring will be heard in the church.");
         }

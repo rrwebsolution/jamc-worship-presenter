@@ -56,7 +56,7 @@ public class TopBar extends JPanel {
     }
 
     private final Map<Page, JToggleButton> navButtons = new EnumMap<>(Page.class);
-    /** The application name from Settings → Branding (never a fixed "JAMC Worship Presenter"). */
+    /** The application name from Settings → Branding (never a fixed name). */
     private final JLabel appName = Ui.label("", Palette::text, "h4");
     private final JComponent logo;
     private final StatusPill outputPill = new StatusPill("OUTPUT OFF", Palette::mutedText, false);
@@ -75,7 +75,7 @@ public class TopBar extends JPanel {
                 BorderFactory.createEmptyBorder(6, 12, 6, 12)));
 
         JPanel brand = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        // the JAMC logo goes back to the Control page
+        // the logo goes back to the Control page
         LogoBadge home = new LogoBadge();
         home.setToolTipText("Control");
         home.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
@@ -286,7 +286,7 @@ public class TopBar extends JPanel {
         }
     }
 
-    /** The branding logo (Settings → Branding); by default a rounded accent square with the JAMC initial. */
+    /** The branding logo (Settings → Branding); by default the LiveCat icon. */
     private static final class LogoBadge extends JComponent {
         LogoBadge() {
             setPreferredSize(new Dimension(32, 32));
@@ -295,26 +295,13 @@ public class TopBar extends JPanel {
         @Override
         protected void paintComponent(Graphics g) {
             var branding = com.jamc.worship.ui.BrandingManager.get();
-            if (branding != null && branding.customLogo() != null) {
-                // drawn at the screen's real pixel size so the logo stays sharp on scaled displays
-                Graphics2D g2 = (Graphics2D) g.create();
-                double scale = g2.getTransform().getScaleX();
-                int px = (int) Math.ceil(Math.min(getWidth(), getHeight()) * scale);
-                g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
-                g2.drawImage(branding.icon(px), 0, 0, getWidth(), getHeight(), null);
-                g2.dispose();
-                return;
-            }
+            // drawn at the screen's real pixel size so the logo stays sharp on scaled displays
             Graphics2D g2 = (Graphics2D) g.create();
-            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g2.setPaint(new java.awt.GradientPaint(0, 0, new Color(0x2B86FF), getWidth(), getHeight(), new Color(0x0F4FC2)));
-            g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
-            g2.setColor(Color.WHITE);
-            g2.setFont(getFont().deriveFont(Font.BOLD, 17f));
-            FontMetrics fm = g2.getFontMetrics();
-            String s = "J";
-            g2.drawString(s, (getWidth() - fm.stringWidth(s)) / 2, (getHeight() - fm.getHeight()) / 2 + fm.getAscent());
+            double scale = g2.getTransform().getScaleX();
+            int px = (int) Math.ceil(Math.min(getWidth(), getHeight()) * scale);
+            g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g2.drawImage(branding != null ? branding.icon(px) : com.jamc.worship.ui.BrandingManager.defaultIcon(px),
+                    0, 0, getWidth(), getHeight(), null);
             g2.dispose();
         }
     }

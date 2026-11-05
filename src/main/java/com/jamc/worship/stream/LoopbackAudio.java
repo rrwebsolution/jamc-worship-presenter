@@ -18,9 +18,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
 /**
- * This app's own sound for recordings and the livestream: what plays on the Program output device (videos,
- * scene videos, music) captured with Windows loopback, like OBS "Desktop Audio". No "Stereo Mix" or
- * VB-Cable needed.
+ * This app's own sound for recordings and the livestream: only what this process and its children play
+ * (VLC runs inside it, YouTube's Chromium runs as its children), captured with Windows process loopback
+ * (Windows 10 version 2004 or newer). Other programs on the PC are never included, on any output device, and
+ * the capture never falls back to the whole device. No "Stereo Mix" or VB-Cable needed.
  *
  * <p>A small helper ({@code jamc-loopback.exe}, compiled once from {@code LoopbackCapture.cs} with the C#
  * compiler every Windows has) writes the sound as raw PCM; FFmpeg reads it from a local TCP port as one
@@ -30,16 +31,23 @@ public final class LoopbackAudio implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(LoopbackAudio.class);
     private static final String SOURCE = "/stream/LoopbackCapture.cs";
+    private static final int FRAME_BYTES = 8; // the helper's format: stereo 32-bit float
+    private static final int RATE = 48000;
+    /** Sound ahead of the real time by more than this is dropped: FFmpeg times this sound by counting it. */
+    private static final long AHEAD_MS = 40;
 
     /** How FFmpeg reads the sound: {@code -f <sample> -ar <rate> -ac <channels> -i <url>}. */
-    public record Input(String url, String sample, int rate, int channels, String device) {
+    public record Input(String url, String sample, int rate, int channels) {
     }
 
     private final Process process;
     private final ServerSocket server;
     private final Input input;
     private volatile OutputStream target;
+    private volatile long connectedNanos;
     private volatile boolean closed;
+    /** The scene's live sound inputs, added to this sound; set before FFmpeg connects. */
+    private volatile LiveInputs.Mixer inputs;
 
     private LoopbackAudio(Process process, ServerSocket server, Input input) {
         this.process = process;
@@ -52,14 +60,12 @@ public final class LoopbackAudio implements AutoCloseable {
     }
 
     /**
-     * Starts capturing the output device whose name contains {@code deviceName} (null / blank = the Windows
-     * default output). Blocking for a moment (compiles the helper the first time): call off the Swing thread.
+     * Starts capturing this app's sound. Blocking for a moment (compiles the helper the first time): call off
+     * the Swing thread.
      */
-    public static LoopbackAudio start(Path toolsDir, String deviceName) throws IOException {
+    public static LoopbackAudio start(Path toolsDir) throws IOException {
         Path exe = helper(toolsDir);
-        ProcessBuilder pb = deviceName == null || deviceName.isBlank()
-                ? new ProcessBuilder(exe.toString()) : new ProcessBuilder(exe.toString(), deviceName);
-        Process p = pb.start();
+        Process p = new ProcessBuilder(exe.toString(), String.valueOf(ProcessHandle.current().pid())).start();
         BufferedReader err = new BufferedReader(new InputStreamReader(p.getErrorStream(), StandardCharsets.UTF_8));
         CompletableFuture<String> first = CompletableFuture.supplyAsync(() -> {
             try {
@@ -80,10 +86,9 @@ public final class LoopbackAudio implements AutoCloseable {
             throw new IOException("The app sound could not be captured: " + (line == null ? "no answer"
                     : line.startsWith("ERROR ") ? line.substring(6) : line));
         }
-        String[] f = line.split(" ", 5); // FORMAT f32le 48000 2 Speakers (Realtek(R) Audio)
+        String[] f = line.split(" "); // FORMAT f32le 48000 2
         ServerSocket server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
-        Input input = new Input("tcp://127.0.0.1:" + server.getLocalPort(), f[1], Integer.parseInt(f[2]),
-                Integer.parseInt(f[3]), f.length > 4 ? f[4] : "");
+        Input input = new Input("tcp://127.0.0.1:" + server.getLocalPort(), f[1], Integer.parseInt(f[2]), Integer.parseInt(f[3]));
         LoopbackAudio a = new LoopbackAudio(p, server, input);
         Thread.ofPlatform().daemon().name("loopback-accept").start(a::acceptLoop);
         Thread.ofPlatform().daemon().name("loopback-pump").start(a::pumpLoop);
@@ -97,9 +102,12 @@ public final class LoopbackAudio implements AutoCloseable {
                 // ended
             }
         });
-        log.info("Capturing this app's sound from \"{}\" ({} {} Hz, {} ch)", input.device(), input.sample(),
-                input.rate(), input.channels());
+        log.info("Capturing only this app's sound ({} {} Hz, {} ch)", input.sample(), input.rate(), input.channels());
         return a;
+    }
+
+    void mixWith(LiveInputs.Mixer mixer) {
+        inputs = mixer;
     }
 
     /** FFmpeg connects once; the sound flows to it from then on. */
@@ -107,6 +115,7 @@ public final class LoopbackAudio implements AutoCloseable {
         try {
             Socket s = server.accept();
             s.setTcpNoDelay(true);
+            connectedNanos = System.nanoTime();
             target = s.getOutputStream();
         } catch (IOException e) {
             if (!closed) {
@@ -118,13 +127,33 @@ public final class LoopbackAudio implements AutoCloseable {
     /** Reads the helper all the time (so it never blocks); sends to FFmpeg once it is connected. */
     private void pumpLoop() {
         byte[] buf = new byte[16384];
+        int kept = 0;
+        long sent = 0;
+        long droppedFrames = 0;
         try (InputStream in = process.getInputStream()) {
             int n;
-            while ((n = in.read(buf)) > 0) {
+            while ((n = in.read(buf, kept, buf.length - kept)) > 0) {
+                int total = kept + n;
+                int whole = total - total % FRAME_BYTES; // only whole sample frames can be mixed
                 OutputStream out = target;
                 if (out != null) {
-                    out.write(buf, 0, n);
+                    int frames = whole / FRAME_BYTES;
+                    long due = (System.nanoTime() - connectedNanos) / 1_000 * RATE / 1_000_000;
+                    if (keepsTime(sent, frames, due)) {
+                        silenceInvalid(buf, whole);
+                        LiveInputs.Mixer mixer = inputs;
+                        if (mixer != null) {
+                            mixer.mix(buf, frames);
+                        }
+                        out.write(buf, 0, whole);
+                        sent += frames;
+                    } else if (droppedFrames == 0) {
+                        droppedFrames = frames;
+                        log.info("App sound ran ahead of the clock; dropping the excess so it stays in time with the picture");
+                    }
                 }
+                kept = total - whole;
+                System.arraycopy(buf, whole, buf, 0, kept);
             }
         } catch (IOException e) {
             if (!closed) {
@@ -135,12 +164,38 @@ public final class LoopbackAudio implements AutoCloseable {
         }
     }
 
+    /**
+     * False when these frames would put the sound too far ahead of the real time. The helper fills quiet moments with
+     * silence and then also delivers what Windows had kept back, so without this the sound stays late for the whole
+     * recording or stream (measured: 142 ms in one run, 11 ms in the next).
+     */
+    static boolean keepsTime(long sent, long frames, long due) {
+        return sent + frames - due <= RATE * AHEAD_MS / 1000;
+    }
+
+    /**
+     * Makes invalid samples (NaN, infinity) silent. One of them from a player makes FFmpeg's sound encoder fail, and that
+     * ended a live stream.
+     */
+    static void silenceInvalid(byte[] buf, int length) {
+        java.nio.ByteBuffer samples = java.nio.ByteBuffer.wrap(buf).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i + Float.BYTES <= length; i += Float.BYTES) {
+            if (!Float.isFinite(samples.getFloat(i))) {
+                samples.putFloat(i, 0f);
+            }
+        }
+    }
+
     @Override
     public void close() {
         if (closed) {
             return;
         }
         closed = true;
+        LiveInputs.Mixer mixer = inputs;
+        if (mixer != null) {
+            mixer.close();
+        }
         process.destroy();
         try {
             server.close();

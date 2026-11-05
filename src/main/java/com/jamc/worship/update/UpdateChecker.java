@@ -47,7 +47,7 @@ public final class UpdateChecker {
     /** The latest published release with an .exe installer; empty when there is none. */
     public Optional<Release> latest() throws IOException, InterruptedException {
         HttpRequest req = HttpRequest.newBuilder(URI.create(RELEASES_API)).timeout(Duration.ofSeconds(10))
-                .header("Accept", "application/vnd.github+json").header("User-Agent", "JAMC-Worship-Presenter").GET().build();
+                .header("Accept", "application/vnd.github+json").header("User-Agent", "LiveCat-Multimedia").GET().build();
         HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
         if (res.statusCode() == 404) {
             return Optional.empty();
@@ -103,7 +103,7 @@ public final class UpdateChecker {
         Path part = dir.resolve(release.installerName() + ".part");
         Path done = dir.resolve(release.installerName());
         HttpRequest req = HttpRequest.newBuilder(URI.create(release.installerUrl()))
-                .header("User-Agent", "JAMC-Worship-Presenter").GET().build();
+                .header("User-Agent", "LiveCat-Multimedia").GET().build();
         HttpResponse<InputStream> res = http.send(req, HttpResponse.BodyHandlers.ofInputStream());
         if (res.statusCode() != 200) {
             throw new IOException("The download failed (" + res.statusCode() + ").");

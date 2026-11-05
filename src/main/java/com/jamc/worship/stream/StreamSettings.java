@@ -38,8 +38,8 @@ public record StreamSettings(
         boolean mediaMuted) {
 
     /**
-     * MEDIA input that is not a DirectShow device: what this app plays on its Program output (videos, scene
-     * videos, music), captured with Windows loopback. No "Stereo Mix" or VB-Cable needed. The default.
+     * MEDIA input that is not a DirectShow device: only what this app plays (videos, scene videos, music),
+     * never other programs on the PC. No "Stereo Mix" or VB-Cable needed. The default.
      */
     public static final String APP_AUDIO = "This app (Program sound)";
 

@@ -26,6 +26,8 @@ public class SourceConfig {
     public String fontFamily;
     /** Camera device name (CAMERA). */
     public String camera;
+    /** AUDIO_INPUT: the connected sound input it plays (a microphone, capture audio, a mixer). */
+    public String audioInput;
     public Double opacity;
     /** LYRICS / BIBLE: where the text sits (e.g. BOTTOM over a camera), overriding the theme; null = theme. */
     public TextPosition textPosition;
@@ -138,6 +140,7 @@ public class SourceConfig {
         c.fontSize = fontSize;
         c.fontFamily = fontFamily;
         c.camera = camera;
+        c.audioInput = audioInput;
         c.opacity = opacity;
         c.textPosition = textPosition;
         c.textScale = textScale;

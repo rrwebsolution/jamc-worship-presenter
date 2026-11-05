@@ -67,7 +67,7 @@ public final class AppConfig {
         try {
             Files.createDirectories(file.getParent());
             try (OutputStream out = Files.newOutputStream(tmp)) {
-                props.store(out, "JAMC Worship Presenter settings");
+                props.store(out, "LiveCat Multimedia settings");
             }
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {

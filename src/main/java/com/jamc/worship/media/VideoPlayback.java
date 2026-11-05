@@ -48,7 +48,9 @@ public interface VideoPlayback extends Transport {
 
     /** A new player for this path: YouTube or VLC. Throws if the needed engine cannot start. */
     static VideoPlayback create(String path) {
-        return YouTubeRef.is(path) ? new YouTubePlayer() : new VideoPlayer();
+        // 1080p like Program's own YouTube player: a 720p picture is enlarged pixel by pixel on the Swing thread (about
+        // 100 ms a frame), which left recordings and the stream about 8 pictures a second and out of time with the sound
+        return YouTubeRef.is(path) ? new YouTubePlayer(1920, 1080) : new VideoPlayer();
     }
 
     /** Whether a player for this path can run now (VLC loaded / YouTube player component installable). */

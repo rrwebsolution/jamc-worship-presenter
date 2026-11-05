@@ -23,7 +23,7 @@ class UpdateCheckerTest {
         String json = """
                 {"tag_name":"v0.1.2","assets":[
                   {"name":"notes.txt","browser_download_url":"https://x/notes.txt","size":10},
-                  {"name":"JAMC-Worship-Presenter-0.1.2.exe","browser_download_url":"https://x/setup.exe","size":107443200}]}
+                  {"name":"LiveCat-Multimedia-0.1.2.exe","browser_download_url":"https://x/setup.exe","size":107443200}]}
                 """;
         UpdateChecker.Release r = UpdateChecker.parse(json).orElseThrow();
         assertEquals("0.1.2", r.version());

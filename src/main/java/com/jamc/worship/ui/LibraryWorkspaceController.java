@@ -12,8 +12,8 @@ import java.util.function.Consumer;
 /**
  * The dynamic Library workspace under the library list and the Preview / Program monitors. Exactly
  * one workspace is visible, and it always belongs to the selected Library category: Songs, Bible and
- * Presentations show their slide cards; Images, Videos, Audio and Backgrounds the MEDIA PREVIEW
- * monitor; Camera the camera preview and controls. Switching replaces the whole view (CardLayout);
+ * Presentations show their slide cards; Images, Videos (with its Backgrounds tab) and Audio the
+ * MEDIA PREVIEW monitor; Camera the camera preview and controls. Switching replaces the whole view (CardLayout);
  * the hidden workspaces stay alive and keep their selection for a fast return. The output monitors,
  * scenes, background and stream are outside this container and are never touched.
  */
@@ -46,7 +46,7 @@ public final class LibraryWorkspaceController {
     public static Workspace workspaceFor(Sidebar.Category c) {
         return switch (c) {
             case SONGS, FAVORITES, BIBLE, PRESENTATIONS, SLIDES -> Workspace.SLIDES;
-            case IMAGES, VIDEOS, AUDIO, BACKGROUNDS, MEDIA -> Workspace.MEDIA;
+            case IMAGES, VIDEOS, AUDIO, MEDIA -> Workspace.MEDIA;
             case CAMERA -> Workspace.CAMERA;
             case THEMES -> Workspace.THEME;
             case LOWER_THIRDS -> Workspace.LOWER_THIRD;

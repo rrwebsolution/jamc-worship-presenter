@@ -284,7 +284,7 @@ public final class Compositor {
                     g.fillRect(rect.x, rect.y, rect.width, rect.height);
                 }
             }
-            case AUDIO -> {
+            case AUDIO, AUDIO_INPUT -> {
                 // sound only: nothing on the outputs; a small label in the scene editor
                 if (editorMode) {
                     SourceConfig label = new SourceConfig();

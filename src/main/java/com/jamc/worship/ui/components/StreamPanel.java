@@ -148,9 +148,10 @@ public class StreamPanel extends JPanel {
                         mixerRow("MEDIA (videos, music)", mediaIn, mediaVolume, mediaMute),
                         mixerRow("MASTER", null, masterVolume, masterMute),
                         flow(muteMicsForMedia, micsMutedNow),
-                        Ui.label("<html>MEDIA: \"This app (Program sound)\" records the videos, scene videos and music this app plays, "
-                                + "straight from the Program output device (Settings → Audio), with no extra software. Other sounds "
-                                + "playing on that device are recorded too. Never choose the same device twice: that doubles the sound.</html>", Palette::mutedText, "small"))), c);
+                        Ui.label("<html>MEDIA: \"This app (Program sound)\" records only the videos, scene videos and music on Program, "
+                                + "with no extra software. Other programs on this PC (a browser, YouTube, Windows sounds) are not recorded. "
+                                + "PREVIEW AUDIO and the Library preview stay silent while recording or streaming. Microphones still hear "
+                                + "the room, including anything playing on the speakers.</html>", Palette::mutedText, "small"))), c);
         c.gridy++;
 
         recordButton.putClientProperty(FlatClientProperties.STYLE, "font: bold +1; margin: 8,16,8,16");
@@ -449,8 +450,8 @@ public class StreamPanel extends JPanel {
         int answer = JOptionPane.showOptionDialog(this, new Object[]{
                         "No sound input is chosen in the Audio Mixer, so the recording would have no sound.",
                         "Record with this microphone:", pick,
-                        Ui.label("<html>Sound of videos and music played in this app needs a loopback input (\"Stereo Mix\" "
-                                + "or VB-Cable) as MEDIA in the Audio Mixer.</html>", Palette::mutedText, "small")},
+                        Ui.label("<html>For the sound of videos and music on Program, choose \"" + StreamSettings.APP_AUDIO
+                                + "\" as MEDIA in the Audio Mixer.</html>", Palette::mutedText, "small")},
                 "Recording sound", JOptionPane.DEFAULT_OPTION, JOptionPane.WARNING_MESSAGE, null, options, options[0]);
         if (answer == 0) {
             mic.setSelectedItem(pick.getSelectedItem());

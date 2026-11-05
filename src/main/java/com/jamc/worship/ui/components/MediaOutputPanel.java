@@ -93,6 +93,7 @@ public class MediaOutputPanel extends JPanel {
         super(new BorderLayout());
         this.media = media;
         this.hub = hub;
+        hub.routing().addListener(this::applyProgramOnly);
         this.background = background;
         this.backgroundControls = backgroundControls;
         setOpaque(false);
@@ -251,7 +252,7 @@ public class MediaOutputPanel extends JPanel {
                     // this video's loop from last time; it opens with its own sound (100 %, unmuted)
                     var state = states == null ? null : states.get(stateKey(m), new com.jamc.worship.media.MediaStates.State(false, 100, false));
                     previewPlayer.setVolume(100);
-                    previewPlayer.setMuted(false);
+                    previewPlayer.setMuted(hub.routing().programOnly());
                     previewPlayer.cue(file.toString(), state != null && state.loop());
                 } catch (RuntimeException e) {
                     Dialogs.showError(this, "The video could not be opened.", e);
@@ -313,7 +314,7 @@ public class MediaOutputPanel extends JPanel {
             }
             var state = states == null ? null : states.get(stateKey(m), new com.jamc.worship.media.MediaStates.State(false, 100, false));
             youtubePlayer.setVolume(100); // its own sound: 100 %, unmuted
-            youtubePlayer.setMuted(false);
+            youtubePlayer.setMuted(hub.routing().programOnly());
             youtubePlayer.cue(m.getPath(), state != null && state.loop());
         }
         transport.bind(states == null ? youtubePlayer : states.remember(youtubePlayer, stateKey(m)));
@@ -354,6 +355,23 @@ public class MediaOutputPanel extends JPanel {
     }
 
     /** Stops the inspection player (e.g. when leaving the media libraries). The global background is not affected. */
+    /** A recording or the livestream started or ended: this inspection player is silent during it, so it is not recorded. */
+    private void applyProgramOnly() {
+        boolean only = hub.routing().programOnly();
+        if (only == inspectionSilenced) {
+            return;
+        }
+        inspectionSilenced = only;
+        if (previewPlayer != null) {
+            previewPlayer.setMuted(only);
+        }
+        if (youtubePlayer != null) {
+            youtubePlayer.setMuted(only);
+        }
+    }
+
+    private boolean inspectionSilenced;
+
     public void stopPreview() {
         if (previewPlayer != null) {
             previewPlayer.stop();

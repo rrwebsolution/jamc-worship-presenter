@@ -132,6 +132,8 @@ public class ScenesPanel extends JPanel {
     private final JCheckBox videoBox = new JCheckBox("Video");
     private final JCheckBox audioBox = new JCheckBox("Audio");
     private final JComboBox<String> audioOut = new JComboBox<>(new String[]{"Program output (follows Program audio)", "Preview monitor only"});
+    private final JComboBox<String> audioInputCombo = new JComboBox<>();
+    private final JCheckBox audioListen = new JCheckBox("Listen on the monitor device (not recorded)");
     private final JSlider srcVolume = new JSlider(0, 150, 100);
     private final JLabel srcVolumeLabel = Ui.small("100%");
     private final JToggleButton srcMute = Ui.muteToggle("this source (the picture stays)");
@@ -743,6 +745,7 @@ public class ScenesPanel extends JPanel {
         menu.add(menuItem("Audio…", "audio", () -> addMediaFromLibrary(MediaKind.AUDIO)));
         menu.add(menuItem("Media", "layers", () -> addSource(SourceType.BACKGROUND)));
         menu.add(menuItem("Camera…", "video", this::addCameraSource));
+        menu.add(menuItem("Audio Input…", "audio", this::addAudioInput));
         section(menu, "FROM SERVICE");
         JMenuItem service = menuItem("Service Item…", "list", this::addFromService);
         List<com.jamc.worship.model.ServiceItem> items = serviceItems.get();
@@ -961,6 +964,31 @@ public class ScenesPanel extends JPanel {
         s.getConfig().fixedSong = Boolean.TRUE;
         insertSource(s);
         statusHandler.accept("Lyrics source for \"" + song.getTitle() + "\" only: other songs never show in it.");
+    }
+
+    /** Audio Input: live sound from any connected input (a microphone, a camera's audio, the audio tech's mixer). */
+    private void addAudioInput() {
+        if (editing == null) {
+            return;
+        }
+        BackgroundTask.run("Find audio inputs", cameras::detect, found -> { // just plugged in: it is listed too
+            List<String> inputs = cameras.audioInputs();
+            String input = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<String>(
+                    "Select Audio Input", "Search audio inputs…", "audio",
+                    "No audio input detected.<br>Connect a microphone, camera or mixer, then try again.",
+                    text -> inputs.stream().filter(d -> d.toLowerCase().contains(text.strip().toLowerCase())).toList(),
+                    d -> d, d -> "Sound input", d -> null));
+            if (input == null) {
+                return;
+            }
+            Source s = new Source(input, SourceType.AUDIO_INPUT);
+            s.getConfig().audioInput = input;
+            s.getConfig().x = 0.02;
+            s.getConfig().y = 0.02;
+            s.getConfig().w = 0.3;
+            s.getConfig().h = 0.08; // only a label in the editor; nothing is drawn on the outputs
+            insertSource(s);
+        }, e -> statusHandler.accept("Could not look for audio inputs: " + e.getMessage()));
     }
 
     /** Camera: pick one of the connected devices. */
@@ -1271,6 +1299,8 @@ public class ScenesPanel extends JPanel {
             b.addActionListener(e -> apply.run());
         }
         audioOut.addActionListener(e -> apply.run());
+        audioInputCombo.addActionListener(e -> apply.run());
+        audioListen.addActionListener(e -> apply.run());
         for (var b : List.of(slideAuto, slideShuffle, slideLoop)) {
             b.addActionListener(e -> apply.run());
         }
@@ -1640,6 +1670,9 @@ public class ScenesPanel extends JPanel {
             if (t == SourceType.CAMERA) {
                 loadCameraProps(g, s);
             }
+            if (t == SourceType.AUDIO_INPUT) {
+                loadAudioInputProps(g, c);
+            }
             if (t == SourceType.TEXT || t == SourceType.CLOCK) {
                 textField.setText(c.text == null ? "" : c.text);
                 textField.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, t == SourceType.CLOCK ? "h:mm a" : "Text");
@@ -1753,6 +1786,34 @@ public class ScenesPanel extends JPanel {
         b.getAccessibleContext().setAccessibleName(tip);
         b.addActionListener(e -> slideshowControl(s, control));
         return b;
+    }
+
+    /** AUDIO INPUT: which connected input, where it is heard and how loud. */
+    private void loadAudioInputProps(GridBagConstraints g, SourceConfig c) {
+        audioInputCombo.removeAllItems();
+        List<String> inputs = new ArrayList<>(cameras.audioInputs());
+        if (c.audioInput != null && !inputs.contains(c.audioInput)) {
+            inputs.add(c.audioInput); // an input that is unplugged now stays chosen
+        }
+        inputs.forEach(audioInputCombo::addItem);
+        audioInputCombo.setSelectedItem(c.audioInput);
+        row(g, "Input", audioInputCombo);
+        audioListen.setSelected(Boolean.TRUE.equals(c.monitorOnly));
+        audioListen.setToolTipText("For checking on headphones. Off: it goes only into the recording and the stream.");
+        row(g, "", audioListen);
+        srcVolume.setValue(c.volume == null ? 100 : c.volume);
+        srcVolumeLabel.setText(srcVolume.getValue() + "%");
+        srcMute.setSelected(Boolean.TRUE.equals(c.muted));
+        srcVolume.setEnabled(true);
+        srcMute.setEnabled(true);
+        JPanel vol = Ui.transparent(new BorderLayout(4, 0));
+        vol.add(srcMute, BorderLayout.WEST);
+        vol.add(srcVolume, BorderLayout.CENTER);
+        vol.add(srcVolumeLabel, BorderLayout.EAST);
+        row(g, "Volume", vol);
+        row(g, "", Ui.label("<html><body style='width:190px'>Goes into the recording and the stream with this scene, not "
+                + "the speakers, so it does not echo. The wave in the MIXER shows sound is coming in.</html>",
+                Palette::mutedText, "small"));
     }
 
     /** VIDEO SOURCE: picture and sound, playback on Program, and whether the file has sound at all. */
@@ -1978,6 +2039,15 @@ public class ScenesPanel extends JPanel {
         if (t == SourceType.CAMERA) {
             applyCameraProps(c);
         }
+        if (t == SourceType.AUDIO_INPUT) {
+            String input = (String) audioInputCombo.getSelectedItem();
+            if (input != null) {
+                c.audioInput = input;
+            }
+            c.monitorOnly = audioListen.isSelected() ? Boolean.TRUE : null;
+            c.volume = srcVolume.getValue() == 100 ? null : srcVolume.getValue();
+            c.muted = srcMute.isSelected() ? Boolean.TRUE : null;
+        }
         if (t == SourceType.TEXT || t == SourceType.CLOCK) {
             c.text = textField.getText().isBlank() ? null : textField.getText();
             c.color = colorButton.getHex();
@@ -2089,8 +2159,8 @@ public class ScenesPanel extends JPanel {
         String input = cameras.audioDevice(c.camera);
         audioBox.setSelected(Boolean.TRUE.equals(c.audioEnabled));
         audioBox.setEnabled(input != null || Boolean.TRUE.equals(c.audioEnabled));
-        audioBox.setToolTipText("Play this camera's own microphone / HDMI sound on Program. Off by default: the church "
-                + "mixer is the main sound, and several camera mics together cause echo and feedback.");
+        audioBox.setToolTipText("Add this camera's own microphone / HDMI sound to the recording and the stream (not the "
+                + "speakers). Off by default: the church mixer is the main sound, and several camera mics together cause echo.");
         row(g, "Audio", audioBox);
         row(g, "", Ui.label("<html><body style='width:190px'>" + (input == null
                 ? "No audio input found for this camera." : "Input: " + input) + "</html>", Palette::mutedText, "small"));

@@ -779,9 +779,11 @@ public final class CameraManager {
         }
         try {
             // cameras: Camera class, or usbvideo Image devices (not printers / scanners). Audio capture inputs are
-            // the AudioEndpoint devices whose id has {0.0.1.} (capture; {0.0.0.} is playback).
+            // the AudioEndpoint devices whose id has {0.0.1.} (capture; {0.0.0.} is playback). UTF-8 output keeps a name
+            // exact ("Intel®" came back "Intelr", and that input could then not be opened).
             Process p = new ProcessBuilder("powershell.exe", "-NoProfile", "-NonInteractive", "-Command",
-                    "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { "
+                    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
+                            + "Get-CimInstance Win32_PnPEntity | Where-Object { $_.Status -eq 'OK' } | ForEach-Object { "
                             + "if ($_.PNPClass -eq 'Camera' -or ($_.PNPClass -eq 'Image' -and $_.Service -eq 'usbvideo')) "
                             + "{ 'V|' + $_.Name } elseif ($_.PNPClass -eq 'AudioEndpoint' -and $_.DeviceID -like '*{0.0.1.*') "
                             + "{ 'A|' + $_.Name } }")

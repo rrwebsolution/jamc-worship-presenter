@@ -42,7 +42,7 @@ public final class LyricsProviders {
                 new LocalLibraryProvider(songs),
                 new LyricsFolderProvider(() -> config.get(LyricsFolderProvider.KEY_FOLDER, null)),
                 new LrcLibProvider(() -> config.getBoolean(LrcLibProvider.KEY_ENABLED, false),
-                        "JAMC Worship Presenter (church presentation software)")));
+                        "LiveCat Multimedia (church presentation software)")));
     }
 
     public List<LyricsProvider> all() {

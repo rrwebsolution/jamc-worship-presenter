@@ -103,7 +103,7 @@ public final class SecretStore {
             Files.createDirectories(file.getParent());
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
             try (OutputStream out = Files.newOutputStream(tmp)) {
-                p.store(out, "JAMC Worship Presenter secrets (encrypted for this Windows user)");
+                p.store(out, "LiveCat Multimedia secrets (encrypted for this Windows user)");
             }
             Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {

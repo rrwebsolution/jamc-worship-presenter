@@ -1,4 +1,6 @@
-# JAMC Worship Presenter
+# LiveCat Multimedia
+
+**Present. Produce. Go Live.**
 
 Local-first worship presentation and live-production desktop app for Windows
 (Java 21, Swing + FlatLaf, SQLite, VLCJ). Works fully offline.
@@ -41,7 +43,7 @@ import a licensed file for offline use during services. Show the attribution eac
 ### Main screen
 
 The operator needs four ideas and one action: **LIBRARY** (what content: Songs, Bible, Presentations,
-Images, Videos, Audio, Backgrounds — Custom Slides, Themes, Lower Thirds, Favorite Songs and All Media are
+Images, Videos (with a Backgrounds tab), Audio — Custom Slides, Themes, Lower Thirds, Favorite Songs and All Media are
 under *More*), **SERVICE** (the schedule on the right: add, remove, drag to reorder, Save, Save As, Open),
 **PREVIEW** (what goes live next) and **PROGRAM** (what the audience sees, marked ● LIVE), with **TAKE →**
 between them. The top centre is the presentation area (Preview · TAKE · Program, with Black, Blank,
@@ -91,8 +93,9 @@ monitor), so viewers see exactly Program. FFmpeg does the encoding as a separate
 with `winget install Gyan.FFmpeg`, then click **Refresh** on the Stream page (or *Locate FFmpeg…*). The
 page tests which H.264 encoders really work on this computer (NVIDIA, Intel Quick Sync, AMD, Media
 Foundation) and falls back to software x264. It has presets (720p30, 1080p30, 1080p60), a simple audio mixer
-(microphone, a second input such as camera/capture audio or a "Stereo Mix" loopback for media, master;
-volume and mute), **● START RECORDING** (fragmented MP4 in `recordings\`, playable even after a crash;
+(microphone, a second input such as camera/capture audio, media and master; volume and mute. Media is
+"This app (Program sound)" by default: only this app's Program sound through Windows process loopback, Windows 10
+version 2004 or newer, so other programs on the PC are never recorded), **● START RECORDING** (fragmented MP4 in `recordings\`, playable even after a crash;
 "● REC" shows in the top bar) and the destination: Facebook Live (server and persistent stream key
 from Live Producer → Streaming software) or Custom RTMP. Stream keys are stored encrypted for the Windows
 user (DPAPI) in `config\secrets.properties`, shown masked, and never written to logs. **Test Connection**
@@ -201,6 +204,16 @@ bible\  backups\  logs\  config\settings.properties
 Override with `-Djamc.home=D:\Somewhere` or the `JAMC_HOME` environment variable (portable USB use).
 Before any schema upgrade a snapshot is written to `backups\`.
 
+The folder, the database file and the `jamc.home` / `JAMC_HOME` names are internal and predate the LiveCat name.
+They are unchanged on purpose, so an update keeps every church's songs, settings and media.
+
+## Branding
+
+The supplied artwork is in `src/public/LiveCat logo`. `java packaging/MakeBrandingAssets.java` makes everything
+else from it: `src/main/resources/branding` (app icon, window icon, header, About and splash), `packaging/app.ico`
+(installer and desktop shortcut) and the remote's icons in `../jamc-worship-remote/public/icons`.
+The default name and tagline are in `BrandingManager`; a church can still set its own in Settings → Branding.
+
 ## Features
 
 | Area | What it does |
@@ -215,7 +228,7 @@ Before any schema upgrade a snapshot is written to `backups\`.
 | Output | Projector on any display (fullscreen, never takes keyboard focus; or windowed); Identify Displays; auto-reconnect when the projector is replugged |
 | Scenes | OBS-style scenes of layered sources (slide background/media, lyrics, Bible, camera, image, church logo, looping video, lower third, text, clock); visibility and order per layer; position/size/fit/opacity; live edits |
 | Lower thirds | Name/title graphics with colors, logo, position and slide/fade animation; SHOW / HIDE |
-| OBS | "JAMC Worship - OBS Output" window, exact 1920×1080 or 1280×720 pixels, optional borderless and green (#00FF00) chroma-key mode — capture with OBS *Window Capture* |
+| OBS | "LiveCat - OBS Output" window, exact 1920×1080 or 1280×720 pixels, optional borderless and green (#00FF00) chroma-key mode — capture with OBS *Window Capture* |
 | Settings | Theme, startup, default themes, media and video behaviour, VLC location, cameras, backup / restore (with automatic safety backup), data paths, customizable keyboard shortcuts |
 
 ### Live keyboard shortcuts (defaults, customizable in Settings)

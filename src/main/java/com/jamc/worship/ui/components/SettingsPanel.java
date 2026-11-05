@@ -1073,7 +1073,7 @@ public class SettingsPanel extends JPanel {
                 javax.swing.JMenuItem licensed = new javax.swing.JMenuItem("Licensed worship lyrics service…");
                 licensed.addActionListener(ev -> Dialogs.showInfo(this, "Licensed lyrics provider",
                         "Licensed worship lyrics services (for example CCLI SongSelect) only offer their lyrics to approved\n"
-                                + "partner software. JAMC Worship Presenter is built to add such a provider once an agreement and\n"
+                                + "partner software. LiveCat Multimedia is built to add such a provider once an agreement and\n"
                                 + "API access exist.\n\nUntil then: download the lyrics from your licensed service and use PASTE LYRICS,\n"
                                 + "IMPORT FILE, or put the files in a Lyrics Folder so SEARCH LYRICS finds them."));
                 menu.add(folder);

@@ -69,9 +69,9 @@ import java.util.function.Consumer;
 public class MediaLibraryPanel extends JPanel {
 
     private static final String ALL = "All media";
-    private static final String VIDEOS_ALL = "All videos";
-    private static final String VIDEOS_LOCAL = "Local videos";
-    private static final String VIDEOS_YOUTUBE = "YouTube videos";
+    static final String VIDEOS_ALL = "All videos";
+    static final String VIDEOS_LOCAL = "Local videos";
+    static final String VIDEOS_YOUTUBE = "YouTube videos";
 
     private final MediaService media;
     private final List<MediaCategory> fixedCategories;
@@ -142,12 +142,12 @@ public class MediaLibraryPanel extends JPanel {
             typeFilter.addActionListener(e -> refresh(null));
             controls.add(typeFilter, BorderLayout.SOUTH);
         } else if (importCategory == MediaCategory.VIDEO) {
-            // local files and YouTube references live together; local ones are listed first
+            // local files and YouTube references live together; local ones are listed first.
+            // VideoLibraryPanel's tabs choose between them, so this filter is not shown.
             for (String k : new String[]{VIDEOS_ALL, VIDEOS_LOCAL, VIDEOS_YOUTUBE}) {
                 typeFilter.addItem(k);
             }
             typeFilter.addActionListener(e -> refresh(null));
-            controls.add(typeFilter, BorderLayout.SOUTH);
         }
         top.add(controls, BorderLayout.CENTER);
         add(top, BorderLayout.NORTH);
@@ -243,6 +243,11 @@ public class MediaLibraryPanel extends JPanel {
 
     public MediaItem selected() {
         return list.getSelectedValue();
+    }
+
+    /** Videos: list all, only local or only YouTube videos (VIDEOS_ALL, VIDEOS_LOCAL, VIDEOS_YOUTUBE). */
+    void showVideos(String filter) {
+        typeFilter.setSelectedItem(filter);
     }
 
     public void select(long id) {

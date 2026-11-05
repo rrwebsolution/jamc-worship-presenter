@@ -21,7 +21,7 @@ public final class LocalLibraryProvider implements LyricsProvider {
 
     @Override public String id() { return ID; }
     @Override public String name() { return "Local Library"; }
-    @Override public String description() { return "Lyrics already saved in JAMC Worship Presenter. Works offline."; }
+    @Override public String description() { return "Lyrics already saved in LiveCat Multimedia. Works offline."; }
     @Override public Set<Capability> capabilities() {
         return EnumSet.of(Capability.SEARCH, Capability.PLAIN_LYRICS, Capability.METADATA, Capability.STORE_OFFLINE);
     }

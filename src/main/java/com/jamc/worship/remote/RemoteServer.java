@@ -79,9 +79,9 @@ public final class RemoteServer {
     private static final String PLACEHOLDER_PAGE = """
             <!doctype html>
             <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>JAMC Remote</title></head>
+            <title>LiveCat Remote</title></head>
             <body style="font-family:system-ui,sans-serif;background:#0B1220;color:#F8FAFC;text-align:center;padding:48px 24px">
-            <h1>JAMC Worship Presenter</h1>
+            <h1>LiveCat Multimedia</h1>
             <p>This device reached the Remote Server.</p>
             <p style="color:#94A3B8">To use the remote, scan the QR code in Settings → Remote Control.</p>
             </body></html>
@@ -239,7 +239,7 @@ public final class RemoteServer {
             if (!"GET".equals(request.getMethod())) {
                 sendJson(response, 405, Map.of("error", "method_not_allowed"), callback);
             } else if (path.equals("/api/status")) {
-                sendJson(response, 200, Map.of("app", "JAMC Worship Presenter", "protocol", PROTOCOL, "locked", manager.locked()), callback);
+                sendJson(response, 200, Map.of("app", "LiveCat Multimedia", "protocol", PROTOCOL, "locked", manager.locked()), callback);
             } else if (path.startsWith("/api/") || path.equals("/ws")) {
                 sendJson(response, 404, Map.of("error", "not_found"), callback);
             } else {

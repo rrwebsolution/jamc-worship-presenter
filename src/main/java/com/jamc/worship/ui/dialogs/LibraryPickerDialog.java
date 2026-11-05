@@ -44,7 +44,7 @@ import java.util.List;
 import java.util.function.Function;
 
 /**
- * Picks something that is already in the JAMC library (a presentation, image or video) so a scene
+ * Picks something that is already in the app's library (a presentation, image or video) so a scene
  * source can reference it by id: nothing is imported or copied again.
  *
  * @param <T> library item type

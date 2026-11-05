@@ -143,11 +143,10 @@ public class LiveDock extends JPanel {
                 }
             }
         });
-        mixerButton.setToolTipText("Program audio mixer: microphone, camera audio, media, master");
+        mixerButton.setToolTipText("All the audio: microphone, camera audio, audio inputs, media, master");
         mixerButton.setFocusable(false);
         mixerButton.putClientProperty(FlatClientProperties.STYLE, "font: bold -2; margin: 2,6,2,6");
         mixerButton.addActionListener(e -> mixerAction.run());
-        programMediaRow.add(mixerButton, BorderLayout.EAST);
         programMediaRow.add(programTransport, BorderLayout.CENTER);
         programMediaRow.setVisible(false);
         add(programMediaRow, c);
@@ -273,6 +272,9 @@ public class LiveDock extends JPanel {
             row.add(previewMonitorButton);
         }
         boolean program = source == OutputService.Source.PROGRAM;
+        if (program) {
+            row.add(mixerButton); // always here: all the audio is in the mixer, also with only a camera on Program
+        }
         JPanel south = Ui.transparent(new BorderLayout(0, 4));
         south.add(imageNav(program), BorderLayout.NORTH);
         south.add(row, BorderLayout.SOUTH);
@@ -554,8 +556,18 @@ public class LiveDock extends JPanel {
         return mixerButton;
     }
 
+    /** A recording or the livestream takes this app's sound: Preview stays silent so it is not recorded. */
+    public void setPreviewAudioBlocked(boolean blocked) {
+        previewMonitorButton.setEnabled(!blocked);
+        previewMonitorButton.setToolTipText(blocked
+                ? "Off while recording or streaming, so only Program's sound is recorded. It comes back when you stop."
+                : "Listen to the Preview scene's videos on the monitor device (e.g. headphones). "
+                + "Off: Preview is silent, so the church only hears Program.");
+        syncMonitorButton();
+    }
+
     private void syncMonitorButton() {
-        boolean on = previewMonitorButton.isSelected();
+        boolean on = previewMonitorButton.isSelected() && previewMonitorButton.isEnabled();
         previewMonitorButton.setText(on ? "MONITOR ON" : "PREVIEW AUDIO: OFF");
         previewMonitorButton.putClientProperty(FlatClientProperties.STYLE, on
                 ? "font: bold -2; margin: 2,8,2,8; selectedBackground: #1677FF; selectedForeground: #FFFFFF"
@@ -599,6 +611,11 @@ public class LiveDock extends JPanel {
 
     /** Preview monitor: the full composition TAKE will put live (content, scene layers, previewed background). */
     private final class PreviewMonitor extends OutputCanvas {
+        @Override
+        protected boolean operatorMonitor() {
+            return true;
+        }
+
         PreviewMonitor(ProgramOutput previewState) {
             super(previewState, false, true);
             setOpaque(false);
@@ -639,6 +656,11 @@ public class LiveDock extends JPanel {
 
     /** Program monitor: the real Program picture plus operator-only status overlays. */
     private static final class ProgramMonitor extends OutputCanvas {
+        @Override
+        protected boolean operatorMonitor() {
+            return true;
+        }
+
         boolean outputOpen;
 
         ProgramMonitor(ProgramOutput program) {

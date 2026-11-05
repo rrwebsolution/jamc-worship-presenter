@@ -5,7 +5,7 @@ import com.formdev.flatlaf.FlatDarkLaf;
 /** Dark broadcast theme. Colors live in {@code JamcDarkLaf.properties} next to this class. */
 public class JamcDarkLaf extends FlatDarkLaf {
 
-    public static final String NAME = "JAMC Dark";
+    public static final String NAME = "LiveCat Dark";
 
     @Override
     public String getName() {

@@ -309,7 +309,7 @@ public final class ScreenshotTour {
         Object sceneBefore = programScene(frame[0]);
         int step = 0;
         for (Sidebar.Category c : java.util.List.of(Sidebar.Category.SONGS, Sidebar.Category.VIDEOS, Sidebar.Category.AUDIO,
-                Sidebar.Category.IMAGES, Sidebar.Category.BACKGROUNDS, Sidebar.Category.PRESENTATIONS, Sidebar.Category.BIBLE,
+                Sidebar.Category.IMAGES, Sidebar.Category.PRESENTATIONS, Sidebar.Category.BIBLE,
                 Sidebar.Category.CAMERA, Sidebar.Category.SONGS)) {
             category(frame[0], c);
             Thread.sleep(900);
@@ -327,7 +327,15 @@ public final class ScreenshotTour {
             });
         }
 
-        category(frame[0], Sidebar.Category.BACKGROUNDS);
+        SwingUtilities.invokeAndWait(() -> {
+            try {
+                Method s = MainFrame.class.getDeclaredMethod("showBackgroundsLibrary");
+                s.setAccessible(true);
+                s.invoke(frame[0]);
+            } catch (ReflectiveOperationException e) {
+                throw new IllegalStateException(e);
+            }
+        });
         Thread.sleep(800);
         shot(frame[0], out, "03-backgrounds");
         // inspect a built-in background in MEDIA PREVIEW (nothing goes live), then TAKE AS BACKGROUND

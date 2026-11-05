@@ -1,7 +1,7 @@
 {
-  "name": "JAMC Worship Remote",
-  "short_name": "JAMC Remote",
-  "description": "Remote Control for JAMC Worship Presenter",
+  "name": "LiveCat Remote",
+  "short_name": "LiveCat Remote",
+  "description": "Remote Control for LiveCat Multimedia",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

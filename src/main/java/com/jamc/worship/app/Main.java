@@ -62,7 +62,7 @@ public final class Main {
         }
         System.setProperty("jamc.logs.dir", paths.logsDir().toString());
         Logger log = LoggerFactory.getLogger(Main.class);
-        log.info("Starting JAMC Worship Presenter {} on Java {} ({})", version(),
+        log.info("Starting LiveCat Multimedia {} on Java {} ({})", version(),
                 System.getProperty("java.version"), System.getProperty("os.name"));
         log.info("Data directory: {}", paths.root());
 
@@ -72,7 +72,10 @@ public final class Main {
         config.load();
 
         try {
-            SwingUtilities.invokeAndWait(() -> Themes.install(config.uiTheme()));
+            SwingUtilities.invokeAndWait(() -> {
+                Themes.install(config.uiTheme());
+                com.jamc.worship.ui.SplashWindow.open(version());
+            });
             // every dialog gets Minimize / Maximize next to Close
             com.jamc.worship.ui.DialogWindowButtons.install();
         } catch (InterruptedException e) {
@@ -125,9 +128,13 @@ public final class Main {
         vlc.start();
 
         SwingUtilities.invokeLater(() -> {
-            MainFrame frame = new MainFrame(context);
-            frame.setVisible(true);
-            log.info("Main window shown");
+            try {
+                MainFrame frame = new MainFrame(context);
+                frame.setVisible(true);
+                log.info("Main window shown");
+            } finally {
+                com.jamc.worship.ui.SplashWindow.close();
+            }
         });
     }
 
@@ -174,8 +181,11 @@ public final class Main {
             error.printStackTrace();
         }
         try {
-            SwingUtilities.invokeAndWait(() -> JOptionPane.showMessageDialog(null, message,
-                    com.jamc.worship.ui.BrandingManager.name(), JOptionPane.ERROR_MESSAGE));
+            SwingUtilities.invokeAndWait(() -> {
+                com.jamc.worship.ui.SplashWindow.close();
+                JOptionPane.showMessageDialog(null, message,
+                        com.jamc.worship.ui.BrandingManager.name(), JOptionPane.ERROR_MESSAGE);
+            });
         } catch (Exception ignored) {
             // headless or interrupted: the message is already on stderr
         }

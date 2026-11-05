@@ -420,6 +420,9 @@ public final class SceneVideos {
         if (operatorMediaPlaying.getAsBoolean()) {
             return "silent while the operator's own Program video or audio player plays";
         }
+        if (monitorSilenced(s.config)) {
+            return "silent (Preview monitor only, and a recording or the livestream is running)";
+        }
         String where = device == null || device.isEmpty() ? "Windows default output" : routing.nameOf(device);
         return "heard on " + where + " at volume " + volume
                 + (Boolean.TRUE.equals(s.config.monitorOnly) ? " (Preview monitor only)" : "");
@@ -427,7 +430,11 @@ public final class SceneVideos {
 
     /** The one mute state a Program player has: set before it starts, so its sound never goes on-off-on. */
     private boolean programMuted(Slot s) {
-        return effectiveMuted(s) || routing.mediaGain() <= 0 || operatorMediaPlaying.getAsBoolean();
+        return effectiveMuted(s) || routing.mediaGain() <= 0 || operatorMediaPlaying.getAsBoolean() || monitorSilenced(s.config);
+    }
+
+    private boolean monitorSilenced(SourceConfig c) {
+        return routing.programOnly() && Boolean.TRUE.equals(c.monitorOnly);
     }
 
     static int effectiveVolume(Slot s) {

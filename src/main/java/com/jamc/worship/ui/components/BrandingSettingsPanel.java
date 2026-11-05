@@ -95,6 +95,11 @@ public class BrandingSettingsPanel extends JPanel {
         add(shortName, g);
         g.gridy++;
         g.gridx = 0;
+        add(Ui.small("Tagline"), g);
+        g.gridx = 1;
+        add(Ui.label(BrandingManager.TAGLINE, Palette::text, null), g);
+        g.gridy++;
+        g.gridx = 0;
         g.anchor = GridBagConstraints.NORTHWEST;
         add(Ui.small("Application icon / logo"), g);
         g.gridx = 1;

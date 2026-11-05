@@ -200,6 +200,8 @@ public class MainFrame extends JFrame {
     private final MediaLibraryPanel imageLibrary;
     private final MediaLibraryPanel audioLibrary;
     private final MediaLibraryPanel backgroundLibrary;
+    /** Library → Videos: the videos and backgrounds under one sidebar item, with tabs. */
+    private final com.jamc.worship.ui.components.VideoLibraryPanel videoTabs;
     private final MediaOutputPanel mediaDetail;
     private final com.jamc.worship.ui.components.CameraWorkspacePanel cameraWorkspace;
     /** Which whole workspace (slides, media, camera…) is under the library list and the monitors. */
@@ -331,6 +333,7 @@ public class MainFrame extends JFrame {
         audioLibrary = new MediaLibraryPanel(context.mediaService(), "Audio", List.of(MediaCategory.AUDIO), MediaCategory.AUDIO);
         backgroundLibrary = new MediaLibraryPanel(context.mediaService(), "Backgrounds", List.of(MediaCategory.BACKGROUND),
                 MediaCategory.BACKGROUND);
+        videoTabs = new com.jamc.worship.ui.components.VideoLibraryPanel(videoLibrary, backgroundLibrary);
         // the one MEDIA PREVIEW monitor for every media library; the background's controls sit under it
         mediaDetail = new MediaOutputPanel(context.mediaService(), hub, globalBackground, backgroundPanel, new MediaOutputPanel.Actions() {
             @Override
@@ -458,11 +461,6 @@ public class MainFrame extends JFrame {
         this.streamPanel = new com.jamc.worship.ui.components.StreamPanel(streamManager, msg -> statusBar.showMessage(msg));
         streamManager.addListener(this::updateRecordingIndicator);
         topBar.setRecordActions(streamPanel::toggleRecording, streamPanel::startStream);
-        // recordings capture the sound of the device Program plays on (Settings → Audio → Program output)
-        streamManager.setProgramDevice(() -> {
-            String id = audioRouting.programDeviceInUse();
-            return id == null || id.isEmpty() ? "" : audioRouting.nameOf(id);
-        });
         // while a video or music is heard on Program, the room microphones are muted in recordings / the livestream
         streamManager.setProgramMediaPlaying(hub::programMediaHeard);
         new javax.swing.Timer(1000, e -> updateRecordingIndicator()).start();
@@ -616,6 +614,7 @@ public class MainFrame extends JFrame {
                     + audioRouting.nameOf(audioRouting.monitorDevice()) + ")." : "Preview audio off: only Program is heard.");
         });
         liveDock.setMixerAction(this::showMixer);
+        hub.cameraAudio().setSink(streamManager::setLiveInputs);
         hub.sceneVideos().addListener(this::updateProgramMedia);
         new javax.swing.Timer(1000, e -> updateProgramMediaNote()).start();
 
@@ -627,13 +626,12 @@ public class MainFrame extends JFrame {
         libraryHolder.add(songLibrary, Sidebar.Category.SONGS.name());
         libraryHolder.add(biblePanel, Sidebar.Category.BIBLE.name());
         libraryHolder.add(mediaLibrary, Sidebar.Category.MEDIA.name());
-        libraryHolder.add(videoLibrary, Sidebar.Category.VIDEOS.name());
+        libraryHolder.add(videoTabs, Sidebar.Category.VIDEOS.name());
         libraryHolder.add(imageLibrary, Sidebar.Category.IMAGES.name());
         libraryHolder.add(audioLibrary, Sidebar.Category.AUDIO.name());
         libraryHolder.add(deckLibrary, Sidebar.Category.SLIDES.name());
         libraryHolder.add(presentationLibrary, Sidebar.Category.PRESENTATIONS.name());
         libraryHolder.add(themeLibrary, Sidebar.Category.THEMES.name());
-        libraryHolder.add(backgroundLibrary, Sidebar.Category.BACKGROUNDS.name());
         libraryHolder.add(lowerThirds, Sidebar.Category.LOWER_THIRDS.name());
         libraryHolder.add(cameraWorkspace.libraryPanel(), Sidebar.Category.CAMERA.name());
 
@@ -1134,6 +1132,12 @@ public class MainFrame extends JFrame {
             lib.setAddToServiceHandler(schedule::addItem);
             lib.addSelectionListener(mediaDetail::show);
         }
+        videoTabs.setSwitchListener(lib -> {
+            if (activeCategory == Sidebar.Category.VIDEOS) {
+                lib.refresh(null);
+                mediaDetail.show(lib.selected()); // this tab's own selection, as when changing category
+            }
+        });
 
         lowerThirds.setStatusHandler(statusBar::showMessage);
         lowerThirds.setAddToServiceHandler(schedule::addItem);
@@ -1303,7 +1307,7 @@ public class MainFrame extends JFrame {
                 biblePanel.activate();
                 showBibleSlides();
             }
-            case MEDIA, VIDEOS, IMAGES, AUDIO, BACKGROUNDS -> {
+            case MEDIA, VIDEOS, IMAGES, AUDIO -> {
                 libraryCards.show(libraryHolder, category.name());
                 MediaLibraryPanel lib = activeMediaLibrary();
                 lib.refresh(null);
@@ -1352,24 +1356,24 @@ public class MainFrame extends JFrame {
 
     private MediaLibraryPanel activeMediaLibrary() {
         return switch (activeCategory == null ? Sidebar.Category.MEDIA : activeCategory) {
-            case VIDEOS -> videoLibrary;
+            case VIDEOS -> videoTabs.active();
             case IMAGES -> imageLibrary;
             case AUDIO -> audioLibrary;
-            case BACKGROUNDS -> backgroundLibrary;
             default -> mediaLibrary;
         };
     }
 
-    /** Library → Backgrounds, where the global background is chosen and controlled. */
+    /** Library → Videos → Backgrounds, where the global background is chosen and controlled. */
     private void showBackgroundsLibrary() {
         topBar.selectPage(TopBar.Page.LIBRARY);
         showPage(TopBar.Page.LIBRARY);
-        sidebar.selectCategory(Sidebar.Category.BACKGROUNDS);
+        videoTabs.showBackgrounds();
+        sidebar.selectCategory(Sidebar.Category.VIDEOS);
     }
 
     private static boolean isMedia(Sidebar.Category c) {
         return c == Sidebar.Category.MEDIA || c == Sidebar.Category.VIDEOS || c == Sidebar.Category.IMAGES
-                || c == Sidebar.Category.AUDIO || c == Sidebar.Category.BACKGROUNDS;
+                || c == Sidebar.Category.AUDIO;
     }
 
     // ------------------------------------------------------------------ presenting content
@@ -3572,7 +3576,13 @@ public class MainFrame extends JFrame {
      */
     private void showMixer() {
         if (mixerDialog == null) {
-            mixerPanel = new com.jamc.worship.ui.components.AudioMixerPanel(audioRouting, streamManager);
+            mixerPanel = new com.jamc.worship.ui.components.AudioMixerPanel(audioRouting, streamManager, hub.cameraAudio());
+            hub.cameraAudio().addListener(() -> { // another scene on Program: its audio inputs appear
+                if (mixerDialog.isVisible()) {
+                    mixerPanel.reload();
+                    mixerDialog.pack();
+                }
+            });
             mixerDialog = new javax.swing.JDialog(this, "Audio Mixer", false);
             JPanel content = new JPanel(new BorderLayout());
             content.add(mixerPanel, BorderLayout.CENTER);
@@ -3633,6 +3643,14 @@ public class MainFrame extends JFrame {
                 : l.state() == com.jamc.worship.stream.StreamManager.State.ACTIVE
                 ? "■ LIVE " + com.jamc.worship.ui.components.StreamPanel.elapsed(l.startedMillis()) : "CONNECTING…",
                 l.state() == com.jamc.worship.stream.StreamManager.State.ACTIVE);
+        boolean programOnly = streamManager.capturingAppSound();
+        if (programOnly != audioRouting.programOnly()) {
+            audioRouting.setProgramOnly(programOnly);
+            liveDock.setPreviewAudioBlocked(programOnly);
+            if (programOnly) {
+                statusBar.showMessage("Only Program's sound is recorded: PREVIEW AUDIO and the Library preview are silent until you stop.");
+            }
+        }
         // the running time ticks every second while recording / streaming, not only when FFmpeg reports progress
         boolean ticking = r.active() || l.active();
         if (ticking && !recordingClock.isRunning()) {
@@ -3736,8 +3754,10 @@ public class MainFrame extends JFrame {
     private static final String KEY_LIBRARY_CATEGORY = "ui.library.category";
 
     private Sidebar.Category savedLibraryCategory() {
+        String saved = context.config().get(KEY_LIBRARY_CATEGORY, Sidebar.Category.SONGS.name());
         try {
-            return Sidebar.Category.valueOf(context.config().get(KEY_LIBRARY_CATEGORY, Sidebar.Category.SONGS.name()));
+            // Backgrounds used to be its own category; it is now a tab under Videos
+            return "BACKGROUNDS".equals(saved) ? Sidebar.Category.VIDEOS : Sidebar.Category.valueOf(saved);
         } catch (IllegalArgumentException e) {
             return Sidebar.Category.SONGS;
         }
@@ -3797,9 +3817,12 @@ public class MainFrame extends JFrame {
             topBar.selectPage(TopBar.Page.SETTINGS);
             showPage(TopBar.Page.SETTINGS);
         }));
-        help.add(menuItem("About…", null, null, () -> Dialogs.showInfo(this, "About " + branding.applicationName(),
-                branding.applicationName() + "\nVersion " + appVersion() + "\n\nLocal-first worship presentation.\n"
-                        + "Data folder: " + context.paths().root())));
+        help.add(menuItem("About…", null, null, () -> javax.swing.JOptionPane.showMessageDialog(this,
+                new Object[]{Ui.label(branding.applicationName(), Palette::text, "h4"),
+                        Ui.label(BrandingManager.TAGLINE, Palette::accent, null),
+                        "Version " + appVersion(), " ", "Data folder: " + context.paths().root()},
+                "About " + branding.applicationName(), javax.swing.JOptionPane.PLAIN_MESSAGE,
+                new javax.swing.ImageIcon(new java.awt.image.BaseMultiResolutionImage(branding.icon(96), branding.icon(192))))));
         bar.add(help);
         return bar;
     }

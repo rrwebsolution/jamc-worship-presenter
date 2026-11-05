@@ -73,8 +73,6 @@ public final class StreamManager {
     /** This app's own sound while recording (MEDIA = {@link StreamSettings#APP_AUDIO}). */
     private LoopbackAudio loopback;
     private final Path toolsDir;
-    /** Name of the output device Program plays on ("" = the Windows default): the one whose sound is recorded. */
-    private Supplier<String> programDevice = () -> "";
     private Session recording = Session.idle();
     private FFmpegStreamEncoder streamer;
     private LoopbackAudio liveLoopback;
@@ -92,9 +90,9 @@ public final class StreamManager {
         this.tap = new ProgramFrameTap(program);
     }
 
-    /** Where Program's sound plays (Settings → Audio), so recordings capture that device. */
-    public void setProgramDevice(Supplier<String> deviceName) {
-        this.programDevice = deviceName;
+    /** True while a recording or the livestream takes this app's own sound: everything the app plays goes into it. */
+    public boolean capturingAppSound() {
+        return (recording.active() || live.active()) && settings().usesAppAudio();
     }
 
     // ------------------------------------------------------------------ microphones during videos
@@ -105,6 +103,8 @@ public final class StreamManager {
     private static final long MICS_BACK_AFTER_MS = 800;
     private java.util.function.BooleanSupplier programMediaPlaying = () -> false;
     private boolean micsMuted;
+    private final LiveInputs liveInputs = new LiveInputs();
+    private java.util.Map<String, Double> liveInputGains = java.util.Map.of();
     private long mediaLastHeard;
     private final javax.swing.Timer micWatch = new javax.swing.Timer(250, e -> updateMics());
 
@@ -151,20 +151,51 @@ public final class StreamManager {
         fire();
     }
 
+    /** MASTER silences everything while the other channels' waves keep moving, so it is easily missed until playback. */
+    private static void warnIfMasterMuted(StreamSettings s, Consumer<String> onError, String what) {
+        if (s.masterMuted()) {
+            onError.accept("MASTER is muted in the Mixer, so this " + what + " has no sound. Press MIXER and unmute MASTER.");
+        }
+    }
+
     private void applyMics() {
         for (FFmpegStreamEncoder enc : new FFmpegStreamEncoder[]{recorder, streamer}) {
             if (enc != null) {
-                enc.setMicsMuted(micsMuted);
+                sendMics(enc);
             }
         }
+    }
+
+    private void sendMics(FFmpegStreamEncoder enc) {
+        StreamSettings s = settings();
+        enc.setMicsMuted(micsMuted || isLiveInput(liveInputGains, s.micDevice()), micsMuted || isLiveInput(liveInputGains, s.auxDevice()));
+    }
+
+    /** {@code device} is null when the channel has no input chosen. */
+    static boolean isLiveInput(java.util.Map<String, Double> gains, String device) {
+        return device != null && gains.containsKey(device);
+    }
+
+    /**
+     * The Program scene's live sound inputs and their gains. A device that is also the mixer's MIC or AUX is heard
+     * through the input only: both together would be the same sound twice, which is an echo.
+     */
+    public void setLiveInputs(java.util.Map<String, Double> gains) {
+        liveInputGains = java.util.Map.copyOf(gains);
+        liveInputs.set(gains);
+        applyMics();
+    }
+
+    private void mixLiveInputs(LoopbackAudio audio, java.nio.file.Path ffmpeg) {
+        audio.mixWith(liveInputs.attach(ffmpeg));
     }
 
     /** A new encoder starts with the microphones at their levels: sends the current state once FFmpeg runs. */
     private void micsForNewEncoder(FFmpegStreamEncoder enc) {
         for (int delay : new int[]{1500, 5000}) {
             javax.swing.Timer t = new javax.swing.Timer(delay, e -> {
-                if (micsMuted && (enc == recorder || enc == streamer)) {
-                    enc.setMicsMuted(true);
+                if (enc == recorder || enc == streamer) {
+                    sendMics(enc);
                 }
             });
             t.setRepeats(false);
@@ -177,7 +208,7 @@ public final class StreamManager {
      * {@link StreamSettings#APP_AUDIO} for this app's own sound. Blocking: call off the Swing thread.
      */
     public AudioLevels.Source openLevel(String device) throws IOException {
-        return StreamSettings.APP_AUDIO.equals(device) ? AudioLevels.appSound(toolsDir, programDevice.get())
+        return StreamSettings.APP_AUDIO.equals(device) ? AudioLevels.appSound(toolsDir)
                 : AudioLevels.device(device);
     }
 
@@ -325,12 +356,14 @@ public final class StreamManager {
             }
         });
         recorder = enc;
+        warnIfMasterMuted(s, onError, "recording");
         Thread.ofVirtual().name("recording-start").start(() -> {
             try {
                 Files.createDirectories(folder);
                 if (s.usesAppAudio()) {
                     try {
-                        LoopbackAudio a = LoopbackAudio.start(toolsDir, programDevice.get());
+                        LoopbackAudio a = LoopbackAudio.start(toolsDir);
+                        mixLiveInputs(a, caps.executable());
                         enc.setAppAudio(a.input());
                         SwingUtilities.invokeLater(() -> {
                             if (recorder == enc) loopback = a; else a.close();
@@ -439,18 +472,22 @@ public final class StreamManager {
             }
         });
         streamer = enc;
+        warnIfMasterMuted(s, onError, "livestream");
         liveConnectedMillis = 0;
         Thread.ofVirtual().name("stream-start").start(() -> {
             try {
                 if (s.usesAppAudio()) {
                     try {
-                        LoopbackAudio a = LoopbackAudio.start(toolsDir, programDevice.get());
+                        LoopbackAudio a = LoopbackAudio.start(toolsDir);
+                        mixLiveInputs(a, caps.executable());
                         enc.setAppAudio(a.input());
                         SwingUtilities.invokeLater(() -> {
                             if (streamer == enc) liveLoopback = a; else a.close();
                         });
                     } catch (IOException e) {
                         log.warn("Streaming without this app's sound: {}", e.getMessage());
+                        SwingUtilities.invokeLater(() -> onError.accept("The sound of videos and music in this app is not "
+                                + "in the livestream: " + e.getMessage()));
                     }
                 }
                 enc.start();
@@ -479,6 +516,20 @@ public final class StreamManager {
         fire();
     }
 
+    /** Tries in a row before the livestream gives up: with {@link #reconnectDelayMillis} a little over a minute. */
+    static final int MAX_RETRIES = 10;
+    /** Connected this long: the stream was healthy, so a later drop starts counting again (a service lasts for hours). */
+    private static final long STABLE_MILLIS = 60_000;
+
+    static int retriesAfter(int retries, long connectedMillis) {
+        return connectedMillis >= STABLE_MILLIS ? 0 : retries;
+    }
+
+    /** 1 s, 2 s, 4 s, then every 8 s: back on air fast after a short drop, without hammering a platform that is down. */
+    static int reconnectDelayMillis(int attempt) {
+        return 1000 << Math.clamp(attempt - 1, 0, 3);
+    }
+
     private void streamEnded(String error, StreamSettings s, FFmpeg.Capabilities caps, String encoder, String url,
                              Consumer<String> onError) {
         if (liveLoopback != null) {
@@ -489,14 +540,17 @@ public final class StreamManager {
             tap.removeSink(streamer);
         }
         streamer = null;
-        boolean wasRunning = liveConnectedMillis > 0 && System.currentTimeMillis() - liveConnectedMillis > 15_000;
-        if (error != null && wasRunning && liveRetries < 5) {
+        long connectedMillis = liveConnectedMillis > 0 ? System.currentTimeMillis() - liveConnectedMillis : 0;
+        boolean wasRunning = connectedMillis > 15_000;
+        liveRetries = retriesAfter(liveRetries, connectedMillis);
+        // a try that fails while reconnecting (the internet is still out) tries again too
+        if (error != null && (wasRunning || liveRetries > 0) && liveRetries < MAX_RETRIES) {
             // the internet or the platform dropped a running stream: reconnect instead of ending the service's stream
             liveRetries++;
-            log.warn("Livestream dropped; reconnecting ({}/5)", liveRetries);
-            live = new Session(State.STARTING, "Reconnecting (" + liveRetries + "/5)…", null, live.startedMillis(), null);
+            log.warn("Livestream dropped after {} s; reconnecting ({}/{})", connectedMillis / 1000, liveRetries, MAX_RETRIES);
+            live = new Session(State.STARTING, "Reconnecting (" + liveRetries + "/" + MAX_RETRIES + ")…", null, live.startedMillis(), null);
             fire();
-            javax.swing.Timer t = new javax.swing.Timer(3000, e -> {
+            javax.swing.Timer t = new javax.swing.Timer(reconnectDelayMillis(liveRetries), e -> {
                 if (live.active() && !live.finishing() && streamer == null) {
                     launchStream(s, caps, encoder, url, onError);
                 }

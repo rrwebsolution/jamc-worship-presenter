@@ -21,24 +21,29 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * The application's identity: its name, short name and logo / icon (Settings → Branding). Every
  * user-facing place that names the app or shows its icon asks here instead of using a fixed
- * "JAMC Worship Presenter", and listens for changes so a new name or logo shows at once.
+ * "LiveCat Multimedia", and listens for changes so a new name or logo shows at once.
  *
  * <p>A custom logo is copied (as PNG) into the app's own data folder, so the original file may be
  * moved or deleted. Icons keep the logo's aspect ratio (transparent padding) and are cached per size.
  * This is runtime branding only: the installed .exe and its desktop shortcut keep the icon they were
  * built with.
+ *
+ * <p>The built-in icon and logo are in resources/branding. They are made from the artwork in
+ * src/public/LiveCat logo by packaging/MakeBrandingAssets.java, which also makes the installer's app.ico.
  */
 public final class BrandingManager {
 
     private static final Logger log = LoggerFactory.getLogger(BrandingManager.class);
 
-    public static final String DEFAULT_NAME = "JAMC Worship Presenter";
-    public static final String DEFAULT_SHORT_NAME = "JAMC Worship";
+    public static final String DEFAULT_NAME = "LiveCat Multimedia";
+    public static final String DEFAULT_SHORT_NAME = "LiveCat";
+    public static final String TAGLINE = "Present. Produce. Go Live.";
     public static final int MAX_NAME_LENGTH = 60;
     /** Sizes made for window icons (Windows picks the one it needs). */
     public static final int[] ICON_SIZES = {16, 20, 24, 32, 40, 48, 64, 128, 256};
@@ -49,6 +54,9 @@ public final class BrandingManager {
     static final String LOGO_FILE = "app-logo.png";
     /** The stored logo is at most this size (enough for the 256 px icon). */
     private static final int STORED_MAX = 512;
+    private static final String BUILT_IN_ICON = "/branding/livecat-icon.png";
+    private static final String BUILT_IN_LOGO = "/branding/livecat-logo.png";
+    private static final Map<Integer, BufferedImage> DEFAULT_ICONS = new ConcurrentHashMap<>();
 
     private static volatile BrandingManager current;
 
@@ -105,7 +113,7 @@ public final class BrandingManager {
         return config.get(KEY_NAME, null) == null && config.get(KEY_SHORT_NAME, null) == null && logo == null;
     }
 
-    /** The app icon at {@code size} px: the logo fitted without distortion, or the built-in "J" badge. */
+    /** The app icon at {@code size} px: the logo fitted without distortion, or the built-in LiveCat icon. */
     public synchronized Image icon(int size) {
         return iconCache.computeIfAbsent(size, s -> logo == null ? defaultIcon(s) : fit(logo, s));
     }
@@ -154,7 +162,7 @@ public final class BrandingManager {
         reload();
     }
 
-    /** Back to "JAMC Worship Presenter" and the built-in icon. */
+    /** Back to "LiveCat Multimedia" and the built-in icon. */
     public void resetToDefault() throws IOException {
         config.set(KEY_NAME, null);
         config.set(KEY_SHORT_NAME, null);
@@ -190,8 +198,30 @@ public final class BrandingManager {
         return out;
     }
 
-    /** The built-in icon: rounded blue square with a white "J". */
+    /** The built-in LiveCat icon, cached per size. */
     public static BufferedImage defaultIcon(int size) {
+        return DEFAULT_ICONS.computeIfAbsent(size, s -> {
+            BufferedImage icon = builtIn(BUILT_IN_ICON);
+            return icon == null ? badge(s) : fit(icon, s);
+        });
+    }
+
+    /** The full LiveCat logo with its name and tagline, for a white surface (its blue text is hard to read on dark); may be null. */
+    public static BufferedImage defaultLogo() {
+        return builtIn(BUILT_IN_LOGO);
+    }
+
+    private static BufferedImage builtIn(String resource) {
+        try (var in = BrandingManager.class.getResourceAsStream(resource)) {
+            return in == null ? null : ImageIO.read(in);
+        } catch (IOException e) {
+            log.warn("Could not read the built-in {}", resource, e);
+            return null;
+        }
+    }
+
+    /** Only if the built-in icon cannot be read: rounded blue square with a white "L". */
+    private static BufferedImage badge(int size) {
         BufferedImage img = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = img.createGraphics();
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
@@ -202,7 +232,7 @@ public final class BrandingManager {
         g.setColor(Color.WHITE);
         g.setFont(new Font("Segoe UI", Font.BOLD, (int) (size * 0.62)));
         var fm = g.getFontMetrics();
-        g.drawString("J", (size - fm.stringWidth("J")) / 2, (size - fm.getHeight()) / 2 + fm.getAscent());
+        g.drawString("L", (size - fm.stringWidth("L")) / 2, (size - fm.getHeight()) / 2 + fm.getAscent());
         g.dispose();
         return img;
     }

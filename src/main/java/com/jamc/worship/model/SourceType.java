@@ -20,6 +20,8 @@ public enum SourceType {
     COLOR("Color / Shape", "palette"),
     /** Sound only (music from the audio library): plays on Program with the scene, no picture. */
     AUDIO("Audio", "audio"),
+    /** Live sound from a connected input (a microphone, a camera's audio, the audio tech's mixer), no picture. */
+    AUDIO_INPUT("Audio Input", "audio"),
     /** Several library images as ONE source, shown one after another (auto play or Previous / Next). */
     SLIDESHOW("Image Slideshow", "slides");
 

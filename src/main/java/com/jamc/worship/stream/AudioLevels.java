@@ -80,9 +80,9 @@ public final class AudioLevels {
         throw new IOException("\"" + name + "\" cannot be listened to right now.");
     }
 
-    /** This app's own sound on the Program output device (the same capture recordings use). */
-    public static Source appSound(Path toolsDir, String programDevice) throws IOException {
-        LoopbackAudio loopback = LoopbackAudio.start(toolsDir, programDevice);
+    /** This app's own sound (the same capture recordings use). */
+    public static Source appSound(Path toolsDir) throws IOException {
+        LoopbackAudio loopback = LoopbackAudio.start(toolsDir);
         LoopbackAudio.Input in = loopback.input();
         URI uri = URI.create(in.url());
         Socket socket = new Socket();

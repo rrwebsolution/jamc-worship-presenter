@@ -17,6 +17,47 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /** Livestream foundation: providers, secret storage, the FFmpeg command and FFmpeg output parsing. */
 class StreamFoundationTest {
 
+    @Test
+    void aMicrophoneWithItsOwnReaderIsNotOpenedByTheEncoder() {
+        String cmd = String.join(" ", FFmpegStreamEncoder.command("ffmpeg", settings("Mic", null, false), "libx264",
+                FFmpegStreamEncoder.Target.RECORDING, "x.mp4", null, "tcp://127.0.0.1:1",
+                java.util.Map.of("Mic", "tcp://127.0.0.1:2")));
+        assertFalse(cmd.contains("dshow"), "reading a device in the encoder's FFmpeg holds up the picture: " + cmd);
+        assertTrue(cmd.contains("-f s16le -ar 48000 -ac 2 -i tcp://127.0.0.1:2"), cmd);
+        assertTrue(cmd.contains("volume@mic="), "the level can still change while recording: " + cmd);
+    }
+
+    @Test
+    void microphoneSoundStaysOnTheClock() {
+        assertEquals(0, MicAudio.silenceNeeded(48000, 48000), "on time");
+        assertEquals(0, MicAudio.silenceNeeded(48000, 48000 + 2000), "a little late is normal");
+        assertEquals(4800, MicAudio.silenceNeeded(48000, 48000 + 4800), "fallen behind: silence until it is on time again");
+        assertFalse(MicAudio.dropBecauseAhead(48000, 480, 48000), "on time: kept");
+        assertTrue(MicAudio.dropBecauseAhead(48000 + 9600, 480, 48000), "far ahead: dropped");
+    }
+
+    @Test
+    void framesReachTheEncoderWithTheRightColors() {
+        byte[] nv12 = new byte[2 * 2 * 3 / 2];
+        FFmpegStreamEncoder.toNv12(new int[]{0xFFFFFF, 0xFFFFFF, 0xFFFFFF, 0xFFFFFF}, 2, 2, nv12);
+        assertEquals(235, nv12[0] & 0xFF, "white");
+        assertEquals(128, nv12[4] & 0xFF, "white has no color");
+        assertEquals(128, nv12[5] & 0xFF);
+        FFmpegStreamEncoder.toNv12(new int[]{0, 0, 0, 0}, 2, 2, nv12);
+        assertEquals(16, nv12[0] & 0xFF, "black");
+        FFmpegStreamEncoder.toNv12(new int[]{0x0000FF, 0x0000FF, 0x0000FF, 0x0000FF}, 2, 2, nv12);
+        assertEquals(41, nv12[0] & 0xFF, "blue");
+        assertEquals(240, nv12[4] & 0xFF, "U comes first in NV12");
+        assertEquals(110, nv12[5] & 0xFF);
+    }
+
+    /** The app compiles its sound capture on the operator's PC, with the C# compiler every Windows has. */
+    @Test
+    @org.junit.jupiter.api.condition.EnabledOnOs(org.junit.jupiter.api.condition.OS.WINDOWS)
+    void theSoundCaptureHelperCompiles(@TempDir Path tools) throws Exception {
+        assertTrue(Files.isRegularFile(LoopbackAudio.helper(tools)));
+    }
+
     private static final String KEY = "FB-1234567890-0-AbCdEfGh";
 
     @TempDir
@@ -81,11 +122,27 @@ class StreamFoundationTest {
     }
 
     @Test
+    void onlyTheLivestreamSendsFramesInTheOrderTheyAreShown() {
+        StreamSettings s = settings("Microphone", null, false);
+        assertTrue(FFmpegStreamEncoder.command("ffmpeg", s, "h264_qsv", FFmpegStreamEncoder.Target.STREAM, "rtmps://example/key")
+                .containsAll(List.of("-bf", "0")));
+        assertFalse(FFmpegStreamEncoder.command("ffmpeg", s, "h264_qsv", FFmpegStreamEncoder.Target.RECORDING, "x.mp4")
+                .contains("-bf"));
+    }
+
+    @Test
+    void theLivestreamKeepsEnoughOnTheWayToReachADistantPlatform() {
+        StreamSettings s = settings("Microphone", null, false);
+        assertTrue(FFmpegStreamEncoder.command("ffmpeg", s, "h264_qsv", FFmpegStreamEncoder.Target.STREAM, "rtmps://example/key")
+                .containsAll(List.of("-send_buffer_size", "1048576")));
+    }
+
+    @Test
     void recordingCommandMixesTheChosenInputsIntoFragmentedMp4() {
         List<String> cmd = FFmpegStreamEncoder.command("ffmpeg", settings("Microphone (Iriun Webcam)", "Stereo Mix", false),
                 "libx264", FFmpegStreamEncoder.Target.RECORDING, "C:/rec/Service.mp4");
         String line = String.join(" ", cmd);
-        assertTrue(line.contains("-f rawvideo -pix_fmt bgr24 -video_size 1920x1080 -framerate 30 -i pipe:0"));
+        assertTrue(line.contains("-f rawvideo -pix_fmt nv12 -video_size 1920x1080 -framerate 30 -i pipe:0"));
         assertTrue(cmd.contains("audio=Microphone (Iriun Webcam)"));
         assertTrue(cmd.contains("audio=Stereo Mix"));
         assertTrue(line.contains("[1:a]volume@mic=0.80") && line.contains("[2:a]volume@aux=0.60") && line.contains("amix=inputs=2"));
@@ -93,11 +150,11 @@ class StreamFoundationTest {
         assertTrue(line.contains("+frag_keyframe+empty_moov") && cmd.getLast().equals("C:/rec/Service.mp4"));
         assertFalse(cmd.contains("-shortest"), "STOP sends q instead: -shortest held back live audio inputs");
 
-        // this app's own sound (Windows loopback) as the MEDIA input: raw PCM from a local port, at the media volume
+        // this app's own sound (process loopback) as the MEDIA input: raw PCM from a local port, at the media volume
         StreamSettings appSound = new StreamSettings("facebook", null, null, 1920, 1080, 30, 6000, 160,
                 StreamSettings.EncoderChoice.AUTO, null, 80, false, null, 60, false, 100, false, StreamSettings.APP_AUDIO, 90, false);
         String withApp = String.join(" ", FFmpegStreamEncoder.command("ffmpeg", appSound, "libx264", FFmpegStreamEncoder.Target.RECORDING,
-                "C:/rec/Service.mp4", new LoopbackAudio.Input("tcp://127.0.0.1:1234", "f32le", 48000, 2, "Speakers")));
+                "C:/rec/Service.mp4", new LoopbackAudio.Input("tcp://127.0.0.1:1234", "f32le", 48000, 2)));
         assertTrue(withApp.contains("-f f32le -ar 48000 -ac 2 -i tcp://127.0.0.1:1234"), withApp);
         assertTrue(withApp.contains("[1:a]volume@media=0.90"), withApp);
         assertFalse(String.join(" ", FFmpegStreamEncoder.command("ffmpeg", appSound, "libx264",
@@ -178,18 +235,16 @@ class StreamFoundationTest {
                 "#0000FF", "#0000FF", 0, "Dialog", 72, true, false, "#FFFFFF", com.jamc.worship.model.TextAlign.CENTER,
                 com.jamc.worship.model.TextPosition.MIDDLE, 1.1, false, false, "#000000", 4);
         ProgramFrameTap tap = new ProgramFrameTap(program);
-        java.util.concurrent.CompletableFuture<byte[]> first = new java.util.concurrent.CompletableFuture<>();
-        ProgramFrameTap.Sink sink = bgr -> first.complete(bgr.clone());
+        java.util.concurrent.CompletableFuture<int[]> first = new java.util.concurrent.CompletableFuture<>();
+        ProgramFrameTap.Sink sink = rgb -> first.complete(rgb.clone());
         javax.swing.SwingUtilities.invokeAndWait(() -> {
             program.take(com.jamc.worship.output.LiveContent.snapshot(new com.jamc.worship.model.Slide("V", "", null), blue, "t"));
             tap.addSink(sink, 320, 180, 30);
         });
-        byte[] frame = first.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        int[] frame = first.get(5, java.util.concurrent.TimeUnit.SECONDS);
         javax.swing.SwingUtilities.invokeAndWait(() -> tap.removeSink(sink));
-        assertEquals(320 * 180 * 3, frame.length, "packed BGR, as FFmpeg reads it");
-        int corner = 0; // first pixel: B, G, R
-        assertEquals(255, frame[corner] & 0xFF, "blue background from Program");
-        assertEquals(0, frame[corner + 2] & 0xFF);
+        assertEquals(320 * 180, frame.length, "one int per pixel");
+        assertEquals(0x0000FF, frame[0] & 0xFFFFFF, "blue background from Program");
         assertFalse(tap.isRunning(), "no sinks: the tap stops painting");
     }
 

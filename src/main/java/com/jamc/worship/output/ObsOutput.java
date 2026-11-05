@@ -21,7 +21,7 @@ import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
- * The "JAMC Worship - OBS Output" window for OBS Window Capture.
+ * The "LiveCat - OBS Output" window for OBS Window Capture.
  *
  * <p>Its picture area is exactly the chosen resolution in real screen pixels (also on scaled
  * displays), so OBS captures it 1:1. Green mode paints pure #00FF00 instead of backgrounds,
@@ -30,7 +30,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public final class ObsOutput {
 
-    public static final String WINDOW_TITLE = "JAMC Worship - OBS Output";
+    public static final String WINDOW_TITLE = "LiveCat - OBS Output";
     private static final Logger log = LoggerFactory.getLogger(ObsOutput.class);
 
     public static final String KEY_WIDTH = "obs.width";

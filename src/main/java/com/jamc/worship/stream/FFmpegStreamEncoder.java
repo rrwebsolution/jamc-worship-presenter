@@ -18,15 +18,18 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * One FFmpeg process that turns Program frames plus the mixed audio inputs into H.264 / AAC and writes
  * a recording file or an RTMP(S) stream.
  *
- * <p>Frames arrive from {@link ProgramFrameTap} and are queued in a small pool; when FFmpeg falls
- * behind, frames are dropped (and counted) instead of slowing the presentation. FFmpeg's progress is
- * parsed for the health display. Stream keys never reach the log: the destination is redacted in
- * every logged command line and error message. Nothing here runs on the Swing thread.
+ * <p>Frames arrive from {@link ProgramFrameTap} as the picture changes; one writer thread sends each to FFmpeg at
+ * once, which stamps it with the time it arrived, and a frame not sent in time is replaced and counted, so the
+ * presentation is never slowed. FFmpeg's progress is parsed for the health display. Stream keys never reach
+ * the log: the destination is redacted in every logged command line and error message. Nothing here runs on
+ * the Swing thread.
  */
 public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEncoder {
 
@@ -40,7 +43,7 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
     private final String encoder;
     private final Target target;
     private final String destination;
-    /** This app's own sound (Windows loopback), when the MEDIA input is {@link StreamSettings#APP_AUDIO}. */
+    /** This app's own sound (process loopback), when the MEDIA input is {@link StreamSettings#APP_AUDIO}. */
     private volatile LoopbackAudio.Input appAudio;
     /** Where FFmpeg reads the Program frames from (a local port). */
     private java.net.ServerSocket videoServer;
@@ -50,8 +53,11 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         this.appAudio = input;
     }
     private final Listener listener;
-    private final BlockingQueue<byte[]> free = new ArrayBlockingQueue<>(POOL);
-    private final BlockingQueue<byte[]> ready = new ArrayBlockingQueue<>(POOL);
+    private final BlockingQueue<int[]> free = new ArrayBlockingQueue<>(POOL);
+    /** The newest frame not sent yet. */
+    private final AtomicReference<int[]> newest = new AtomicReference<>();
+    private volatile Thread writer;
+    private final List<MicAudio> micInputs = new ArrayList<>();
     private final AtomicLong dropped = new AtomicLong();
     private final Deque<String> lastErrors = new ArrayDeque<>();
     private volatile Process process;
@@ -69,9 +75,9 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         this.target = target;
         this.destination = destination;
         this.listener = listener;
-        int size = settings.width() * settings.height() * 3;
+        int size = settings.width() * settings.height();
         for (int i = 0; i < POOL; i++) {
-            free.add(new byte[size]);
+            free.add(new int[size]);
         }
     }
 
@@ -81,8 +87,19 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         // Program frames go to FFmpeg over a local port; its stdin stays free for "q" (STOP: finish the file now)
         videoServer = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
         videoServer.setSoTimeout(20_000);
+        java.util.Map<String, String> soundInputs = new java.util.HashMap<>();
+        Object[][] devices = {{settings.micDevice(), settings.micMuted()}, {settings.auxDevice(), settings.auxMuted()},
+                {settings.mediaDevice(), settings.mediaMuted()}};
+        for (Object[] d : devices) {
+            String device = (String) d[0];
+            if (device != null && !(Boolean) d[1] && !StreamSettings.APP_AUDIO.equals(device) && !soundInputs.containsKey(device)) {
+                MicAudio mic = MicAudio.start(ffmpeg, device);
+                micInputs.add(mic);
+                soundInputs.put(device, mic.url());
+            }
+        }
         List<String> cmd = command(ffmpeg.toString(), settings, encoder, target, destination, appAudio,
-                "tcp://127.0.0.1:" + videoServer.getLocalPort());
+                "tcp://127.0.0.1:" + videoServer.getLocalPort(), soundInputs);
         log.info("Starting {} encoder: {}", target, redact(String.join(" ", cmd)));
         process = new ProcessBuilder(cmd).start();
         startNanos = System.nanoTime();
@@ -104,8 +121,7 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
                 return;
             }
             try {
-                ready.offer(new byte[0]); // wakes the writer, which closes the picture input
-                try {
+                try { // the writer sees "stopping" within one frame and closes the picture input
                     OutputStream keys = p.getOutputStream();
                     keys.write('q');
                     keys.flush();
@@ -133,6 +149,11 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
      * never touched.
      */
     public void setMicsMuted(boolean muted) {
+        setMicsMuted(muted, muted);
+    }
+
+    /** The same per input: a microphone that is also a live input of the Program scene stays out of the mix. */
+    void setMicsMuted(boolean micMuted, boolean auxMuted) {
         Process p = process;
         if (p == null || !p.isAlive() || stopping) {
             return;
@@ -140,10 +161,10 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         double master = settings.masterMuted() ? 0 : settings.masterVolume() / 100.0;
         StringBuilder keys = new StringBuilder();
         if (settings.micDevice() != null && !settings.micMuted() && !StreamSettings.APP_AUDIO.equals(settings.micDevice())) {
-            keys.append(micCommand("mic", muted ? 0 : settings.micVolume() / 100.0 * master));
+            keys.append(micCommand("mic", micMuted ? 0 : settings.micVolume() / 100.0 * master));
         }
         if (settings.auxDevice() != null && !settings.auxMuted() && !StreamSettings.APP_AUDIO.equals(settings.auxDevice())) {
-            keys.append(micCommand("aux", muted ? 0 : settings.auxVolume() / 100.0 * master));
+            keys.append(micCommand("aux", auxMuted ? 0 : settings.auxVolume() / 100.0 * master));
         }
         if (keys.isEmpty()) {
             return;
@@ -168,42 +189,118 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         return p != null && p.isAlive();
     }
 
-    /** Copies a Program frame into a free buffer; drops it when FFmpeg is behind. */
+    /** Keeps a copy of a Program frame as the newest one to send; one that was not sent yet is replaced. */
     @Override
-    public void offer(byte[] bgr) {
+    public void offer(int[] rgb) {
         if (stopping) {
             return;
         }
-        byte[] buf = free.poll();
-        if (buf == null || buf.length != bgr.length) {
+        int[] buf = free.poll();
+        if (buf == null || buf.length != rgb.length) {
             dropped.incrementAndGet();
             if (buf != null) {
                 free.offer(buf);
             }
             return;
         }
-        System.arraycopy(bgr, 0, buf, 0, bgr.length);
-        ready.offer(buf);
+        System.arraycopy(rgb, 0, buf, 0, rgb.length);
+        int[] replaced = newest.getAndSet(buf);
+        if (replaced != null) {
+            dropped.incrementAndGet();
+            free.offer(replaced);
+        }
+        LockSupport.unpark(writer);
+    }
+
+    /**
+     * Gives FFmpeg one frame per time slot, evenly. Each slot takes a new frame as soon as one arrives within half a
+     * slot of its time, which absorbs the normal unevenness of the Swing thread without repeating or skipping
+     * anything; only a frame that really is missing repeats the last one. Slots missed in a stall are skipped, not
+     * sent in a burst: FFmpeg stamps frames as they arrive, so bursts would be thrown away and the sound stays right.
+     */
+    /**
+     * 0xRRGGBB pixels to NV12: a brightness plane, then color for each 2x2 block. Under load FFmpeg cannot take 8 MB
+     * RGB frames 30 times a second and convert them itself, which is what repeated frames in recordings; this is
+     * the format the encoders want, under half the size. Same colors as FFmpeg's own conversion (BT.601, limited range).
+     */
+    static void toNv12(int[] rgb, int width, int height, byte[] out) {
+        int uv = width * height;
+        for (int y = 0; y < height; y++) {
+            int row = y * width;
+            for (int x = 0; x < width; x++) {
+                int p = rgb[row + x];
+                int r = (p >> 16) & 0xFF;
+                int g = (p >> 8) & 0xFF;
+                int b = p & 0xFF;
+                out[row + x] = (byte) (((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
+            }
+        }
+        for (int y = 0; y + 1 < height; y += 2) {
+            int top = y * width;
+            int bottom = top + width;
+            for (int x = 0; x + 1 < width; x += 2) {
+                int a = rgb[top + x];
+                int c = rgb[top + x + 1];
+                int d = rgb[bottom + x];
+                int e = rgb[bottom + x + 1];
+                int r = (((a >> 16) & 0xFF) + ((c >> 16) & 0xFF) + ((d >> 16) & 0xFF) + ((e >> 16) & 0xFF)) >> 2;
+                int g = (((a >> 8) & 0xFF) + ((c >> 8) & 0xFF) + ((d >> 8) & 0xFF) + ((e >> 8) & 0xFF)) >> 2;
+                int b = ((a & 0xFF) + (c & 0xFF) + (d & 0xFF) + (e & 0xFF)) >> 2;
+                out[uv++] = (byte) (((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128);
+                out[uv++] = (byte) (((112 * r - 94 * g - 18 * b + 128) >> 8) + 128);
+            }
+        }
     }
 
     private void writeLoop() {
+        writer = Thread.currentThread();
+        long period = 1_000_000_000L / settings.fps();
+        int width = settings.width();
+        int height = settings.height();
+        byte[] bytes = new byte[width * height * 3 / 2];
         try (java.net.ServerSocket server = videoServer; java.net.Socket socket = server.accept();
-             OutputStream out = new java.io.BufferedOutputStream(socket.getOutputStream(), 1 << 20)) {
+             OutputStream out = socket.getOutputStream()) {
             socket.setTcpNoDelay(true);
-            while (true) {
-                byte[] buf = ready.take();
-                if (buf.length == 0 || stopping) {
-                    break;
+            int[] current = null;
+            long first = 0;
+            long slot = 0;
+            while (!stopping) {
+                if (current == null) { // the clock starts with the first frame
+                    current = newest.getAndSet(null);
+                    if (current == null) {
+                        LockSupport.parkNanos(5_000_000);
+                        continue;
+                    }
+                    first = System.nanoTime();
+                    toNv12(current, width, height, bytes);
+                    out.write(bytes);
+                    slot = 1;
+                    continue;
                 }
-                out.write(buf);
-                free.offer(buf);
+                long due = first + slot * period;
+                int[] latest = null;
+                while (!stopping) {
+                    long now = System.nanoTime();
+                    if (now - (due - period / 2) >= 0) {
+                        latest = newest.getAndSet(null);
+                        if (latest != null || now - (due + period / 2) >= 0) {
+                            break;
+                        }
+                    }
+                    LockSupport.parkNanos(1_000_000); // woken early by a new frame
+                }
+                if (latest != null) {
+                    free.offer(current);
+                    current = latest;
+                    toNv12(current, width, height, bytes);
+                }
+                out.write(bytes);
+                slot = Math.max(slot + 1, (System.nanoTime() - first + period / 2) / period);
             }
         } catch (IOException e) {
             if (!stopping) {
                 log.warn("{} encoder input closed: {}", target, e.getMessage());
             }
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
         }
     }
 
@@ -214,6 +311,7 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             String line;
             while ((line = r.readLine()) != null) {
                 if (progress.accept(line)) {
+                    logHealth(progress);
                     listener.stats(new Stats(progress.frame, progress.fps, progress.bitrateKbps,
                             dropped.get() + progress.dropFrames, (System.nanoTime() - startNanos) / 1_000_000));
                 }
@@ -222,6 +320,7 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             log.debug("{} progress stream closed", target);
         }
         int code = waitExit(p);
+        micInputs.forEach(MicAudio::close);
         String error = null;
         if (!stopping) { // it ended by itself: a failure the operator must see
             synchronized (lastErrors) {
@@ -230,6 +329,25 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         }
         log.info("{} encoder ended (exit {}){}", target, code, error == null ? "" : ": " + error);
         listener.ended(error);
+    }
+
+    private static final long HEALTH_EVERY_NANOS = 30_000_000_000L;
+    private long lastHealth;
+    private long lastHealthFrame;
+
+    /** A line every 30 s of a livestream: when a stream is reported as choppy, this says what left the app at that moment. */
+    private void logHealth(Progress p) {
+        long now = System.nanoTime();
+        if (target != Target.STREAM || now - lastHealth < HEALTH_EVERY_NANOS) {
+            return;
+        }
+        if (lastHealth != 0) {
+            log.info("Livestream health: {} frames in {} s, fps {}, {} kbps, frames dropped {} (ffmpeg {}, replaced {})",
+                    p.frame - lastHealthFrame, (now - lastHealth) / 1_000_000_000L, p.fps, Math.round(p.bitrateKbps),
+                    dropped.get() + p.dropFrames, p.dropFrames, dropped.get());
+        }
+        lastHealth = now;
+        lastHealthFrame = p.frame;
     }
 
     private void errorLoop() {
@@ -291,12 +409,19 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
     /** @param videoInput where the Program frames come from ("pipe:0", or a local "tcp://127.0.0.1:port") */
     public static List<String> command(String exe, StreamSettings s, String encoder, Target target, String destination,
                                        LoopbackAudio.Input appAudio, String videoInput) {
+        return command(exe, s, encoder, target, destination, appAudio, videoInput, java.util.Map.of());
+    }
+
+    /** @param soundInputs the local port of each sound device that has its own {@link MicAudio} */
+    static List<String> command(String exe, StreamSettings s, String encoder, Target target, String destination,
+                                LoopbackAudio.Input appAudio, String videoInput, java.util.Map<String, String> soundInputs) {
         List<String> c = new ArrayList<>(List.of(exe, "-hide_banner", "-loglevel", "warning", "-nostats",
                 "-progress", "pipe:1"));
-        // input 0: Program frames, timestamped as they arrive so dropped frames never desync audio
+        // input 0: Program frames, stamped as they arrive: what keeps the picture in time with the sound, also when
+        // the encoder falls behind for a moment. writeLoop sends them evenly, so the stamps are even too.
         c.addAll(List.of("-thread_queue_size", "64", "-use_wallclock_as_timestamps", "1", "-probesize", "32",
                 "-analyzeduration", "0", "-f", "rawvideo",
-                "-pix_fmt", "bgr24", "-video_size", s.width() + "x" + s.height(), "-framerate", String.valueOf(s.fps()),
+                "-pix_fmt", "nv12", "-video_size", s.width() + "x" + s.height(), "-framerate", String.valueOf(s.fps()),
                 "-i", videoInput));
         // audio inputs: microphone, camera / capture audio, and the loopback carrying Program media (videos, music)
         List<double[]> gains = new ArrayList<>();
@@ -316,6 +441,13 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
                     gains.add(new double[]{(Integer) in[2] / 100.0});
                     names.add(inputNames[n]);
                 }
+            } else if (device != null && !(Boolean) in[1] && soundInputs.containsKey(device)) {
+                // read by its own FFmpeg (MicAudio): a device read here would hold up the picture
+                c.addAll(List.of("-thread_queue_size", "1024", "-probesize", "32", "-analyzeduration", "0",
+                        "-f", MicAudio.SAMPLE, "-ar", String.valueOf(MicAudio.RATE), "-ac", String.valueOf(MicAudio.CHANNELS),
+                        "-i", soundInputs.get(device)));
+                gains.add(new double[]{(Integer) in[2] / 100.0});
+                names.add(inputNames[n]);
             } else if (device != null && !(Boolean) in[1]) {
                 // stamped with the real time it arrives: a device that delivers late or unevenly (some laptop
                 // microphones) then gets silence for the missing moments instead of holding up the whole mix
@@ -358,8 +490,12 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             // fragmented MP4: a power cut or crash still leaves a playable file
             c.addAll(List.of("-f", "mp4", "-movflags", "+frag_keyframe+empty_moov+default_base_moof", "-y", destination));
         } else {
-            // live: no duration / size rewrite at the end (a stream cannot seek back), RTMP(S) to the platform
-            c.addAll(List.of("-flvflags", "no_duration_filesize", "-f", "flv", destination));
+            // live: frames go out in the order they are shown, since hardware encoders otherwise send reordered frames
+            // that a platform has to put back in time; no duration / size rewrite at the end (a stream cannot seek
+            // back), RTMP(S) to the platform. A big send buffer: the Windows default keeps about 64 KB on the way, which at
+            // the distance to the platform caps a stream near 3 Mbit/s however fast the internet is (a 6000 kbps
+            // stream to Facebook came out at 2-3 Mbit/s with most frames lost, the choppy stream)
+            c.addAll(List.of("-send_buffer_size", "1048576", "-bf", "0", "-flvflags", "no_duration_filesize", "-f", "flv", destination));
         }
         return c;
     }

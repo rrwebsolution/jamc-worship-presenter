@@ -21,19 +21,22 @@ import java.util.function.IntConsumer;
 /**
  * The Program audio mixer: MICROPHONE and CAMERA / CAPTURE audio (what the livestream and recordings
  * take in), MEDIA (videos, scene videos and music played by this app, heard in the church and, through
- * the loopback input, online) and MASTER. Each channel has a volume and a mute; nothing is tied together.
+ * the loopback input, online), the Program scene's live inputs (Audio Input sources, cameras with AUDIO on) and
+ * MASTER. Each channel has a volume and a mute; nothing is tied together.
  */
 public class AudioMixerPanel extends JPanel {
 
     private final AudioRouting routing;
     private final StreamManager stream;
     private final MixerMeters meters;
+    private final com.jamc.worship.media.CameraAudio sceneAudio;
     private boolean loading;
 
-    public AudioMixerPanel(AudioRouting routing, StreamManager stream) {
+    public AudioMixerPanel(AudioRouting routing, StreamManager stream, com.jamc.worship.media.CameraAudio sceneAudio) {
         super(new GridBagLayout());
         this.routing = routing;
         this.stream = stream;
+        this.sceneAudio = sceneAudio;
         this.meters = new MixerMeters(stream);
         meters.attach(this);
         setBorder(BorderFactory.createEmptyBorder(12, 14, 12, 14));
@@ -66,6 +69,25 @@ public class AudioMixerPanel extends JPanel {
         // the app's own sound is heard after its volume is applied, so the wave needs no extra gain
         channel(g, "MEDIA", Ui.label("Videos, scene videos and music from this app", Palette::mutedText, "small"), routing.mediaVolume(), routing.mediaMuted(),
                 routing::setMediaVolume, routing::setMediaMuted, true, StreamSettings.APP_AUDIO, false);
+        g.gridx = 0;
+        g.gridwidth = 5;
+        add(Ui.label("ON PROGRAM NOW", Palette::secondaryText, "semibold"), g);
+        g.gridy++;
+        var inputs = sceneAudio.programInputs();
+        if (inputs.isEmpty()) {
+            add(Ui.label("No camera audio or audio input: turn on AUDIO on a camera source, or use Add Source → Audio Input.",
+                    Palette::mutedText, "small"), g);
+            g.gridy++;
+        }
+        g.gridwidth = 1;
+        for (var in : inputs) {
+            String device = in.device();
+            channel(g, in.name().toUpperCase(java.util.Locale.ROOT), Ui.label(device == null ? "This camera has no audio input"
+                            : device.equals(s.micDevice()) || device.equals(s.auxDevice()) ? "Used here instead of the same input above"
+                            : "Into the recording and the stream", Palette::mutedText, "small"),
+                    in.volume(), in.muted(), v -> sceneAudio.setInputVolume(device, v), m -> sceneAudio.setInputMuted(device, m),
+                    device != null, device, true);
+        }
         channel(g, "MASTER", Ui.label("Church media and everything online", Palette::mutedText, "small"), routing.masterVolume(), routing.masterMuted(),
                 v -> {
                     routing.setMasterVolume(v);
@@ -114,7 +136,10 @@ public class AudioMixerPanel extends JPanel {
         slider.setEnabled(enabled);
 
         JPanel label = Ui.transparent(new java.awt.BorderLayout(0, 1));
-        label.add(Ui.label(name, Palette::text, "semibold"), java.awt.BorderLayout.NORTH);
+        JLabel title = Ui.label(name, Palette::text, "semibold");
+        title.setToolTipText(name);
+        title.setPreferredSize(new Dimension(230, title.getPreferredSize().height)); // a long device name stays in its column
+        label.add(title, java.awt.BorderLayout.NORTH);
         detail.setPreferredSize(new Dimension(230, detail.getPreferredSize().height));
         label.add(detail, java.awt.BorderLayout.SOUTH);
         g.insets = new Insets(0, 0, 10, 8);

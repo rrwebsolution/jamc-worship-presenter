@@ -139,7 +139,7 @@ public class OutputPanel extends JPanel {
         content.add(section("Live Shortcuts", "Work anywhere except while typing in a text box. Click anywhere outside the box to use them again.", keys), c);
         c.gridy++;
 
-        JLabel obs = Ui.label("<html>A dedicated \"JAMC Worship - OBS Output\" window with green-screen mode for OBS "
+        JLabel obs = Ui.label("<html>A dedicated \"LiveCat - OBS Output\" window with green-screen mode for OBS "
                 + "Window Capture (always Program) is opened from Settings → Output & OBS. OBS is optional.</html>",
                 Palette::mutedText, "small");
         content.add(section("OBS Output", "For livestreaming with OBS Studio.", obs), c);

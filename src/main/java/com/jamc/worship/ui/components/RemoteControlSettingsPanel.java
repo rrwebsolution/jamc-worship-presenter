@@ -156,7 +156,7 @@ public class RemoteControlSettingsPanel extends JPanel {
         // right beside the controls, not at the far edge: the page can be wider than the window
         JPanel qrColumn = Ui.transparent(new BorderLayout(0, 6));
         qrColumn.add(qr, BorderLayout.CENTER);
-        JLabel scan = Ui.small("Scan to open JAMC Remote");
+        JLabel scan = Ui.small("Scan to open LiveCat Remote");
         scan.setHorizontalAlignment(JLabel.CENTER);
         qrColumn.add(scan, BorderLayout.SOUTH);
         JPanel qrHolder = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));

@@ -33,7 +33,7 @@ class BrandingManagerTest {
         paths.ensureDirectories();
         AppConfig config = new AppConfig(paths);
         BrandingManager b = new BrandingManager(config, paths);
-        assertEquals("JAMC Worship Presenter", b.applicationName());
+        assertEquals("LiveCat Multimedia", b.applicationName());
         assertNull(b.customLogo());
         assertTrue(b.isDefault());
 
@@ -72,10 +72,22 @@ class BrandingManagerTest {
         assertThrows(ValidationException.class, () -> reopened.save("x".repeat(61), null, null, false));
 
         reopened.resetToDefault();
-        assertEquals("JAMC Worship Presenter", reopened.applicationName());
-        assertEquals("JAMC Worship", reopened.shortName());
+        assertEquals("LiveCat Multimedia", reopened.applicationName());
+        assertEquals("LiveCat", reopened.shortName());
         assertNull(reopened.customLogo());
         assertFalse(Files.exists(stored));
         assertTrue(new BrandingManager(config, paths).isDefault());
+    }
+
+    @Test
+    void theBuiltInLiveCatArtworkIsPackaged() {
+        BufferedImage icon = BrandingManager.defaultIcon(64);
+        assertEquals(64, icon.getWidth());
+        assertEquals(0, icon.getRGB(0, 0) >>> 24, "the white around the cat is transparent");
+        assertTrue((icon.getRGB(24, 32) >>> 24) >= 250, "the cat itself is solid, not see-through");
+
+        BufferedImage logo = BrandingManager.defaultLogo();
+        assertNotNull(logo, "the splash screen's logo");
+        assertTrue(logo.getWidth() > logo.getHeight(), "the padding around the wide logo is cropped");
     }
 }

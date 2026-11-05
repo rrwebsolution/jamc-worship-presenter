@@ -225,7 +225,7 @@ class RemoteServerTest {
         assertTrue(page.headers().firstValue("Content-Type").orElse("").startsWith("text/html"));
 
         JsonNode status = JSON.readTree(get("/api/status").body());
-        assertEquals("JAMC Worship Presenter", status.path("app").asText());
+        assertEquals("LiveCat Multimedia", status.path("app").asText());
         assertFalse(status.path("locked").asBoolean());
         assertEquals(404, get("/api/nothing").statusCode());
         assertEquals(page.body(), get("/pair").body(), "the app routes its own pages");

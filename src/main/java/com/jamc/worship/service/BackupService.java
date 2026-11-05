@@ -55,7 +55,7 @@ public class BackupService {
     }
 
     public Path defaultBackupFile() {
-        return paths.backupsDir().resolve("JAMC-Backup-" + LocalDateTime.now().format(STAMP) + ".zip");
+        return paths.backupsDir().resolve("LiveCat-Backup-" + LocalDateTime.now().format(STAMP) + ".zip");
     }
 
     /** Writes a backup zip. Themes, songs, services, scenes and Bible text are all in the database. */
@@ -79,7 +79,7 @@ public class BackupService {
                     addFile(zip, paths.settingsFile(), SETTINGS_ENTRY);
                 }
                 zip.putNextEntry(new ZipEntry("backup-info.txt"));
-                zip.write(("JAMC Worship Presenter backup\ncreated=" + Instant.now() + "\nschema="
+                zip.write(("LiveCat Multimedia backup\ncreated=" + Instant.now() + "\nschema="
                         + MigrationManager.latestVersion() + "\nmedia=" + includeMedia + "\n").getBytes());
                 zip.closeEntry();
                 if (includeMedia && Files.isDirectory(paths.mediaDir())) {
@@ -114,7 +114,7 @@ public class BackupService {
             boolean hasMedia = extract(backupZip, work);
             Path restoredDb = work.resolve(DB_ENTRY);
             if (!Files.isRegularFile(restoredDb)) {
-                throw new ValidationException("This file is not a JAMC Worship Presenter backup (no database inside).");
+                throw new ValidationException("This file is not a LiveCat Multimedia backup (no database inside).");
             }
             int version = schemaVersion(restoredDb);
             if (version > MigrationManager.latestVersion()) {
