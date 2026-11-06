@@ -301,4 +301,26 @@ class CameraManagerTest {
             return null;
         });
     }
+
+    @Test
+    void anNdiSourceOpensOnceAtTheSendersFormatAndNeedsNoVlc() {
+        List<CameraManager.Format> formats = new ArrayList<>();
+        connected = new ArrayList<>(List.of("CAM A", "NDI: PHONE (Camera)"));
+        CameraManager m = onEdt(() -> new CameraManager((name, format) -> {
+            formats.add(format);
+            FakeFeed f = new FakeFeed(name, false);
+            opened.add(f);
+            return f;
+        }, () -> new Detection(List.copyOf(connected), List.of()), () -> false, true));
+        m.detect();
+        assertNotNull(onEdt(() -> m.frame("NDI: PHONE (Camera)")), "NDI is received without VLC");
+        assertNull(onEdt(() -> m.frame("CAM A")), "a DirectShow camera still needs VLC");
+        assertEquals(List.of(new CameraManager.Format(null, 0)), formats, "no size / rate fallbacks for NDI");
+        assertTrue(Ndi.isNdi("NDI: PHONE (Camera)"));
+        assertFalse(Ndi.isNdi("Iriun Webcam #2"));
+        onEdt(() -> {
+            m.stopAll();
+            return null;
+        });
+    }
 }

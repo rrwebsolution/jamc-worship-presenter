@@ -369,7 +369,12 @@ public class CameraWorkspacePanel extends JPanel {
         scroll.setOpaque(false);
         scroll.getViewport().setOpaque(false);
         JLabel empty = Ui.label("<html><center>No camera detected.<br>Connect a webcam or HDMI capture device,<br>"
-                + "then click the refresh button to detect again.</center></html>", Palette::mutedText, null);
+                + "then click the refresh button to detect again.<br><br>"
+                + (com.jamc.worship.camera.Ndi.isInstalled()
+                        ? "NDI® sources on this network (phones, PCs) show up here as \"NDI: …\"."
+                        : "Phones over WiFi: install the free NDI Tools (ndi.video)<br>to use NDI® cameras.")
+                + "<br><small>NDI® is a registered trademark of Vizrt NDI AB.</small></center></html>",
+                Palette::mutedText, null);
         empty.setHorizontalAlignment(SwingConstants.CENTER);
         empty.setVerticalAlignment(SwingConstants.TOP);
         empty.setBorder(BorderFactory.createEmptyBorder(40, 16, 0, 16));

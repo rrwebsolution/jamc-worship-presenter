@@ -117,6 +117,13 @@ public final class CameraManager {
     static final List<String> AUTO_SIZES = List.of("1920x1080", "1280x720");
     /** How long a format may take to show its first picture before the next one is tried. */
     static final long FALLBACK_MS = 3_500;
+    /** An NDI source over WiFi can take a while to connect and send its first picture. */
+    static final long NDI_CONNECT_MS = 12_000;
+
+    /** VLC is needed for DirectShow cameras; NDI sources are received without it. */
+    private boolean canOpen(String cam) {
+        return Ndi.isNdi(cam) || available.getAsBoolean();
+    }
 
     /** One open camera device. */
     private static final class Session {
@@ -195,8 +202,8 @@ public final class CameraManager {
     private boolean watching;
 
     public CameraManager() {
-        this((name, format) -> Feed.of(openDirectShow(name, format)), CameraManager::detectWindows,
-                () -> MediaEngine.get().isAvailable(), true, true);
+        this((String name, Format format) -> Ndi.isNdi(name) ? (Feed) Ndi.open(name) : Feed.of(openDirectShow(name, format)),
+                () -> withNdi(detectWindows()), () -> MediaEngine.get().isAvailable(), true, true);
     }
 
     public CameraManager(CameraProvider provider) {
@@ -586,8 +593,8 @@ public final class CameraManager {
      * answer to {@code done} on the EDT; null when it cannot be found out.
      */
     public void queryCapabilities(String name, Consumer<Capabilities> done) {
-        if (name == null) {
-            done.accept(null);
+        if (name == null || Ndi.isNdi(name)) {
+            done.accept(null); // an NDI source sends the size and rate its sender chose
             return;
         }
         Capabilities known = capabilities.get(name);
@@ -686,13 +693,13 @@ public final class CameraManager {
     }
 
     private void prewarm() {
-        if (kept.isEmpty() || !available.getAsBoolean()) {
+        if (kept.isEmpty()) {
             return;
         }
         long now = System.currentTimeMillis();
         for (Set<String> set : kept.values()) {
             for (String cam : set) {
-                if (!sessions.containsKey(cam) && !missing.contains(cam) && (!detected || cameras.contains(cam))) {
+                if (canOpen(cam) && !sessions.containsKey(cam) && !missing.contains(cam) && (!detected || cameras.contains(cam))) {
                     open(cam, now);
                 }
             }
@@ -703,7 +710,7 @@ public final class CameraManager {
         if (restarting.contains(cam) || isClosing(cam)) {
             return null; // opened on a later frame request, once the old feed has let go of the device
         }
-        List<Format> tries = fallback ? candidates(requested.get(cam), working.get(cam)) : List.of(new Format(null, 0));
+        List<Format> tries = fallback && !Ndi.isNdi(cam) ? candidates(requested.get(cam), working.get(cam)) : List.of(new Format(null, 0));
         try {
             Session s = new Session(opener.apply(cam, tries.getFirst()), tries, now);
             s.lastUsed = now;
@@ -733,7 +740,7 @@ public final class CameraManager {
      */
     public BufferedImage frame(String name) {
         String cam = resolve(name);
-        if (cam == null || !available.getAsBoolean()) {
+        if (cam == null || !canOpen(cam)) {
             return null;
         }
         long now = System.currentTimeMillis();
@@ -782,7 +789,8 @@ public final class CameraManager {
             }
         }
         if (!s.gotFrame) {
-            boolean timedOut = s.feed.failed() || now - s.started > FALLBACK_MS;
+            long firstFrameMs = Ndi.isNdi(cam) ? NDI_CONNECT_MS : FALLBACK_MS;
+            boolean timedOut = s.feed.failed() || now - s.started > firstFrameMs;
             if (timedOut && fallback && s.attempt < s.formats.size() - 1) {
                 // this camera cannot deliver that size / rate: try the next one instead of staying black
                 Format next = s.formats.get(s.attempt + 1);
@@ -805,7 +813,7 @@ public final class CameraManager {
                     fail(cam, s, now);
                     return null;
                 }
-            } else if (timedOut && now - s.started > FALLBACK_MS) {
+            } else if (timedOut && now - s.started > (s.feed.failed() ? FALLBACK_MS : firstFrameMs)) {
                 fail(cam, s, now);
             }
             return null;
@@ -828,7 +836,10 @@ public final class CameraManager {
         s.started = now;
         boolean othersRunning = sessions.entrySet().stream()
                 .anyMatch(e -> !e.getKey().equals(cam) && e.getValue().gotFrame && !e.getValue().failed);
-        s.problem = othersRunning
+        s.problem = Ndi.isNdi(cam)
+                ? "\"" + cam + "\" sends no picture. Check that the phone / sender is on the same network (WiFi) as this "
+                        + "computer and its NDI app is running. It is tried again by itself."
+                : othersRunning
                 ? BANDWIDTH + ": \"" + cam + "\" gives no picture while other cameras run. Connect it to another USB "
                         + "port or controller (USB 3.x), lower its resolution or frame rate, or close unused camera previews."
                 : "\"" + cam + "\" gives no picture. It may be in use by another program (Zoom, Teams, OBS), or need "
@@ -964,6 +975,15 @@ public final class CameraManager {
             log.warn("Camera detection failed", e);
         }
         return new Detection(mergeCameras(directShowCameras(), video, virtual), audio);
+    }
+
+    /** The detected devices plus the NDI sources on the network (none when NDI is not installed). */
+    private static Detection withNdi(Detection d) {
+        List<String> ndi = Ndi.sources();
+        if (ndi.isEmpty()) {
+            return d;
+        }
+        return new Detection(mergeCameras(d.video(), ndi), d.audio());
     }
 
     /** CLSID_VideoInputDeviceCategory: where DirectShow lists capture filters, virtual cameras included. */
