@@ -59,12 +59,10 @@ public class LiveDock extends JPanel {
     private final TransportControls programTransport = new TransportControls(true);
     private final JPanel programMediaRow = Ui.transparent(new BorderLayout(6, 0));
     private final JLabel programMediaLabel = Ui.label("PROGRAM MEDIA", Palette::secondaryText, "small");
-    private final JButton mixerButton = Ui.button("MIXER", "sliders");
     /** Preview audio: off by default so a video in Preview is never heard in the church; on = the monitor device. */
     private final JToggleButton previewMonitorButton = new JToggleButton("PREVIEW AUDIO: OFF",
             com.jamc.worship.ui.theme.Icons.get("audio", com.jamc.worship.ui.theme.Icons.SMALL));
     private java.util.function.Consumer<Boolean> monitorListener = on -> { };
-    private Runnable mixerAction = () -> { };
     private final JButton hideLowerThird = new JButton("Hide Lower Third");
 
     private final ProgramOutput program;
@@ -143,10 +141,6 @@ public class LiveDock extends JPanel {
                 }
             }
         });
-        mixerButton.setToolTipText("All the audio: microphone, camera audio, audio inputs, media, master");
-        mixerButton.setFocusable(false);
-        mixerButton.putClientProperty(FlatClientProperties.STYLE, "font: bold -2; margin: 2,6,2,6");
-        mixerButton.addActionListener(e -> mixerAction.run());
         programMediaRow.add(programTransport, BorderLayout.CENTER);
         programMediaRow.setVisible(false);
         add(programMediaRow, c);
@@ -272,9 +266,6 @@ public class LiveDock extends JPanel {
             row.add(previewMonitorButton);
         }
         boolean program = source == OutputService.Source.PROGRAM;
-        if (program) {
-            row.add(mixerButton); // always here: all the audio is in the mixer, also with only a camera on Program
-        }
         JPanel south = Ui.transparent(new BorderLayout(0, 4));
         south.add(imageNav(program), BorderLayout.NORTH);
         south.add(row, BorderLayout.SOUTH);
@@ -545,15 +536,6 @@ public class LiveDock extends JPanel {
     /** Called with true / false when the operator turns Preview audio monitoring on / off. */
     public void setMonitorListener(java.util.function.Consumer<Boolean> l) {
         monitorListener = l;
-    }
-
-    public void setMixerAction(Runnable r) {
-        mixerAction = r;
-    }
-
-    /** The MIXER button, to anchor the mixer popup. */
-    public JComponent mixerAnchor() {
-        return mixerButton;
     }
 
     /** A recording or the livestream takes this app's sound: Preview stays silent so it is not recorded. */

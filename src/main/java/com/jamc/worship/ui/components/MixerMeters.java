@@ -22,15 +22,24 @@ import java.util.function.Supplier;
  */
 final class MixerMeters {
 
+    /** Shows a channel level: the wave ({@link LevelMeter}) or the vertical bar ({@link VuMeter}). */
+    interface Meter {
+        /** The newest level, 0..1 peak amplitude. */
+        void push(float level);
+
+        /** Shows {@code text} instead of the level (null = the level). */
+        void setMessage(String text);
+    }
+
     private static final Logger log = LoggerFactory.getLogger(MixerMeters.class);
 
     /** A channel: its meter, which input it hears (null = none) and its gain (0 = muted, 1 = 100 %). */
-    private record Channel(LevelMeter meter, Supplier<String> input, DoubleSupplier gain) {
+    private record Channel(Meter meter, Supplier<String> input, DoubleSupplier gain) {
     }
 
     private final StreamManager stream;
     private final List<Channel> channels = new ArrayList<>();
-    private final List<LevelMeter> masters = new ArrayList<>();
+    private final List<Meter> masters = new ArrayList<>();
     private DoubleSupplier masterGain = () -> 1;
     private final Map<String, AudioLevels.Source> open = new HashMap<>();
     private final Map<String, String> failed = new HashMap<>();
@@ -43,12 +52,12 @@ final class MixerMeters {
         this.stream = stream;
     }
 
-    void add(LevelMeter meter, Supplier<String> input, DoubleSupplier gain) {
+    void add(Meter meter, Supplier<String> input, DoubleSupplier gain) {
         channels.add(new Channel(meter, input, gain));
     }
 
     /** The MASTER meter: the loudest channel, times the master gain. */
-    void addMaster(LevelMeter meter, DoubleSupplier gain) {
+    void addMaster(Meter meter, DoubleSupplier gain) {
         masters.add(meter);
         masterGain = gain;
     }
@@ -107,7 +116,7 @@ final class MixerMeters {
             c.meter().push(v);
             loudest = Math.max(loudest, v);
         }
-        for (LevelMeter m : masters) {
+        for (Meter m : masters) {
             m.setMessage(null);
             m.push((float) Math.min(1, loudest * Math.max(0, masterGain.getAsDouble())));
         }

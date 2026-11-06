@@ -27,8 +27,8 @@ public final class UpdateChecker {
     public static final String RELEASES_API = "https://api.github.com/repos/rrwebsolution/jamc-worship-presenter/releases/latest";
     public static final String RELEASES_PAGE = "https://github.com/rrwebsolution/jamc-worship-presenter/releases/latest";
 
-    /** A published version and its Windows installer. */
-    public record Release(String version, String installerUrl, String installerName, long size) {
+    /** A published version and its Windows installer; {@code notes} is its "What's new" (may be empty). */
+    public record Release(String version, String installerUrl, String installerName, long size, String notes) {
     }
 
     /** Settings → General: look for a new version when the app starts. */
@@ -65,7 +65,8 @@ public final class UpdateChecker {
         for (JsonNode a : root.path("assets")) {
             String name = a.path("name").asText("");
             if (name.toLowerCase(java.util.Locale.ROOT).endsWith(".exe")) {
-                return Optional.of(new Release(version, a.path("browser_download_url").asText(), name, a.path("size").asLong()));
+                return Optional.of(new Release(version, a.path("browser_download_url").asText(), name, a.path("size").asLong(),
+                        WhatsNew.fromReleaseBody(root.path("body").asText(""))));
             }
         }
         return Optional.empty();

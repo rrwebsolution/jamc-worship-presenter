@@ -61,7 +61,6 @@ public class TopBar extends JPanel {
     private final JComponent logo;
     private final StatusPill outputPill = new StatusPill("OUTPUT OFF", Palette::mutedText, false);
     private final StatusPill livePill = new StatusPill("LIVE", Palette::mutedText, true);
-    private final StatusPill backgroundPill = new StatusPill("VIDEO BACKGROUND", Palette::live, true);
     /** START / STOP RECORDING from any page; shows the running time while recording. */
     private final JButton recordButton = new JButton("● START REC");
     /** START STREAM from any page (the pre-stream check, then confirm). */
@@ -109,8 +108,6 @@ public class TopBar extends JPanel {
         }
 
         JPanel status = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        backgroundPill.setVisible(false);
-        backgroundPill.setToolTipText("The global background under Preview and Program. Click for its controls.");
         recordButton.setFocusable(false);
         recordButton.putClientProperty(com.formdev.flatlaf.FlatClientProperties.STYLE, REC_IDLE_STYLE);
         recordButton.setToolTipText("Start recording Program as MP4 (folder: Stream page)");
@@ -119,7 +116,6 @@ public class TopBar extends JPanel {
         streamButton.setToolTipText("Start the livestream: checks camera, microphone, encoder and internet first");
         status.add(recordButton);
         status.add(streamButton);
-        status.add(backgroundPill);
         status.add(outputPill);
         status.add(livePill);
         JLabel clock = Ui.label("", Palette::text, null);
@@ -160,46 +156,6 @@ public class TopBar extends JPanel {
 
     public void setOutputActive(boolean active) {
         outputPill.update(active ? "OUTPUT ON" : "OUTPUT OFF", active ? Palette::accent : Palette::mutedText);
-    }
-
-    /** "● VIDEO BACKGROUND" while the global background is on; hidden when it is off. */
-    /** Clicking the small "BG:" indicator (e.g. to open the Backgrounds library and its controls). */
-    public void setBackgroundClick(Runnable action) {
-        backgroundPill.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
-        backgroundPill.addMouseListener(new java.awt.event.MouseAdapter() {
-            @Override
-            public void mouseClicked(java.awt.event.MouseEvent e) {
-                action.run();
-            }
-        });
-    }
-
-    public void setBackgroundState(String text, Supplier<Color> color) {
-        backgroundPill.setVisible(text != null);
-        if (text != null) {
-            // a long file name must never push the main navigation aside: shortened, full name in the tooltip
-            backgroundPill.update(shorten(text, 26), color);
-            backgroundPill.setToolTipText("<html>" + text.replace("&", "&amp;").replace("<", "&lt;")
-                    + "<br>The global background under Preview and Program. Click for its controls.</html>");
-        }
-        revalidate();
-    }
-
-    /**
-     * "BG: Very Long Worship Loop Background 4K.mp4 (paused)" → "BG: Very Long Worship Lo… (paused)":
-     * at most {@code max} characters of the name; a "(paused)"-style ending is kept.
-     */
-    static String shorten(String text, int max) {
-        String suffix = "";
-        int open = text.lastIndexOf(" (");
-        if (open > 0 && text.endsWith(")")) {
-            suffix = text.substring(open);
-            text = text.substring(0, open);
-        }
-        if (text.length() > max) {
-            text = text.substring(0, max - 1).stripTrailing() + "…";
-        }
-        return text + suffix;
     }
 
     /** The REC and STREAM buttons' actions (the Stream page does the work). */

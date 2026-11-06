@@ -97,6 +97,36 @@ jobs:
           name: LiveCat-Multimedia-${{ steps.v.outputs.version }}
           path: dist/*.exe
 
+      # "What's new" comes from src/main/resources/whats-new.md (also inside the app). The app's
+      # "Update available" window reads the part between the whats-new markers, so keep them.
+      - name: Release notes
+        shell: pwsh
+        run: |
+          $v = "${{ steps.v.outputs.version }}"
+          $notes = ""
+          if (Test-Path src/main/resources/whats-new.md) {
+            $notes = (Get-Content src/main/resources/whats-new.md -Raw -Encoding utf8) -replace '(?s)<!--.*?-->', ''
+            $notes = ($notes -replace '(?m)^# .*$', '').Trim()
+          }
+          $body = @"
+          ## What's new
+          <!-- whats-new:start -->
+          $notes
+          <!-- whats-new:end -->
+
+          **Install:** download ``LiveCat-Multimedia-$v.exe`` below and run it.
+          Windows may show "Windows protected your PC": click **More info → Run anyway** (the installer is not code-signed).
+
+          Also install on the laptop:
+          - **VLC media player (64-bit)** from videolan.org: videos, music, cameras
+          - **FFmpeg** for recording / livestream: open Command Prompt and run ``winget install Gyan.FFmpeg``
+
+          YouTube playback downloads its player engine (Chromium) once, on first use, so keep the internet on the first time.
+
+          **User manual:** download ``LiveCat-Multimedia-User-Manual.html`` below and open it in Chrome or Edge.
+          "@
+          Set-Content dist/release-notes.md $body -Encoding utf8
+
       - name: Publish on the Releases page
         uses: softprops/action-gh-release@v2
         with:
@@ -106,14 +136,4 @@ jobs:
           files: |
             dist/*.exe
             dist/LiveCat-Multimedia-User-Manual.html
-          body: |
-            **Install:** download `LiveCat-Multimedia-${{ steps.v.outputs.version }}.exe` below and run it.
-            Windows may show "Windows protected your PC": click **More info → Run anyway** (the installer is not code-signed).
-
-            Also install on the laptop:
-            - **VLC media player (64-bit)** from videolan.org: videos, music, cameras
-            - **FFmpeg** for recording / livestream: open Command Prompt and run `winget install Gyan.FFmpeg`
-
-            YouTube playback downloads its player engine (Chromium) once, on first use, so keep the internet on the first time.
-
-            **User manual:** download `LiveCat-Multimedia-User-Manual.html` below and open it in Chrome or Edge.
+          body_path: dist/release-notes.md

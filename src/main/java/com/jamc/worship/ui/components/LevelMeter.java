@@ -15,7 +15,7 @@ import java.awt.RenderingHints;
  * Green is a good level, yellow loud, red too loud (it may distort). A flat line means silence; a
  * message (e.g. "not connected") replaces the wave when the input cannot be heard.
  */
-public class LevelMeter extends JComponent {
+public class LevelMeter extends JComponent implements MixerMeters.Meter {
 
     private final float[] history = new float[72];
     private int head;
@@ -28,6 +28,7 @@ public class LevelMeter extends JComponent {
     }
 
     /** Adds the newest level (0..1 peak) and moves the wave along. */
+    @Override
     public void push(float level) {
         history[head] = level;
         head = (head + 1) % history.length;
@@ -35,6 +36,7 @@ public class LevelMeter extends JComponent {
     }
 
     /** Shows {@code text} instead of the wave (null = the wave). */
+    @Override
     public void setMessage(String text) {
         if (!java.util.Objects.equals(message, text)) {
             message = text;

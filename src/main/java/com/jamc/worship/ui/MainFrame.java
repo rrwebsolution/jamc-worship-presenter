@@ -272,6 +272,9 @@ public class MainFrame extends JFrame {
     private final JSplitPane scheduleSplit;
     private final JSplitPane verticalSplit;
     private final JSplitPane bottomSplit;
+    /** The workspace beside the always-on AUDIO MIXER (under Program). */
+    private final JSplitPane mixerSplit;
+    private JPanel mixerRegion;
     private final ActionOrderPanel actionOrder;
     /** Slide object that was last sent to Program from the strip (to find it again after reordering). */
     private Slide takenSlide;
@@ -490,6 +493,7 @@ public class MainFrame extends JFrame {
         this.settingsPanel =new SettingsPanel(context, this::changeTheme, shortcuts, obs, hub, this::restartApplication,
                 this::manageBibleVersions);
         settingsPanel.setUpdateCheckHandler(() -> checkForUpdates(true));
+        settingsPanel.setWhatsNewHandler(this::showWhatsNew);
         settingsPanel.setCameraSwitchFadeHandler(ms -> {
             program.setCameraSwitchFade(ms);
             previewState.setCameraSwitchFade(ms);
@@ -609,6 +613,11 @@ public class MainFrame extends JFrame {
             }
 
             @Override
+            public void audioMixerVisibilityChanged() {
+                SwingUtilities.invokeLater(MainFrame.this::applyMixerVisible);
+            }
+
+            @Override
             public List<Scene> scenes() {
                 return scenes;
             }
@@ -635,7 +644,6 @@ public class MainFrame extends JFrame {
             statusBar.showMessage(on ? "Preview audio ON: Preview videos play on the monitor device ("
                     + audioRouting.nameOf(audioRouting.monitorDevice()) + ")." : "Preview audio off: only Program is heard.");
         });
-        liveDock.setMixerAction(this::showMixer);
         hub.cameraAudio().setSink(streamManager::setLiveInputs);
         hub.sceneVideos().addListener(this::updateProgramMedia);
         new javax.swing.Timer(1000, e -> updateProgramMediaNote()).start();
@@ -716,14 +724,21 @@ public class MainFrame extends JFrame {
         workspaces.add(LibraryWorkspaceController.Workspace.THEME, region(themeDetail));
         workspaces.add(LibraryWorkspaceController.Workspace.LOWER_THIRD, region(lowerThirdEditor));
         workspaces.container().setMinimumSize(new Dimension(0, 150));
-        verticalSplit = split(JSplitPane.VERTICAL_SPLIT, librarySplit, workspaces.container(), 0.5);
+        // AUDIO MIXER: always on screen under Program (like OBS), so the sound can be watched while recording
+        // or streaming; Settings → Live can switch it off
+        mixerRegion = region(new com.jamc.worship.ui.components.AudioMixerPanel(audioRouting, streamManager, hub.cameraAudio()));
+        mixerRegion.setBorder(Ui.line(false, true, false, false));
+        mixerRegion.setMinimumSize(new Dimension(190, 150));
+        mixerRegion.setVisible(context.config().getBoolean(SettingsPanel.KEY_SHOW_MIXER, true));
+        mixerSplit = split(JSplitPane.HORIZONTAL_SPLIT, workspaces.container(), mixerRegion, 1.0);
+        verticalSplit = split(JSplitPane.VERTICAL_SPLIT, librarySplit, mixerSplit, 0.5);
         // the LIBRARY navigation runs the full height on the left
         // SCENES and the SERVICE schedule run the full height on the right, like the LIBRARY on the left
         scheduleSplit = split(JSplitPane.HORIZONTAL_SPLIT, verticalSplit, scenesSplit, 1.0);
         sidebarSplit = split(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, scheduleSplit, 0.0);
         // ".v2": the panes moved in the simplified layout, so old saved positions no longer fit
         splits = Map.of("sidebar", sidebarSplit, "library", librarySplit, "schedule.v3", scheduleSplit, "scenes.v3", scenesSplit,
-                "vertical.v2", verticalSplit, "bottom.v2", bottomSplit);
+                "vertical.v2", verticalSplit, "bottom.v2", bottomSplit, "mixer", mixerSplit);
 
         JPanel workspace = Ui.transparent(new BorderLayout());
         // no permanent background bar: its controls live under MEDIA PREVIEW, with a small "BG:" pill in the top bar
@@ -811,6 +826,7 @@ public class MainFrame extends JFrame {
             }
             return null;
         }, x -> { }, err -> log.debug("Update files not removed", err));
+        showWhatsNewAfterUpdate();
         if (context.config().getBoolean(com.jamc.worship.update.UpdateChecker.KEY_AUTO_CHECK, true)) {
             javax.swing.Timer later = new javax.swing.Timer(8000, e -> checkForUpdates(false)); // after startup settles
             later.setRepeats(false);
@@ -819,6 +835,37 @@ public class MainFrame extends JFrame {
     }
 
     // ------------------------------------------------------------------ updates
+
+    /** The first start of a new version (after an update): shows once what is new in it. */
+    private void showWhatsNewAfterUpdate() {
+        String current = com.jamc.worship.update.UpdateChecker.currentVersion();
+        if (current == null) {
+            return; // development copy
+        }
+        String key = com.jamc.worship.update.WhatsNew.KEY_LAST_RUN_VERSION;
+        String last = context.config().get(key, null);
+        if (last == null && context.config().get(AppConfig.KEY_WINDOW_MAXIMIZED, null) != null) {
+            last = "older"; // used before versions were remembered: this start is an update, not a first install
+        }
+        if (!current.equals(last)) {
+            context.config().set(key, current);
+            context.config().save();
+        }
+        if (com.jamc.worship.update.WhatsNew.justUpdated(last, current)) {
+            String notes = com.jamc.worship.update.WhatsNew.bundled();
+            if (!notes.isBlank()) {
+                javax.swing.Timer later = new javax.swing.Timer(1500, e -> showWhatsNew()); // after the window is up
+                later.setRepeats(false);
+                later.start();
+            }
+        }
+    }
+
+    /** Help → What's New: the new features and fixes of this version. */
+    void showWhatsNew() {
+        com.jamc.worship.ui.components.WhatsNewView.show(this, branding.applicationName(),
+                com.jamc.worship.update.UpdateChecker.currentVersion(), com.jamc.worship.update.WhatsNew.bundled());
+    }
 
     /**
      * Looks for a newer version on GitHub. Automatic checks stay quiet when offline, up to date or the
@@ -845,11 +892,13 @@ public class MainFrame extends JFrame {
                 return;
             }
             Object[] options = {"Update Now", "Later", "Skip This Version"};
-            int choice = javax.swing.JOptionPane.showOptionDialog(this, "A new version of " + branding.applicationName()
-                            + " is available.\n\nInstalled:  " + current + "\nNew:  " + release.version()
-                            + String.format("  (%.0f MB download)", release.size() / 1_048_576.0)
-                            + "\n\nUpdate Now downloads it, saves your work, closes the app and opens the installer.\n"
-                            + "Songs, services and settings are kept.",
+            String intro = "A new version of <b>" + branding.applicationName().replace("<", "&lt;") + "</b> is available.<br><br>"
+                    + "Installed: " + current + "<br>New: <b>" + release.version() + "</b>"
+                    + String.format("  (%.0f MB download)", release.size() / 1_048_576.0)
+                    + "<br><br>Update Now downloads it, saves your work, closes the app and opens the installer. "
+                    + "Songs, services and settings are kept.";
+            int choice = javax.swing.JOptionPane.showOptionDialog(this,
+                    com.jamc.worship.ui.components.WhatsNewView.panel(intro, release.notes()),
                     "Update available", javax.swing.JOptionPane.DEFAULT_OPTION, javax.swing.JOptionPane.INFORMATION_MESSAGE,
                     null, options, options[0]);
             if (choice == 0) {
@@ -1345,7 +1394,8 @@ public class MainFrame extends JFrame {
         });
         backgroundPanel.setStatusHandler(statusBar::showMessage);
         backgroundPanel.setBrowseHandler(this::showBackgroundsLibrary);
-        topBar.setBackgroundClick(this::showBackgroundsLibrary);
+        // "BG: Loop.mp4" in the footer (not the top bar: a long name pushed the navigation off screen)
+        statusBar.setBackgroundClick(this::showBackgroundsLibrary);
         globalBackground.addListener(this::updateBackgroundIndicator);
         updateBackgroundIndicator();
         output.addListener(this::updateLiveIndicators);
@@ -3968,69 +4018,14 @@ public class MainFrame extends JFrame {
         return p != null && p.audioTrackCount() == 0 ? "No audio track" : null;
     }
 
-    private javax.swing.JDialog mixerDialog;
-    private com.jamc.worship.ui.components.AudioMixerPanel mixerPanel;
 
-    /**
-     * MIXER: a dialog (stays open beside the work) with the microphone and camera audio inputs to choose,
-     * and the volume / mute of microphone, camera audio, media and master.
-     */
-    private void showMixer() {
-        if (mixerDialog == null) {
-            mixerPanel = new com.jamc.worship.ui.components.AudioMixerPanel(audioRouting, streamManager, hub.cameraAudio());
-            hub.cameraAudio().addListener(() -> { // another scene on Program: its audio inputs appear
-                if (mixerDialog.isVisible()) {
-                    mixerPanel.reload();
-                    mixerDialog.pack();
-                }
-            });
-            mixerDialog = new javax.swing.JDialog(this, "Audio Mixer", false);
-            JPanel content = new JPanel(new BorderLayout());
-            content.add(mixerPanel, BorderLayout.CENTER);
-            JButton close = Ui.button("Close", null);
-            close.addActionListener(e -> mixerDialog.setVisible(false));
-            // a Bluetooth headset or USB microphone plugged in after the app started appears after a refresh
-            JButton refresh = Ui.button("Refresh Inputs", "refresh");
-            refresh.setToolTipText("Look for sound inputs again (e.g. a Bluetooth headset or USB microphone just connected)");
-            refresh.addActionListener(e -> {
-                mixerFilled = false;
-                streamManager.refreshCapabilities();
-            });
-            JPanel buttons = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 8, 8));
-            buttons.add(refresh);
-            buttons.add(close);
-            content.add(buttons, BorderLayout.SOUTH);
-            mixerDialog.setContentPane(content);
-            mixerDialog.getRootPane().registerKeyboardAction(e -> mixerDialog.setVisible(false),
-                    javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_ESCAPE, 0),
-                    JComponent.WHEN_IN_FOCUSED_WINDOW);
-            // the input lists fill in once FFmpeg has listed the sound inputs
-            streamManager.addListener(() -> {
-                if (mixerDialog.isVisible() && streamManager.capabilities() != null && !streamManager.isProbing() && !mixerFilled) {
-                    mixerFilled = true;
-                    mixerPanel.reload();
-                    mixerDialog.pack();
-                }
-            });
-        }
-        mixerFilled = streamManager.capabilities() != null;
-        if (!mixerFilled) {
-            streamManager.refreshCapabilities();
-        }
-        mixerPanel.reload();
-        mixerDialog.pack();
-        mixerDialog.setLocationRelativeTo(this);
-        mixerDialog.setVisible(true);
-    }
-
-    private boolean mixerFilled;
-
+    /** "BG: Loop.mp4" in the footer while there is a global background (Take as Background). */
     private void updateBackgroundIndicator() {
         String name = globalBackground.path() == null ? null : GlobalBackgroundPanel.displayName(globalBackground.path());
         switch (globalBackground.status()) {
-            case ACTIVE -> topBar.setBackgroundState("BG: " + name, Palette::live);
-            case PAUSED -> topBar.setBackgroundState("BG: " + name + " (paused)", Palette::warning);
-            default -> topBar.setBackgroundState(null, null);
+            case ACTIVE -> statusBar.setBackgroundState("BG: " + name, Palette::live);
+            case PAUSED -> statusBar.setBackgroundState("BG: " + name + " (paused)", Palette::warning);
+            default -> statusBar.setBackgroundState(null, null);
         }
     }
 
@@ -4216,6 +4211,7 @@ public class MainFrame extends JFrame {
             topBar.selectPage(TopBar.Page.SETTINGS);
             showPage(TopBar.Page.SETTINGS);
         }));
+        help.add(menuItem("What's New", null, null, this::showWhatsNew));
         help.add(menuItem("About…", null, null, () -> javax.swing.JOptionPane.showMessageDialog(this,
                 new Object[]{Ui.label(branding.applicationName(), Palette::text, "h4"),
                         Ui.label(BrandingManager.TAGLINE, Palette::accent, null),
@@ -4368,7 +4364,35 @@ public class MainFrame extends JFrame {
             setDivider("scenes.v3", Math.max(240, (int) (scenesSplit.getHeight() * 0.5)));
             setDivider("vertical.v2", Math.max(300, (int) (height * 0.45)));
             setDivider("bottom.v2", Math.max(420, (int) (bottomSplit.getWidth() * 0.6)));
+            setDivider("mixer", mixerFallback());
+            keepMixerOnScreen();
         });
+    }
+
+    /** The mixer's default width: all its strips when they fit, at most about a third of the workspace. */
+    private int mixerFallback() {
+        int want = Math.min(mixerRegion.getPreferredSize().width + 4, Math.max(200, mixerSplit.getWidth() / 3));
+        return Math.max(0, mixerSplit.getWidth() - mixerSplit.getDividerSize() - want);
+    }
+
+    /** A saved position from a wider screen (or from while the mixer was off) must not hide the mixer. */
+    private void keepMixerOnScreen() {
+        if (mixerRegion.isVisible() && mixerSplit.getWidth() > 0
+                && mixerSplit.getWidth() - mixerSplit.getDividerLocation() < mixerRegion.getMinimumSize().width) {
+            mixerSplit.setDividerLocation(mixerFallback());
+        }
+    }
+
+    /** Settings → Show the Audio Mixer: shows or hides it under Program. */
+    private void applyMixerVisible() {
+        boolean show = context.config().getBoolean(SettingsPanel.KEY_SHOW_MIXER, true);
+        if (mixerRegion.isVisible() != show) {
+            mixerRegion.setVisible(show);
+            mixerSplit.revalidate();
+            if (show) {
+                SwingUtilities.invokeLater(() -> mixerSplit.setDividerLocation(mixerFallback()));
+            }
+        }
     }
 
     private void setDivider(String key, int fallback) {

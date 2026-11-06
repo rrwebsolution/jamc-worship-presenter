@@ -58,6 +58,8 @@ public class SettingsPanel extends JPanel {
     /** Clicking a song lyrics slide sends it straight to Program (Bible, PowerPoint and media still use Preview + TAKE). */
     public static final String KEY_SONG_CLICK_LIVE = "live.songClickGoesLive";
     public static final String KEY_SEPARATE_BIBLE = "live.separateBible";
+    /** The Audio Mixer under Preview / Program (on unless switched off). */
+    public static final String KEY_SHOW_MIXER = "ui.showAudioMixer";
     public static final String KEY_SEPARATE_PRESENTATION = "live.separatePresentation";
     public static final String KEY_SEPARATE_VIDEOS = "live.separateVideos";
     public static final String KEY_SEPARATE_IMAGES = "live.separateImages";
@@ -132,6 +134,10 @@ public class SettingsPanel extends JPanel {
 
         /** Separate Lyrics, Bible or Presentation changed. */
         default void contentSeparationChanged() {
+        }
+
+        /** "Show the Audio Mixer under Preview / Program" changed. */
+        default void audioMixerVisibilityChanged() {
         }
 
         List<com.jamc.worship.model.Scene> scenes();
@@ -217,10 +223,13 @@ public class SettingsPanel extends JPanel {
                 com.jamc.worship.update.UpdateChecker.KEY_AUTO_CHECK, true);
         JButton checkUpdates = Ui.button("Check for Updates", "refresh");
         checkUpdates.addActionListener(e -> updateCheck.run());
+        JButton whatsNew = Ui.button("What's New", null);
+        whatsNew.setToolTipText("The new features and fixes in this version");
+        whatsNew.addActionListener(e -> whatsNewAction.run());
         String version = com.jamc.worship.update.UpdateChecker.currentVersion();
         JPanel general = rows(flow(Ui.small("Application theme:"), dark, light), reopen, openOutput,
                 Ui.label("Songs, slides, themes and services save automatically as you work.", Palette::mutedText, "small"),
-                autoUpdate, flow(checkUpdates, Ui.small("Version " + (version == null ? "(development)" : version))));
+                autoUpdate, flow(checkUpdates, whatsNew, Ui.small("Version " + (version == null ? "(development)" : version))));
         content.add(section("General", "Look and startup behaviour", general), c);
         c.gridy++;
 
@@ -467,6 +476,13 @@ public class SettingsPanel extends JPanel {
     /** General → Check for Updates. */
     public void setUpdateCheckHandler(Runnable handler) {
         updateCheck = handler == null ? () -> { } : handler;
+    }
+
+    private Runnable whatsNewAction = () -> { };
+
+    /** General → What's New. */
+    public void setWhatsNewHandler(Runnable handler) {
+        whatsNewAction = handler == null ? () -> { } : handler;
     }
 
     /** Refreshes database, theme, VLC and camera information (queries run in the background). */
@@ -881,6 +897,10 @@ public class SettingsPanel extends JPanel {
         JLabel ffmpeg = Ui.secondary(" ");
         JButton locateFfmpeg = Ui.button("Locate FFmpeg…", "search");
         JCheckBox muteMics = new JCheckBox("Mute the microphones in the recording / livestream while a video or music plays");
+        // on by default: the sound must be watchable while recording or streaming
+        JCheckBox showMixer = checkbox("Show the Audio Mixer under Preview / Program (faders and level meters)",
+                KEY_SHOW_MIXER, true);
+        showMixer.addActionListener(e -> h.audioMixerVisibilityChanged());
         quality.addActionListener(e -> {
             if (!syncing && quality.getSelectedItem() instanceof com.jamc.worship.stream.StreamSettings.Preset p) {
                 stream.saveSettings(stream.settings().withPreset(p));
@@ -953,7 +973,7 @@ public class SettingsPanel extends JPanel {
         stream.addListener(() -> SwingUtilities.invokeLater(syncRecording));
         recordingBody.add(rows(flow(Ui.small("Quality:"), quality, Ui.small("Encoder:"), encoder),
                 flow(Ui.small("Recordings folder:"), folder), flow(chooseFolder, defaultFolder, openFolder),
-                flow(ffmpeg, locateFfmpeg), muteMics,
+                flow(ffmpeg, locateFfmpeg), muteMics, showMixer,
                 Ui.label("<html>Platform, stream key, bitrates and audio devices are on the Stream page; these settings are "
                         + "shared with it.</html>", Palette::mutedText, "small")), BorderLayout.CENTER);
         liveSync.add(syncRecording);
