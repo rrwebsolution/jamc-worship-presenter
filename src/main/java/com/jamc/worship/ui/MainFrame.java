@@ -272,8 +272,9 @@ public class MainFrame extends JFrame {
     private final JSplitPane scheduleSplit;
     private final JSplitPane verticalSplit;
     private final JSplitPane bottomSplit;
-    /** The workspace beside the always-on AUDIO MIXER (under Program). */
-    private final JSplitPane mixerSplit;
+    /** The LIBRARY navigation above the SERVICE schedule (left column). */
+    private final JSplitPane navSplit;
+    /** The always-on AUDIO MIXER, under the Scenes (right column). */
     private JPanel mixerRegion;
     private final ActionOrderPanel actionOrder;
     /** Slide object that was last sent to Program from the strip (to find it again after reordering). */
@@ -682,15 +683,25 @@ public class MainFrame extends JFrame {
         detailPanel.setMinimumSize(new Dimension(320, 0));
         scheduleColumn.setMinimumSize(new Dimension(210, 0));
 
-        // Library | PRESENTATION AREA (Preview · TAKE · Program) | Service schedule
+        // LIBRARY navigation | Library | PRESENTATION AREA (Preview · TAKE · Program) | Scenes + Audio Mixer
         livePanel = region(liveDock);
         livePanel.setMinimumSize(new Dimension(480, 0));
-        // SCENES (how the output is arranged) above the service schedule
+        // AUDIO MIXER: always on screen under the Scenes (like OBS), so the sound can be watched while recording
+        // or streaming; Settings → Recording & Livestream can switch it off
+        mixerRegion = region(new com.jamc.worship.ui.components.AudioMixerPanel(audioRouting, streamManager, hub.cameraAudio()));
+        mixerRegion.setMinimumSize(new Dimension(0, 150));
+        mixerRegion.setVisible(context.config().getBoolean(SettingsPanel.KEY_SHOW_MIXER, true));
+        // SCENES (how the output is arranged) above the audio mixer
         scenesDock = new com.jamc.worship.ui.components.ScenesDock(sceneHost);
         JPanel scenesPanelRegion = region(scenesDock);
         scenesPanelRegion.setBorder(Ui.line(false, false, true, false));
-        scenesSplit = split(JSplitPane.VERTICAL_SPLIT, scenesPanelRegion, scheduleColumn, 0.45);
+        scenesPanelRegion.setMinimumSize(new Dimension(0, 120));
+        scenesSplit = split(JSplitPane.VERTICAL_SPLIT, scenesPanelRegion, mixerRegion, 0.5);
         scenesSplit.setMinimumSize(new Dimension(250, 0));
+        // the SERVICE schedule under the LIBRARY navigation on the left
+        sidebarPanel.setMinimumSize(new Dimension(0, 120));
+        navSplit = split(JSplitPane.VERTICAL_SPLIT, sidebarPanel, scheduleColumn, 0.5);
+        navSplit.setMinimumSize(new Dimension(210, 0));
 
         librarySplit = split(JSplitPane.HORIZONTAL_SPLIT, libraryHolder, livePanel, 0.0);
 
@@ -724,21 +735,13 @@ public class MainFrame extends JFrame {
         workspaces.add(LibraryWorkspaceController.Workspace.THEME, region(themeDetail));
         workspaces.add(LibraryWorkspaceController.Workspace.LOWER_THIRD, region(lowerThirdEditor));
         workspaces.container().setMinimumSize(new Dimension(0, 150));
-        // AUDIO MIXER: always on screen under Program (like OBS), so the sound can be watched while recording
-        // or streaming; Settings → Live can switch it off
-        mixerRegion = region(new com.jamc.worship.ui.components.AudioMixerPanel(audioRouting, streamManager, hub.cameraAudio()));
-        mixerRegion.setBorder(Ui.line(false, true, false, false));
-        mixerRegion.setMinimumSize(new Dimension(190, 150));
-        mixerRegion.setVisible(context.config().getBoolean(SettingsPanel.KEY_SHOW_MIXER, true));
-        mixerSplit = split(JSplitPane.HORIZONTAL_SPLIT, workspaces.container(), mixerRegion, 1.0);
-        verticalSplit = split(JSplitPane.VERTICAL_SPLIT, librarySplit, mixerSplit, 0.5);
-        // the LIBRARY navigation runs the full height on the left
-        // SCENES and the SERVICE schedule run the full height on the right, like the LIBRARY on the left
+        verticalSplit = split(JSplitPane.VERTICAL_SPLIT, librarySplit, workspaces.container(), 0.5);
+        // LIBRARY navigation + SERVICE run the full height on the left, SCENES + AUDIO MIXER on the right
         scheduleSplit = split(JSplitPane.HORIZONTAL_SPLIT, verticalSplit, scenesSplit, 1.0);
-        sidebarSplit = split(JSplitPane.HORIZONTAL_SPLIT, sidebarPanel, scheduleSplit, 0.0);
-        // ".v2": the panes moved in the simplified layout, so old saved positions no longer fit
-        splits = Map.of("sidebar", sidebarSplit, "library", librarySplit, "schedule.v3", scheduleSplit, "scenes.v3", scenesSplit,
-                "vertical.v2", verticalSplit, "bottom.v2", bottomSplit, "mixer", mixerSplit);
+        sidebarSplit = split(JSplitPane.HORIZONTAL_SPLIT, navSplit, scheduleSplit, 0.0);
+        // ".v2"/".v4": the panes moved, so old saved positions no longer fit
+        splits = Map.of("sidebar.v2", sidebarSplit, "library", librarySplit, "schedule.v3", scheduleSplit, "scenes.v4", scenesSplit,
+                "vertical.v2", verticalSplit, "bottom.v2", bottomSplit, "nav", navSplit);
 
         JPanel workspace = Ui.transparent(new BorderLayout());
         // no permanent background bar: its controls live under MEDIA PREVIEW, with a small "BG:" pill in the top bar
@@ -4358,39 +4361,39 @@ public class MainFrame extends JFrame {
         SwingUtilities.invokeLater(() -> {
             int width = sidebarSplit.getWidth();
             int height = verticalSplit.getHeight();
-            setDivider("sidebar", 196);
+            setDivider("sidebar.v2", Math.max(230, Math.min(270, (int) (width * 0.16))));
             setDivider("library", Math.max(260, Math.min(330, (int) (width * 0.2))));
             setDivider("schedule.v3", scheduleSplit.getWidth() - Math.max(270, Math.min(310, (int) (width * 0.18))));
-            setDivider("scenes.v3", Math.max(240, (int) (scenesSplit.getHeight() * 0.5)));
+            setDivider("scenes.v4", mixerFallback());
             setDivider("vertical.v2", Math.max(300, (int) (height * 0.45)));
             setDivider("bottom.v2", Math.max(420, (int) (bottomSplit.getWidth() * 0.6)));
-            setDivider("mixer", mixerFallback());
+            // the Library navigation (More closed) on top, the rest of the height for the Service schedule
+            setDivider("nav", Math.min(sidebar.getPreferredSize().height + 4, (int) (navSplit.getHeight() * 0.55)));
             keepMixerOnScreen();
         });
     }
 
-    /** The mixer's default width: all its strips when they fit, at most about a third of the workspace. */
+    /** The Scenes / Audio Mixer divider by default: the mixer gets about 290 px (its faders and meters). */
     private int mixerFallback() {
-        int want = Math.min(mixerRegion.getPreferredSize().width + 4, Math.max(200, mixerSplit.getWidth() / 3));
-        return Math.max(0, mixerSplit.getWidth() - mixerSplit.getDividerSize() - want);
+        return Math.max(140, scenesSplit.getHeight() - scenesSplit.getDividerSize() - 290);
     }
 
-    /** A saved position from a wider screen (or from while the mixer was off) must not hide the mixer. */
+    /** A saved position from a taller screen (or from while the mixer was off) must not hide the mixer. */
     private void keepMixerOnScreen() {
-        if (mixerRegion.isVisible() && mixerSplit.getWidth() > 0
-                && mixerSplit.getWidth() - mixerSplit.getDividerLocation() < mixerRegion.getMinimumSize().width) {
-            mixerSplit.setDividerLocation(mixerFallback());
+        if (mixerRegion.isVisible() && scenesSplit.getHeight() > 0
+                && scenesSplit.getHeight() - scenesSplit.getDividerLocation() < mixerRegion.getMinimumSize().height) {
+            scenesSplit.setDividerLocation(mixerFallback());
         }
     }
 
-    /** Settings → Show the Audio Mixer: shows or hides it under Program. */
+    /** Settings → Show the Audio Mixer: shows or hides it under the Scenes. */
     private void applyMixerVisible() {
         boolean show = context.config().getBoolean(SettingsPanel.KEY_SHOW_MIXER, true);
         if (mixerRegion.isVisible() != show) {
             mixerRegion.setVisible(show);
-            mixerSplit.revalidate();
+            scenesSplit.revalidate();
             if (show) {
-                SwingUtilities.invokeLater(() -> mixerSplit.setDividerLocation(mixerFallback()));
+                SwingUtilities.invokeLater(() -> scenesSplit.setDividerLocation(mixerFallback()));
             }
         }
     }

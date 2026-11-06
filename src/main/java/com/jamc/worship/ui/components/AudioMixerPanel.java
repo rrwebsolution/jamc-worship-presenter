@@ -38,7 +38,7 @@ import java.util.function.IntConsumer;
  */
 public class AudioMixerPanel extends JPanel {
 
-    private static final int STRIP_WIDTH = 92;
+    private static final int STRIP_WIDTH = 72;
 
     private final AudioRouting routing;
     private final StreamManager stream;
@@ -112,11 +112,11 @@ public class AudioMixerPanel extends JPanel {
         filledCaps = stream.capabilities();
         StreamSettings s = stream.settings();
 
-        strip("MICROPHONE", "INPUT", deviceBox(s.micDevice(), s.auxDevice(), true), "The microphone for the livestream and recordings",
+        strip("MIC", "INPUT", deviceBox(s.micDevice(), s.auxDevice(), true), "The microphone for the livestream and recordings",
                 s.micVolume(), s.micMuted(), v -> saveStream(st -> with(st, v, null, null, null, null, null, null, null)),
                 m -> saveStream(st -> with(st, null, m, null, null, null, null, null, null)), s.micDevice() != null,
                 s.micDevice(), true);
-        strip("CAMERA AUDIO", "INPUT", deviceBox(s.auxDevice(), s.micDevice(), false),
+        strip("CAMERA", "INPUT", deviceBox(s.auxDevice(), s.micDevice(), false),
                 "Camera or capture-card sound for the livestream and recordings",
                 s.auxVolume(), s.auxMuted(), v -> saveStream(st -> with(st, null, null, v, null, null, null, null, null)),
                 m -> saveStream(st -> with(st, null, null, null, m, null, null, null, null)), s.auxDevice() != null,

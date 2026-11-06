@@ -81,9 +81,11 @@ public class Sidebar extends JPanel {
         content.add(categories);
 
         content.add(javax.swing.Box.createVerticalStrut(14));
-        content.add(captionRow("More"));
+        // "More" is an accordion, closed by default: the ⋯ button (or the caption) opens it
+        content.add(moreRow());
         configureList(more, false);
         more.setCellRenderer(new NavRenderer<>(c -> c.icon(), Category::title, c -> true));
+        more.setVisible(false);
         content.add(more);
 
         content.add(javax.swing.Box.createVerticalStrut(14));
@@ -150,7 +152,59 @@ public class Sidebar extends JPanel {
     }
 
     public void selectCategory(Category category) {
+        if (!category.library()) {
+            setMoreOpen(true); // the chosen tool must be visible
+        }
         (category.library() ? categories : more).setSelectedValue(category, true);
+    }
+
+    private final javax.swing.JButton moreButton = new javax.swing.JButton(Icons.get("more-horizontal", Icons.MEDIUM));
+    private final JLabel moreArrow = new JLabel();
+
+    /** "MORE ›  ⋯": clicking the caption or the ⋯ button opens / closes the More list. */
+    private JComponent moreRow() {
+        JPanel row = Ui.transparent(new BorderLayout(4, 0));
+        row.setBorder(BorderFactory.createEmptyBorder(0, 16, 0, 8));
+        row.setAlignmentX(LEFT_ALIGNMENT);
+        row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 28));
+        JPanel left = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+        left.add(Ui.caption("More"));
+        left.add(moreArrow);
+        row.add(left, BorderLayout.WEST);
+        moreButton.putClientProperty(com.formdev.flatlaf.FlatClientProperties.BUTTON_TYPE,
+                com.formdev.flatlaf.FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
+        moreButton.setFocusable(false);
+        moreButton.setMargin(new java.awt.Insets(2, 6, 2, 6));
+        moreButton.addActionListener(e -> setMoreOpen(!more.isVisible()));
+        row.add(moreButton, BorderLayout.EAST);
+        row.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+        row.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                setMoreOpen(!more.isVisible());
+            }
+        });
+        syncMoreRow();
+        return row;
+    }
+
+    /** Opens or closes the More list (Custom Slides, Themes, Lower Thirds, Favorite Lyrics, All Media). */
+    public void setMoreOpen(boolean open) {
+        if (more.isVisible() != open) {
+            more.setVisible(open);
+            syncMoreRow();
+            revalidate();
+            repaint();
+        }
+    }
+
+    private void syncMoreRow() {
+        boolean open = more.isVisible();
+        moreArrow.setIcon(Icons.get(open ? "chevron-down" : "chevron-right", Icons.SMALL, Palette::mutedText));
+        String tip = open ? "Hide More (Custom Slides, Themes, Lower Thirds, Favorite Lyrics, All Media)"
+                : "Show More: Custom Slides, Themes, Lower Thirds, Favorite Lyrics, All Media";
+        moreButton.setToolTipText(tip);
+        moreButton.getAccessibleContext().setAccessibleName(tip);
     }
 
     /** Marks this category as selected without telling the listeners (the caller shows its library itself). */

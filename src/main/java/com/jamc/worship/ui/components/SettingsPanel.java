@@ -136,7 +136,7 @@ public class SettingsPanel extends JPanel {
         default void contentSeparationChanged() {
         }
 
-        /** "Show the Audio Mixer under Preview / Program" changed. */
+        /** "Show the Audio Mixer" changed. */
         default void audioMixerVisibilityChanged() {
         }
 
@@ -898,7 +898,7 @@ public class SettingsPanel extends JPanel {
         JButton locateFfmpeg = Ui.button("Locate FFmpeg…", "search");
         JCheckBox muteMics = new JCheckBox("Mute the microphones in the recording / livestream while a video or music plays");
         // on by default: the sound must be watchable while recording or streaming
-        JCheckBox showMixer = checkbox("Show the Audio Mixer under Preview / Program (faders and level meters)",
+        JCheckBox showMixer = checkbox("Show the Audio Mixer under the Scenes (faders and level meters)",
                 KEY_SHOW_MIXER, true);
         showMixer.addActionListener(e -> h.audioMixerVisibilityChanged());
         quality.addActionListener(e -> {

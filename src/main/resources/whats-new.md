@@ -5,13 +5,17 @@
   Replace the list for every release. Format: "## Heading", "- item", **bold**, `code`.
 -->
 
-## Audio
-- **Audio Mixer always on screen:** the mixer is now under Program (bottom right), like OBS, so the sound can be watched while recording or streaming. No more MIXER button.
-- Each channel (Microphone, Camera Audio, Media, the Program scene's inputs, Master) has a vertical fader, a level meter (green / yellow / red), its dB and a mute button.
-- Choose the microphone and camera audio input right in the mixer. Double-click a fader to set it back to 0 dB.
-- Settings → Recording & Livestream → "Show the Audio Mixer under Preview / Program" hides or shows it (on by default).
+## New Control page layout
+- **Audio Mixer always on screen:** it is now under the Scenes on the right, like OBS, so the sound can be watched while recording or streaming. No more MIXER button.
+- **Service schedule on the left,** under the Library.
+- **More** in the Library is folded to save room: click **⋯** (or "More") to open Custom Slides, Themes, Lower Thirds, Favorite Lyrics and All Media.
 
-## Top bar
+## Audio
+- Each mixer channel (Mic, Camera, Media, the Program scene's inputs, Master) has a vertical fader, a level meter (green / yellow / red), its dB and a mute button.
+- Choose the microphone and camera audio input right in the mixer. Double-click a fader to set it back to 0 dB.
+- Settings → Recording & Livestream → "Show the Audio Mixer under the Scenes" hides or shows it (on by default).
+
+## Footer
 - The video background ("BG: file name") is now shown in the footer at the bottom instead of the top bar, so a long name can't push the Settings navigation off screen. Click it to open the background controls.
 
 ## Updates
