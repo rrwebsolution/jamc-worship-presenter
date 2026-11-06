@@ -63,6 +63,7 @@ public class Sidebar extends JPanel {
     private final JList<String> playlists = new JList<>(PLAYLISTS.toArray(String[]::new));
     private final List<Consumer<Category>> categoryListeners = new ArrayList<>();
     private final List<Consumer<String>> playlistListeners = new ArrayList<>();
+    private final List<Consumer<Category>> reselectListeners = new ArrayList<>();
 
     public Sidebar() {
         super(new BorderLayout());
@@ -105,6 +106,25 @@ public class Sidebar extends JPanel {
                     categoryListeners.forEach(l -> l.accept(list.getSelectedValue()));
                 }
             });
+            // a click on the category that is already selected changes no selection: report it separately
+            list.addMouseListener(new java.awt.event.MouseAdapter() {
+                private int pressedSelected = -1;
+
+                @Override
+                public void mousePressed(java.awt.event.MouseEvent e) {
+                    int i = list.locationToIndex(e.getPoint());
+                    pressedSelected = i >= 0 && list.isSelectedIndex(i) ? i : -1;
+                }
+
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    int i = list.locationToIndex(e.getPoint());
+                    if (javax.swing.SwingUtilities.isLeftMouseButton(e) && i >= 0 && i == pressedSelected) {
+                        Category c = list.getModel().getElementAt(i);
+                        reselectListeners.forEach(l -> l.accept(c));
+                    }
+                }
+            });
         }
         playlists.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && playlists.getSelectedValue() != null) {
@@ -115,6 +135,11 @@ public class Sidebar extends JPanel {
 
     public void addCategoryListener(Consumer<Category> listener) {
         categoryListeners.add(listener);
+    }
+
+    /** Called when the operator clicks the category that is already selected. */
+    public void addCategoryReselectListener(Consumer<Category> listener) {
+        reselectListeners.add(listener);
     }
 
     public void addPlaylistListener(Consumer<String> listener) {

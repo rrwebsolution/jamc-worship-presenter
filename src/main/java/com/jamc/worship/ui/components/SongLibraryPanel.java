@@ -78,6 +78,7 @@ public class SongLibraryPanel extends JPanel {
     private final JButton addToServiceButton = Ui.primaryButton("Add to Service", "list-plus");
 
     private final List<SongSelectionListener> selectionListeners = new ArrayList<>();
+    private Runnable rowClickHandler = () -> { };
     private final ThemeService themeService;
     private final StyleForm.ImageImporter importer;
 
@@ -179,6 +180,8 @@ public class SongLibraryPanel extends JPanel {
             public void mouseClicked(MouseEvent e) {
                 if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2 && rowAt(e) >= 0) {
                     editSelected();
+                } else if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 1 && rowAt(e) >= 0) {
+                    rowClickHandler.run();
                 }
             }
 
@@ -249,6 +252,11 @@ public class SongLibraryPanel extends JPanel {
     }
 
     // ------------------------------------------------------------------ public API
+
+    /** Called on a single click on a song row (also on the song that is already selected). */
+    public void setRowClickHandler(Runnable handler) {
+        this.rowClickHandler = handler;
+    }
 
     public void addSelectionListener(SongSelectionListener listener) {
         selectionListeners.add(listener);

@@ -82,6 +82,9 @@ public class ServiceSchedulePanel extends JPanel {
     private boolean pendingSave;
     private Consumer<String> statusHandler = s -> { };
     private Consumer<ServiceItem> activationHandler = i -> { };
+    private Consumer<ServiceItem> removalHandler = i -> { };
+    /** True while the selection moves after a removal: the neighbour is selected but not presented. */
+    private boolean suppressActivation;
     private Runnable openServicesHandler = () -> { };
     private Consumer<Service> serviceChangedHandler = s -> { };
     private Supplier<List<ServiceItem>> lowerThirdChoices = List::of;
@@ -107,7 +110,7 @@ public class ServiceSchedulePanel extends JPanel {
         list.setTransferHandler(new ScheduleTransferHandler());
         list.addListSelectionListener(e -> {
             updateButtons();
-            if (!e.getValueIsAdjusting() && list.getSelectedValue() != null) {
+            if (!e.getValueIsAdjusting() && !suppressActivation && list.getSelectedValue() != null) {
                 activationHandler.accept(list.getSelectedValue());
             }
         });
@@ -190,6 +193,11 @@ public class ServiceSchedulePanel extends JPanel {
     /** Called when the operator selects an item, to present it. */
     public void setActivationHandler(Consumer<ServiceItem> handler) {
         this.activationHandler = handler;
+    }
+
+    /** Called after an item was removed from the schedule (e.g. so the workspace stops showing it). */
+    public void setRemovalHandler(Consumer<ServiceItem> handler) {
+        this.removalHandler = handler;
     }
 
     public void setOpenServicesHandler(Runnable handler) {
@@ -347,11 +355,17 @@ public class ServiceSchedulePanel extends JPanel {
                 + "\" from this service?\n(The song or media stays in the library.)", "Remove")) {
             return;
         }
-        model.remove(i);
-        if (!model.isEmpty()) {
-            list.setSelectedIndex(Math.min(i, model.size() - 1));
+        suppressActivation = true; // removing never presents the next item; the workspace returns to the library
+        try {
+            model.remove(i);
+            if (!model.isEmpty()) {
+                list.setSelectedIndex(Math.min(i, model.size() - 1));
+            }
+        } finally {
+            suppressActivation = false;
         }
         changed();
+        removalHandler.accept(removed);
         statusHandler.accept("Removed \"" + removed.getTitle() + "\" from the service");
     }
 

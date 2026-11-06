@@ -1020,14 +1020,22 @@ public class MainFrame extends JFrame {
                 context.config().save();
             }
         });
+        // clicking the category already selected (e.g. Lyrics) leaves a service item's own slides (Blank, …)
+        sidebar.addCategoryReselectListener(category -> leaveItemWorkspace());
         sidebar.addPlaylistListener(this::openPlaylist);
 
         songLibrary.setStatusHandler(statusBar::showMessage);
         songLibrary.setAddToServiceHandler(song -> schedule.addItem(ServiceItem.ofSong(song)));
         songLibrary.addSelectionListener(this::onSongLoaded);
+        songLibrary.setRowClickHandler(this::leaveItemWorkspace);
 
         schedule.setStatusHandler(statusBar::showMessage);
         schedule.setActivationHandler(this::presentItem);
+        schedule.setRemovalHandler(removed -> {
+            if (removed == currentTextItem) {
+                leaveItemWorkspace(); // the removed item is no longer shown: back to the library's active content
+            }
+        });
         schedule.setOpenServicesHandler(() -> {
             topBar.selectPage(TopBar.Page.SERVICE);
             showPage(TopBar.Page.SERVICE);
@@ -1421,7 +1429,24 @@ public class MainFrame extends JFrame {
         songStyle = loaded == null ? null : loaded.style();
         if (stripSource == StripSource.SONG) {
             showSongSlides();
+        } else if (stripSource == StripSource.ITEM && loaded != null
+                && (activeCategory == Sidebar.Category.SONGS || activeCategory == Sidebar.Category.FAVORITES)) {
+            leaveItemWorkspace(); // a song picked while a service item (Blank, …) was showing: the lyrics return
         }
+    }
+
+    /**
+     * Stops showing a service item's own slides (Blank, announcement, sermon) and shows the library's active
+     * category again. Preview and Program are left as they are.
+     */
+    private void leaveItemWorkspace() {
+        if (stripSource != StripSource.ITEM) {
+            return;
+        }
+        currentTextItem = null;
+        stripSource = StripSource.NONE;
+        Sidebar.Category category = activeCategory != null ? activeCategory : sidebar.selectedCategory();
+        showCategory(category != null ? category : Sidebar.Category.SONGS);
     }
 
     /** A global typography profile changed in Settings: restyle what is showing; Program waits for TAKE. */
@@ -1702,6 +1727,11 @@ public class MainFrame extends JFrame {
     private void presentItem(ServiceItem item) {
         topBar.selectPage(TopBar.Page.LIBRARY);
         showPage(TopBar.Page.LIBRARY);
+        switch (item.getType()) {
+            case ANNOUNCEMENT, SERMON, BLANK -> { }
+            // library content after a Blank / text item: its category may already be selected (no event), so leave first
+            default -> leaveItemWorkspace();
+        }
         switch (item.getType()) {
             case SONG -> {
                 if (item.getRefId() != null) {
