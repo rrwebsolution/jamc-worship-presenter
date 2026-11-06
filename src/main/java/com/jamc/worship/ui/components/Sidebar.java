@@ -64,6 +64,7 @@ public class Sidebar extends JPanel {
     private final List<Consumer<Category>> categoryListeners = new ArrayList<>();
     private final List<Consumer<String>> playlistListeners = new ArrayList<>();
     private final List<Consumer<Category>> reselectListeners = new ArrayList<>();
+    private boolean quiet;
 
     public Sidebar() {
         super(new BorderLayout());
@@ -103,7 +104,9 @@ public class Sidebar extends JPanel {
             list.addListSelectionListener(e -> {
                 if (!e.getValueIsAdjusting() && list.getSelectedValue() != null) {
                     other.clearSelection();
-                    categoryListeners.forEach(l -> l.accept(list.getSelectedValue()));
+                    if (!quiet) {
+                        categoryListeners.forEach(l -> l.accept(list.getSelectedValue()));
+                    }
                 }
             });
             // a click on the category that is already selected changes no selection: report it separately
@@ -148,6 +151,16 @@ public class Sidebar extends JPanel {
 
     public void selectCategory(Category category) {
         (category.library() ? categories : more).setSelectedValue(category, true);
+    }
+
+    /** Marks this category as selected without telling the listeners (the caller shows its library itself). */
+    public void selectCategoryQuietly(Category category) {
+        quiet = true;
+        try {
+            selectCategory(category);
+        } finally {
+            quiet = false;
+        }
     }
 
     public Category selectedCategory() {

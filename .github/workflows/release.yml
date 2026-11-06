@@ -73,7 +73,14 @@ jobs:
           Copy-Item "target/jamc-worship-presenter-$v-all.jar" staging/
           # a full Java runtime goes inside the app: the laptop needs no Java installed
           jlink --add-modules ALL-MODULE-PATH --module-path "$env:JAVA_HOME/jmods" --strip-debug --no-header-files --no-man-pages --output runtime
-          jpackage --type exe --dest dist `
+          # the installer's last page gets "Launch LiveCat Multimedia" (ticked): this JDK's own main.wxs plus our fragment
+          & "$env:JAVA_HOME/bin/jmod" extract --dir jpkg "$env:JAVA_HOME/jmods/jdk.jpackage.jmod"
+          $main = Get-Content jpkg/classes/jdk/jpackage/internal/resources/main.wxs -Raw
+          if (([regex]::Matches($main, '</Product>')).Count -ne 1) { throw "jpackage main.wxs changed: no single </Product>" }
+          $main = $main.Replace('</Product>', (Get-Content packaging/launch-after-install.wxs-fragment -Raw) + "  </Product>")
+          New-Item -ItemType Directory -Force jpres | Out-Null
+          Set-Content jpres/main.wxs $main -Encoding utf8
+          jpackage --type exe --dest dist --resource-dir jpres `
             --name "LiveCat Multimedia" --app-version $v --vendor "LiveCat" `
             --description "Present. Produce. Go Live." `
             --input staging --main-jar "jamc-worship-presenter-$v-all.jar" --main-class com.jamc.worship.app.Main `

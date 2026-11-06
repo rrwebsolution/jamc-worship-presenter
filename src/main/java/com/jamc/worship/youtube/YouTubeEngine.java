@@ -225,6 +225,15 @@ public final class YouTubeEngine {
      * for {@link #PAGE_ORIGIN}{@code /player.html} are answered inside Chromium with the bundled player page;
      * nothing is fetched from that address.
      */
+    /** A plain browser client for any web page (Browser sources); only valid once the engine is ready. */
+    public CefClient newWebClient() {
+        CefApp a = app;
+        if (a == null) {
+            throw new IllegalStateException("The browser engine is not ready");
+        }
+        return a.createClient();
+    }
+
     CefClient newClient() {
         CefApp a = app;
         byte[] html = page;

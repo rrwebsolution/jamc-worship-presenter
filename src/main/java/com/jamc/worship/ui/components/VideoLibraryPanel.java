@@ -31,6 +31,7 @@ public class VideoLibraryPanel extends JPanel {
     private final JPanel strip = Ui.transparent(new GridBagLayout());
     private final ButtonGroup group = new ButtonGroup();
     private final JToggleButton backgroundsTab;
+    private final JToggleButton allTab;
     private MediaLibraryPanel active;
     private Consumer<MediaLibraryPanel> switchListener = p -> { };
 
@@ -41,7 +42,8 @@ public class VideoLibraryPanel extends JPanel {
         this.active = videos;
         setOpaque(false);
 
-        tab("All", "Every video, local files first", () -> showVideos(MediaLibraryPanel.VIDEOS_ALL)).setSelected(true);
+        allTab = tab("All", "Every video, local files first", () -> showVideos(MediaLibraryPanel.VIDEOS_ALL));
+        allTab.setSelected(true);
         tab("Local", "Video files on this computer", () -> showVideos(MediaLibraryPanel.VIDEOS_LOCAL));
         tab("YouTube", "Videos that play from YouTube", () -> showVideos(MediaLibraryPanel.VIDEOS_YOUTUBE));
         backgroundsTab = tab("Backgrounds", "Images, videos, colors and gradients for the background", this::showBackgroundsCard);
@@ -61,6 +63,21 @@ public class VideoLibraryPanel extends JPanel {
     /** The list on screen. */
     public MediaLibraryPanel active() {
         return active;
+    }
+
+    /** Opens the All videos tab and selects this video there (a video item from the service schedule). */
+    public void selectVideo(long id) {
+        if (active != videos) {
+            allTab.setSelected(true);
+            showVideos(MediaLibraryPanel.VIDEOS_ALL);
+        }
+        videos.select(id);
+    }
+
+    /** Opens the Backgrounds tab and selects this item there. */
+    public void selectBackground(long id) {
+        showBackgrounds();
+        backgrounds.select(id);
     }
 
     /** Opens the Backgrounds tab (the background controls' Browse, the top bar's background indicator). */

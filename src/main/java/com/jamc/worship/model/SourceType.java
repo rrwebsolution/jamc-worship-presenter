@@ -23,7 +23,11 @@ public enum SourceType {
     /** Live sound from a connected input (a microphone, a camera's audio, the audio tech's mixer), no picture. */
     AUDIO_INPUT("Audio Input", "audio"),
     /** Several library images as ONE source, shown one after another (auto play or Previous / Next). */
-    SLIDESHOW("Image Slideshow", "slides");
+    SLIDESHOW("Image Slideshow", "slides"),
+    /** A live picture of one open window on this computer (e.g. a browser, a Zoom call), found by its title. */
+    WINDOW_CAPTURE("Window Capture", "monitor"),
+    /** A web page (URL) drawn by an off-screen browser, live (e.g. a countdown, an online overlay). */
+    BROWSER("Browser", "monitor");
 
     private final String label;
     private final String icon;

@@ -15,7 +15,7 @@ public class ServiceItem {
         SONG("Song", "music"), BIBLE("Bible", "book"), IMAGE("Image", "image"), VIDEO("Video", "video"),
         AUDIO("Audio", "music"), SLIDE("Slides", "slides"), ANNOUNCEMENT("Announcement", "slides"),
         SERMON("Sermon", "slides"), LOWER_THIRD("Lower Third", "lower-third"), BLANK("Blank", "monitor"),
-        PRESENTATION("Presentation", "presentation");
+        PRESENTATION("Presentation", "presentation"), SCENE("Scene", "layers");
 
         private final String displayName;
         private final String icon;

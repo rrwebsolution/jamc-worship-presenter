@@ -62,6 +62,15 @@ public class SourceConfig {
     public Boolean restartOnProgram;
     /** Send this source's sound to the Preview monitor device instead of the Program output [off]. */
     public Boolean monitorOnly;
+    /** WINDOW_CAPTURE: the captured window's title (when it changes, the same program's window is used). */
+    public String windowTitle;
+    /** WINDOW_CAPTURE: the program of the captured window, e.g. "chrome.exe". */
+    public String windowExe;
+    /** BROWSER: the web page shown (http / https, or a local file). */
+    public String url;
+    /** BROWSER: the page size in pixels [1920 × 1080]. */
+    public Integer pageWidth;
+    public Integer pageHeight;
     /** LYRICS picked from the song library: the song it belongs to (nothing is copied). */
     public Long songId;
     /**
@@ -140,6 +149,11 @@ public class SourceConfig {
         c.fontSize = fontSize;
         c.fontFamily = fontFamily;
         c.camera = camera;
+        c.windowTitle = windowTitle;
+        c.windowExe = windowExe;
+        c.url = url;
+        c.pageWidth = pageWidth;
+        c.pageHeight = pageHeight;
         c.audioInput = audioInput;
         c.opacity = opacity;
         c.textPosition = textPosition;

@@ -125,6 +125,10 @@ public class MainFrame extends JFrame {
     private static final String CENTER_DECK = "deck";
     private static final String CENTER_BIBLE = "bible";
     private static final String CENTER_ITEM = "item";
+    private static final String CENTER_SCENE = "scene";
+    /** Workspace for a scene item from the service schedule. */
+    private final com.jamc.worship.ui.components.SceneWorkspacePanel sceneWorkspace =
+            new com.jamc.worship.ui.components.SceneWorkspacePanel(this::sceneClicked, this::sendSceneToProgram);
     private static final String CENTER_PRESENTATION = "presentation";
     private static final String KEY_CURRENT_SERVICE = "service.current";
     private static final String KEY_LIVE_SCENE = "live.scene";
@@ -659,6 +663,7 @@ public class MainFrame extends JFrame {
         centerHolder.add(bibleDetail, CENTER_BIBLE);
         centerHolder.add(itemDetail, CENTER_ITEM);
         centerHolder.add(presentationDetail, CENTER_PRESENTATION);
+        centerHolder.add(sceneWorkspace, CENTER_SCENE);
 
         JPanel sidebarPanel = region(sidebar);
         JPanel detailPanel = region(centerHolder);
@@ -1030,6 +1035,8 @@ public class MainFrame extends JFrame {
         songLibrary.setRowClickHandler(this::leaveItemWorkspace);
 
         schedule.setStatusHandler(statusBar::showMessage);
+        // one click on a service item: it shows in the workspace and becomes active in its library (Preview and
+        // Program do not change; a slide clicked in the workspace goes there as usual)
         schedule.setActivationHandler(this::presentItem);
         schedule.setRemovalHandler(removed -> {
             if (removed == currentTextItem) {
@@ -1164,6 +1171,11 @@ public class MainFrame extends JFrame {
             lib.setStatusHandler(statusBar::showMessage);
             lib.setAddToServiceHandler(schedule::addItem);
             lib.addSelectionListener(mediaDetail::show);
+            lib.addSelectionListener(m -> {
+                if (m != null && showingSceneItem() && !isSceneLibraryItem(m.getId()) && isMedia(activeCategory)) {
+                    leaveItemWorkspace(); // other media chosen in the Library: it replaces the scene in the workspace
+                }
+            });
         }
         videoTabs.setSwitchListener(lib -> {
             if (activeCategory == Sidebar.Category.VIDEOS) {
@@ -1182,6 +1194,10 @@ public class MainFrame extends JFrame {
             scenes = list;
             scenesDock.setScenes(list);
             if (scenesHome != null) scenesHome.setScenes(list);
+            Scene shown = sceneWorkspace.scene();
+            if (shown != null) { // the workspace shows the saved version (or nothing, when the scene was deleted)
+                sceneWorkspace.setScene(list.stream().filter(s -> Objects.equals(s.getId(), shown.getId())).findFirst().orElse(null));
+            }
             // SAVE only updates the scene library: Preview and Program change only at TAKE
         });
         scenesPanel.setPreviewChosen(this::sendSceneToPreview);
@@ -1205,6 +1221,9 @@ public class MainFrame extends JFrame {
                     stripToPreview(slide, bibleStyle, biblePassage == null ? "Bible" : biblePassage.referenceWithTranslation());
                 }
                 case ITEM -> {
+                    if (showingSceneItem()) {
+                        return; // a scene's card only shows the scene; double-click or Send to Preview sends it
+                    }
                     itemDetail.showSlide(slide, itemStyle);
                     stripToPreview(slide, itemStyle, itemTitle);
                 }
@@ -1213,6 +1232,11 @@ public class MainFrame extends JFrame {
                     // Preview, TAKE to Program. Otherwise TAKE puts the selected slide on both.
                     presentationDetail.setSelectedIndex(index);
                     presentationPicked = slide != null && !suppressAutoTake;
+                    if (showingSceneItem()) {
+                        // a scene's PowerPoint slide clicked: the workspace shows it in the scene (Preview / Program wait for TAKE)
+                        sceneWorkspace.setContent(slide == null ? null
+                                : LiveContent.snapshot(slide, SlideStyle.fallback(), presentationTitle()));
+                    }
                     if (slide != null) {
                         preloadPresentationSlide(index);
                         preloadPresentationSlide(index + 1);
@@ -1237,6 +1261,13 @@ public class MainFrame extends JFrame {
             }
         });
         thumbnails.addActivationListener(index -> {
+            if (stripSource == StripSource.ITEM && showingSceneItem()) {
+                Scene shown = sceneWorkspace.scene();
+                if (shown != null) {
+                    sceneClicked(shown); // double-click on a scene's card: Send to Preview
+                }
+                return;
+            }
             if (stripSource == StripSource.PRESENTATION) {
                 if (!separatePresentation()) {
                     return; // TAKE puts the selected slide on Preview and Program
@@ -1254,7 +1285,7 @@ public class MainFrame extends JFrame {
             }
         });
         // presentations: selecting a slide and putting it in Preview are separate (lyrics: one and the same)
-        thumbnails.setSelectionIsPreview(() -> stripSource != StripSource.PRESENTATION);
+        thumbnails.setSelectionIsPreview(() -> stripSource != StripSource.PRESENTATION && !showingSceneItem());
         thumbnails.addSlidesChangedListener(this::refreshLiveMarker);
         thumbnails.addSlidesChangedListener(this::updateClickHint);
         remoteManager.setDesk(new RemoteDeskImpl());
@@ -1328,6 +1359,9 @@ public class MainFrame extends JFrame {
 
     private void showCategory(Sidebar.Category category) {
         activeCategory = category;
+        // a Library category replaces a service item (Blank, scene, …) shown in the workspace
+        currentTextItem = null;
+        sceneLibraryRef = null;
         boolean decks = category == Sidebar.Category.SLIDES;
         if (stripSource == StripSource.DECK && !decks) {
             slideEditor.detach();
@@ -1429,7 +1463,7 @@ public class MainFrame extends JFrame {
         songStyle = loaded == null ? null : loaded.style();
         if (stripSource == StripSource.SONG) {
             showSongSlides();
-        } else if (stripSource == StripSource.ITEM && loaded != null
+        } else if (stripSource == StripSource.ITEM && loaded != null && !isSceneLibraryItem(loaded.song().getId())
                 && (activeCategory == Sidebar.Category.SONGS || activeCategory == Sidebar.Category.FAVORITES)) {
             leaveItemWorkspace(); // a song picked while a service item (Blank, …) was showing: the lyrics return
         }
@@ -1440,7 +1474,7 @@ public class MainFrame extends JFrame {
      * category again. Preview and Program are left as they are.
      */
     private void leaveItemWorkspace() {
-        if (stripSource != StripSource.ITEM) {
+        if (stripSource != StripSource.ITEM && !showingSceneItem()) {
             return;
         }
         currentTextItem = null;
@@ -1464,7 +1498,7 @@ public class MainFrame extends JFrame {
         if (stripSource == StripSource.BIBLE && biblePassage != null) {
             onPassage(biblePassage); // fit and splitting depend on the font
         }
-        if (stripSource == StripSource.ITEM && currentTextItem != null) {
+        if (stripSource == StripSource.ITEM && currentTextItem != null && currentTextItem.getType() != ServiceItem.Type.SCENE) {
             ServiceItem item = currentTextItem;
             BackgroundTask.run("Apply typography", () -> context.themeService().styleFor(ContentKind.ANNOUNCEMENTS,
                     item.getType() == ServiceItem.Type.BLANK ? context.themeService().defaultTheme()
@@ -1725,6 +1759,10 @@ public class MainFrame extends JFrame {
      * service list under the Scenes.
      */
     private void presentItem(ServiceItem item) {
+        if (item.getType() == ServiceItem.Type.SCENE) {
+            presentSceneItem(item);
+            return;
+        }
         topBar.selectPage(TopBar.Page.LIBRARY);
         showPage(TopBar.Page.LIBRARY);
         switch (item.getType()) {
@@ -1755,8 +1793,7 @@ public class MainFrame extends JFrame {
             }
             case IMAGE, VIDEO, AUDIO -> {
                 if (item.getRefId() != null) {
-                    sidebar.selectCategory(Sidebar.Category.MEDIA);
-                    mediaLibrary.select(item.getRefId());
+                    selectMediaInLibrary(item.getType(), item.getRefId());
                 }
             }
             case LOWER_THIRD -> {
@@ -1775,6 +1812,31 @@ public class MainFrame extends JFrame {
                         presentationLibrary.select(item.getRefId());
                     }
                 }
+            }
+            case SCENE -> presentSceneItem(item); // handled at the top already; listed so every type has a case
+        }
+    }
+
+    /** A service media item: its own library (Images, Videos or Audio) opens with the file selected. */
+    private void selectMediaInLibrary(ServiceItem.Type type, long id) {
+        switch (type) {
+            case IMAGE -> {
+                sidebar.selectCategory(Sidebar.Category.IMAGES);
+                imageLibrary.select(id);
+            }
+            case VIDEO -> {
+                boolean background = context.mediaService().load(id)
+                        .map(m -> m.getCategory() == MediaCategory.BACKGROUND).orElse(false);
+                sidebar.selectCategory(Sidebar.Category.VIDEOS);
+                if (background) {
+                    videoTabs.selectBackground(id);
+                } else {
+                    videoTabs.selectVideo(id);
+                }
+            }
+            default -> {
+                sidebar.selectCategory(Sidebar.Category.AUDIO);
+                audioLibrary.select(id);
             }
         }
     }
@@ -1818,7 +1880,13 @@ public class MainFrame extends JFrame {
                 showRefreshedSlides(p, slides);
             }
             presentationDetail.setPresentation(p, slides, (PresentationService.SourceState) r[1], (Boolean) r[2]);
-            if (activeCategory == Sidebar.Category.PRESENTATIONS) {
+            if (activeCategory == Sidebar.Category.PRESENTATIONS && isSceneLibraryItem(p.id())) {
+                showScenePresentationSlides(); // the scene's own presentation: its slides beside the scene view
+                return;
+            }
+            if (activeCategory == Sidebar.Category.PRESENTATIONS && showingSceneItem()) {
+                leaveItemWorkspace(); // another presentation chosen in the Library: it replaces the scene
+            } else if (activeCategory == Sidebar.Category.PRESENTATIONS) {
                 centerCards.show(centerHolder, CENTER_PRESENTATION);
                 showPresentationSlides();
             }
@@ -1920,7 +1988,13 @@ public class MainFrame extends JFrame {
     /** Lyrics, Bible verses and text items show their words on the cards; PowerPoint and custom slides show pages. */
     private void applyStripMode() {
         switch (stripSource) {
-            case SONG, BIBLE, ITEM -> thumbnails.setCardMode(true, "card");
+            case SONG, BIBLE, ITEM -> {
+                if (showingSceneItem()) {
+                    thumbnails.setCardMode(false, "card"); // a scene's card is a picture of its layout, not words
+                } else {
+                    thumbnails.setCardMode(true, "card");
+                }
+            }
             case PRESENTATION -> thumbnails.setCardMode(false, "page");
             default -> thumbnails.setCardMode(false, "slide");
         }
@@ -2688,6 +2762,10 @@ public class MainFrame extends JFrame {
 
     /** Tells the operator above the lyrics cards what a click does for the content shown. */
     private void updateClickHint() {
+        if (stripSource == StripSource.ITEM && showingSceneItem()) {
+            thumbnails.setHint("Double-click = Send scene to Preview", false);
+            return;
+        }
         boolean live = liveDock.isAutoTake() || clickGoesLive();
         if (stripSource == StripSource.PRESENTATION && !live) {
             thumbnails.setHint(separatePresentation() ? "Click = Select · Double-click = Preview · TAKE = Live"
@@ -2943,6 +3021,192 @@ public class MainFrame extends JFrame {
             thumbnails.setTitle(item.getTitle());
             thumbnails.setSlides(slides, style);
         }, err -> Dialogs.showError(this, "Could not show the item.", err));
+    }
+
+    /**
+     * A scene item (added or clicked in the schedule) shows in the workspace, like a Blank item: a large view of
+     * the scene with Send to Preview / Take Scene Live. Preview and Program do not change by themselves.
+     */
+    private void presentSceneItem(ServiceItem item) {
+        Scene scene = scenes.stream().filter(s -> Objects.equals(s.getId(), item.getRefId())).findFirst().orElse(null);
+        if (scene == null) {
+            statusBar.showMessage("The scene \"" + item.getTitle() + "\" no longer exists.");
+            return;
+        }
+        currentTextItem = item; // the schedule item the workspace shows (removing it returns to the library)
+        if (stripSource == StripSource.DECK) {
+            slideEditor.detach();
+        }
+        stripSource = StripSource.ITEM;
+        topBar.selectPage(TopBar.Page.LIBRARY);
+        showPage(TopBar.Page.LIBRARY);
+        sceneWorkspace.setScene(scene);
+        centerCards.show(centerHolder, CENTER_SCENE);
+        workspaces.show(LibraryWorkspaceController.Workspace.SLIDES);
+        thumbnails.setTitle("Scene – " + scene.getName());
+        thumbnails.setEmptyMessage("Preparing the scene…");
+        boolean wasRestoring = restoringStrip;
+        restoringStrip = true; // the strip empties while the scene is prepared; Preview and Program stay
+        suppressAutoTake = true;
+        try {
+            thumbnails.setSlides(List.of(), SlideStyle.fallback());
+        } finally {
+            suppressAutoTake = false;
+            restoringStrip = wasRestoring;
+        }
+        showSceneContentInLibrary(scene);
+        if (sceneLibraryRef != null && activeCategory == Sidebar.Category.PRESENTATIONS) {
+            return; // a PowerPoint scene: the strip shows the presentation's slides (now, or once it is opened)
+        }
+        showSceneCard(item, scene);
+        // pictures used by the scene (e.g. presentation slides) can still be loading: draw the card once more
+        javax.swing.Timer again = new javax.swing.Timer(1500, e -> showSceneCard(item, scene));
+        again.setRepeats(false);
+        again.start();
+    }
+
+    /**
+     * The scene as one card in the slide strip beside the workspace (a picture of its layout). Showing it changes
+     * neither Preview nor Program; a double-click on the card sends the scene to Preview.
+     */
+    private void showSceneCard(ServiceItem item, Scene scene) {
+        if (stripSource != StripSource.ITEM || currentTextItem != item) {
+            return; // the workspace moved on
+        }
+        java.awt.image.BufferedImage full = sceneWorkspace.render(scene, 1280, 720);
+        java.awt.image.BufferedImage small = sceneWorkspace.render(scene, 320, 180);
+        BackgroundTask.run("Prepare scene card", () -> {
+            java.nio.file.Path dir = java.nio.file.Path.of(System.getProperty("java.io.tmpdir"), "livecat-scenes");
+            java.nio.file.Files.createDirectories(dir);
+            try (var old = java.nio.file.Files.newDirectoryStream(dir, "scene-" + scene.getId() + "-*.png")) {
+                for (java.nio.file.Path p : old) {
+                    java.nio.file.Files.deleteIfExists(p); // earlier pictures of this scene
+                }
+            }
+            String stamp = scene.getId() + "-" + System.nanoTime(); // a new name each time: the image cache keys on it
+            java.nio.file.Path image = dir.resolve("scene-" + stamp + ".png");
+            java.nio.file.Path thumb = dir.resolve("scene-" + stamp + "-t.png");
+            javax.imageio.ImageIO.write(full, "png", image.toFile());
+            javax.imageio.ImageIO.write(small, "png", thumb.toFile());
+            return new java.nio.file.Path[]{image, thumb};
+        }, paths -> {
+            if (stripSource != StripSource.ITEM || currentTextItem != item) {
+                return;
+            }
+            StyleOverrides o = new StyleOverrides();
+            o.backgroundType = BackgroundType.IMAGE;
+            o.backgroundValue = paths[0].toString();
+            o.overlayOpacity = 0.0;
+            Slide card = new Slide(scene.getName(), "", null);
+            card.setOverrides(o);
+            card.setThumbnail(paths[1].toString());
+            card.setCoversBackground(true);
+            boolean wasRestoring = restoringStrip;
+            restoringStrip = true; // only shown: Preview and Program stay as they are
+            suppressAutoTake = true;
+            try {
+                thumbnails.setSlides(List.of(card), SlideStyle.fallback());
+            } finally {
+                suppressAutoTake = false;
+                restoringStrip = wasRestoring;
+            }
+        }, err -> log.warn("Could not draw the scene card", err));
+    }
+
+    /** The library item (song, presentation, media) that the Library shows for the scene item in the workspace. */
+    private Long sceneLibraryRef;
+
+    /**
+     * The Library (beside the output) follows a scene item: when the scene has a presentation, lyrics or media
+     * layer, that library opens with it selected. Only the Library changes: the workspace keeps the scene, and
+     * Preview and Program stay as they are. Choosing something else in the Library leaves the scene.
+     */
+    private void showSceneContentInLibrary(Scene scene) {
+        sceneLibraryRef = null;
+        com.jamc.worship.model.Source found = null;
+        for (int pass = 0; pass < 3 && found == null; pass++) { // presentation first, then lyrics, then media
+            for (com.jamc.worship.model.Source s : scene.getSources()) {
+                var c = s.getConfig();
+                boolean match = switch (pass) {
+                    case 0 -> s.getType() == com.jamc.worship.model.SourceType.PRESENTATION && c.presentationId != null;
+                    case 1 -> s.getType() == com.jamc.worship.model.SourceType.LYRICS && c.songId != null;
+                    default -> (s.getType() == com.jamc.worship.model.SourceType.IMAGE
+                            || s.getType() == com.jamc.worship.model.SourceType.VIDEO
+                            || s.getType() == com.jamc.worship.model.SourceType.AUDIO) && c.mediaId != null;
+                };
+                if (match && s.isVisible()) {
+                    found = s;
+                    break;
+                }
+            }
+        }
+        if (found == null) {
+            return; // nothing from a library in this scene: the Library stays as it is
+        }
+        var c = found.getConfig();
+        switch (found.getType()) {
+            case PRESENTATION -> {
+                sceneLibraryRef = c.presentationId;
+                libraryFollowsScene(Sidebar.Category.PRESENTATIONS);
+                presentationsLoaded = true;
+                if (currentPresentation == null || !Objects.equals(currentPresentation.id(), c.presentationId)) {
+                    presentationLibrary.select(c.presentationId); // its slides fill the strip once opened
+                } else {
+                    showScenePresentationSlides();
+                }
+            }
+            case LYRICS -> {
+                sceneLibraryRef = c.songId;
+                libraryFollowsScene(Sidebar.Category.SONGS);
+                songLibrary.setFavoritesOnly(false);
+                songLibrary.showSong(c.songId);
+            }
+            case IMAGE -> {
+                sceneLibraryRef = c.mediaId;
+                libraryFollowsScene(Sidebar.Category.IMAGES);
+                imageLibrary.select(c.mediaId);
+            }
+            case AUDIO -> {
+                sceneLibraryRef = c.mediaId;
+                libraryFollowsScene(Sidebar.Category.AUDIO);
+                audioLibrary.select(c.mediaId);
+            }
+            default -> {
+                sceneLibraryRef = c.mediaId;
+                libraryFollowsScene(Sidebar.Category.VIDEOS);
+                boolean background = context.mediaService().load(c.mediaId)
+                        .map(m -> m.getCategory() == MediaCategory.BACKGROUND).orElse(false);
+                if (background) {
+                    videoTabs.selectBackground(c.mediaId);
+                } else {
+                    videoTabs.selectVideo(c.mediaId);
+                }
+            }
+        }
+    }
+
+    /** Shows this category's library list (and marks it in the sidebar) without switching the workspace. */
+    private void libraryFollowsScene(Sidebar.Category category) {
+        activeCategory = category; // leaving the scene returns to this library
+        sidebar.selectCategoryQuietly(category);
+        libraryCards.show(libraryHolder, category.name());
+    }
+
+    /** True when something chosen in the Library is the scene's own item (the workspace keeps the scene). */
+    private boolean isSceneLibraryItem(Long id) {
+        return showingSceneItem() && id != null && Objects.equals(id, sceneLibraryRef);
+    }
+
+    /** True while the workspace shows a scene item from the service schedule. */
+    private boolean showingSceneItem() {
+        return (stripSource == StripSource.ITEM || stripSource == StripSource.PRESENTATION)
+                && currentTextItem != null && currentTextItem.getType() == ServiceItem.Type.SCENE;
+    }
+
+    /** A scene with a PowerPoint layer: the strip beside the workspace shows that presentation's slides. */
+    private void showScenePresentationSlides() {
+        showPresentationSlides(); // click = select, TAKE = live, as in Presentations; the scene view stays beside it
+        updateClickHint();
     }
 
     private static List<String> splitParagraphs(String text) {
@@ -3362,6 +3626,11 @@ public class MainFrame extends JFrame {
         @Override
         public void sendToProgram(Scene scene) {
             sendSceneToProgram(scene);
+        }
+
+        @Override
+        public void addToService(Scene scene) {
+            schedule.addItem(new ServiceItem(ServiceItem.Type.SCENE, scene.getName(), scene.getId()));
         }
 
         @Override

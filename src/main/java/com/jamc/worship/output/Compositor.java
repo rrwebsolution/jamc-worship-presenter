@@ -319,6 +319,28 @@ public final class Compositor {
                     }
                 }
             }
+            case WINDOW_CAPTURE -> {
+                if (!keyMode) {
+                    BufferedImage frame = com.jamc.worship.capture.WindowCapture.frame(c.windowTitle, c.windowExe);
+                    if (frame != null) {
+                        drawFit(g, frame, rect, c.fit == null ? FitMode.FIT : c.fit, opacity(c));
+                    } else if (editorMode || preview) {
+                        String why = com.jamc.worship.capture.WindowCapture.status(c.windowTitle, c.windowExe);
+                        paintSourceNote(g, rect, "▢ " + (why != null ? why : "Window Capture: " + c.windowTitle), ph);
+                    }
+                }
+            }
+            case BROWSER -> {
+                if (!keyMode) {
+                    BufferedImage frame = com.jamc.worship.capture.BrowserSources.frame(c.url, c.pageWidth, c.pageHeight);
+                    if (frame != null) {
+                        drawFit(g, frame, rect, c.fit == null ? FitMode.FIT : c.fit, opacity(c));
+                    } else if (editorMode || preview) {
+                        String why = c.url == null ? "Browser: no address" : com.jamc.worship.capture.BrowserSources.status(c.url);
+                        paintSourceNote(g, rect, "🌐 " + (why != null ? why : c.url), ph);
+                    }
+                }
+            }
             case PRESENTATION -> paintPresentation(g, rect, s, spec.content(), s == slot, ph);
             case SLIDESHOW -> paintSlideshow(g, rect, s, keyMode, ph);
             case COLOR -> {
@@ -348,6 +370,16 @@ public final class Compositor {
                 }
             }
         }
+    }
+
+    /** A small grey note in a source's box (scene editor and Preview only), e.g. "Window not found". */
+    private void paintSourceNote(Graphics2D g, Rectangle rect, String text, int ph) {
+        g.setColor(new Color(15, 23, 42, 200));
+        g.fillRect(rect.x, rect.y, rect.width, rect.height);
+        SourceConfig label = new SourceConfig();
+        label.fontSize = 30;
+        label.color = "#94A3B8";
+        drawText(g, rect, text, label, ph);
     }
 
     private static volatile Slideshows slideshows;

@@ -268,6 +268,7 @@ public class ScenesHomePanel extends JPanel {
             m.add(item("Send to Preview", "monitor", () -> host.sceneClicked(scene)));
             m.add(item("Take Scene Live", "play", () -> host.sendToProgram(scene)));
             m.add(ScenesDock.projectorMenu(host, scene));
+            m.add(item("Add to Service", "list", () -> host.addToService(scene)));
             m.addSeparator();
             m.add(item("Edit Scene…", "layers", () -> showEditor(scene)));
             m.add(item("Duplicate", "copy", () -> host.duplicateScene(scene)));

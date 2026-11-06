@@ -768,12 +768,18 @@ public class ScenesPanel extends JPanel {
         menu.add(menuItem("Clock", "calendar", () -> addSource(SourceType.CLOCK)));
         menu.add(menuItem("Readability Overlay", "layers", () -> addSource(SourceType.OVERLAY)));
         section(menu, "ADVANCED");
-        JMenuItem web = menuItem("Browser / Web Source — future", "monitor", () -> { });
-        web.setEnabled(false);
-        JMenuItem screen = menuItem("Screen Capture — future", "monitor", () -> { });
-        screen.setEnabled(false);
-        menu.add(web);
-        menu.add(screen);
+        JMenuItem window = menuItem("Window Capture…", "monitor", () -> pickWindow(null));
+        if (!com.jamc.worship.capture.WindowCapture.supported()) {
+            window.setEnabled(false);
+            window.setToolTipText("Window Capture works on Windows only");
+        }
+        menu.add(window);
+        menu.add(menuItem("Browser…", "monitor", () -> askUrl(null)));
+        JMenuItem ndi = menuItem("NDI…", "video", this::addNdiSource);
+        ndi.setToolTipText(com.jamc.worship.camera.Ndi.isInstalled()
+                ? "A video sent over the network with NDI (another computer, a phone app, a PTZ camera, OBS)"
+                : "Needs the free NDI Runtime (NDI Tools from ndi.video)");
+        menu.add(ndi);
         menu.show(anchor, 0, anchor.getHeight());
     }
 
@@ -998,6 +1004,70 @@ public class ScenesPanel extends JPanel {
     }
 
     /** Camera: pick one of the connected devices (detected again first, so a camera just started is listed). */
+    /**
+     * Window Capture: pick an open window. {@code existing} null adds a new source; otherwise that source
+     * switches to the chosen window.
+     */
+    private void pickWindow(Source existing) {
+        if (editing == null) {
+            return;
+        }
+        List<com.jamc.worship.capture.WindowCapture.WindowInfo> windows = com.jamc.worship.capture.WindowCapture.windows();
+        var w = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<com.jamc.worship.capture.WindowCapture.WindowInfo>(
+                "Select Window", "Search windows…", "monitor",
+                "No open windows found.<br>Open the program to capture (a browser, Zoom, …), then try again.",
+                text -> windows.stream().filter(x -> x.label().toLowerCase().contains(text.strip().toLowerCase())).toList(),
+                com.jamc.worship.capture.WindowCapture.WindowInfo::title,
+                x -> x.exe() == null ? "" : x.exe(), x -> null));
+        if (w == null) {
+            return;
+        }
+        Source s = existing != null ? existing : new Source(windowName(w.title()), SourceType.WINDOW_CAPTURE);
+        s.getConfig().windowTitle = w.title();
+        s.getConfig().windowExe = w.exe();
+        if (existing == null) {
+            s.getConfig().fit = FitMode.FIT;
+            insertSource(s);
+        } else {
+            s.setName(windowName(w.title()));
+            loadProps();
+            sceneEdited();
+        }
+        statusHandler.accept("Capturing \"" + w.title() + "\". Keep the window open (it may be behind others, not minimized).");
+    }
+
+    private static String windowName(String title) {
+        String t = title.length() > 40 ? title.substring(0, 39) + "…" : title;
+        return "Window: " + t;
+    }
+
+    /** Browser: ask for a web address. {@code existing} null adds a new source; otherwise its address changes. */
+    private void askUrl(Source existing) {
+        if (editing == null) {
+            return;
+        }
+        String current = existing == null ? "https://" : existing.getConfig().url;
+        Object answer = javax.swing.JOptionPane.showInputDialog(this,
+                "Web address to show (e.g. a countdown or an online overlay):", "Browser Source",
+                javax.swing.JOptionPane.PLAIN_MESSAGE, null, null, current);
+        if (answer == null || answer.toString().isBlank() || answer.toString().strip().equals("https://")) {
+            return;
+        }
+        String url = com.jamc.worship.capture.BrowserSources.normalize(answer.toString());
+        Source s = existing != null ? existing : new Source("Browser", SourceType.BROWSER);
+        s.getConfig().url = url;
+        String host = url.replaceFirst("(?i)^[a-z]+://", "").replaceFirst("/.*$", "");
+        if (existing == null) {
+            s.setName("Browser: " + host);
+            s.getConfig().fit = FitMode.FIT;
+            insertSource(s);
+        } else {
+            loadProps();
+            sceneEdited();
+        }
+        statusHandler.accept("Loading " + url + " (the first time the browser engine may need a moment to start).");
+    }
+
     private void addCameraSource() {
         if (editing == null) {
             return;
@@ -1020,6 +1090,45 @@ public class ScenesPanel extends JPanel {
         if (cam == null) {
             return;
         }
+        insertCameraSource(cam);
+    }
+
+    /**
+     * NDI: a video source sent over the network (another computer's NDI output, a phone NDI camera app, a PTZ
+     * camera, OBS with NDI). It is received like a camera, so it has the camera's fit, crop and audio options.
+     */
+    private void addNdiSource() {
+        if (editing == null) {
+            return;
+        }
+        if (!com.jamc.worship.camera.Ndi.isInstalled()) {
+            Dialogs.showInfo(this, "NDI not installed",
+                    "NDI needs the free NDI Runtime (it comes with NDI Tools from ndi.video).\n"
+                            + "Install it, then choose Add Source → NDI… again.");
+            return;
+        }
+        statusHandler.accept("Looking for NDI sources on the network…");
+        BackgroundTask.run("Find NDI sources", com.jamc.worship.camera.Ndi::sources, found -> {
+            if (editing == null) {
+                return;
+            }
+            String problem = com.jamc.worship.camera.Ndi.problem();
+            String cam = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<String>(
+                    "Select NDI Source", "Search NDI sources…", "video",
+                    problem != null ? problem
+                            : "No NDI source found.<br>Check that the sending computer or phone app is on the same network "
+                            + "and sending NDI, then try again.",
+                    text -> found.stream().filter(d -> d.toLowerCase().contains(text.strip().toLowerCase())).toList(),
+                    d -> d.substring(com.jamc.worship.camera.Ndi.PREFIX.length()), d -> "NDI · " + cameras.status(d).label(),
+                    d -> null));
+            if (cam != null) {
+                insertCameraSource(cam);
+            }
+        }, err -> Dialogs.showError(this, "Could not look for NDI sources.", err));
+    }
+
+    /** A Camera source for this camera (a device or an NDI source); a second camera starts picture-in-picture. */
+    private void insertCameraSource(String cam) {
         Source s = new Source(cameraNames == null ? cam : cameraNames.label(cam), SourceType.CAMERA);
         s.getConfig().camera = cam;
         s.getConfig().fit = FitMode.FILL;
@@ -1047,6 +1156,7 @@ public class ScenesPanel extends JPanel {
                 new LibraryPickerDialog.Spec<com.jamc.worship.model.ServiceItem>(
                         "Select Service Item", "Search the service…", "list", "The service schedule is empty.",
                         text -> items.stream().filter(i -> i.getTitle() != null
+                                && i.getType() != com.jamc.worship.model.ServiceItem.Type.SCENE // no scene inside a scene
                                 && i.getTitle().toLowerCase().contains(text.strip().toLowerCase())).toList(),
                         com.jamc.worship.model.ServiceItem::getTitle, i -> i.getType().displayName(), i -> null));
         if (item == null) {
@@ -1659,7 +1769,7 @@ public class ScenesPanel extends JPanel {
             if (t == SourceType.SLIDESHOW) {
                 loadSlideshowProps(g, s);
             }
-            if (t == SourceType.CAMERA || t == SourceType.IMAGE || t == SourceType.CHURCH_LOGO || t == SourceType.VIDEO
+            if (t == SourceType.CAMERA || t == SourceType.IMAGE || t == SourceType.CHURCH_LOGO || t == SourceType.VIDEO || isCapture(t)
                     || t == SourceType.SLIDESHOW) {
                 row(g, "Fit", fitCombo);
                 fitCombo.setSelectedItem(c.fit == null ? (t == SourceType.SLIDESHOW ? FitMode.FIT : FitMode.FILL) : c.fit);
@@ -1677,6 +1787,9 @@ public class ScenesPanel extends JPanel {
                 fileLabel.setText(c.path == null ? "No file chosen" : fileName(c.path));
                 fileLabel.setToolTipText(c.path);
                 row(g, "File", f);
+            }
+            if (isCapture(t)) {
+                loadCaptureProps(g, s);
             }
             if (t == SourceType.VIDEO || t == SourceType.AUDIO) {
                 loadVideoProps(g, s);
@@ -1895,7 +2008,44 @@ public class ScenesPanel extends JPanel {
     /** Sources whose box usually keeps the 16:9 shape of what they show. */
     private static boolean keepsAspect(SourceType t) {
         return t == SourceType.PRESENTATION || t == SourceType.CAMERA || t == SourceType.VIDEO || t == SourceType.IMAGE
-                || t == SourceType.SLIDESHOW;
+                || t == SourceType.SLIDESHOW || isCapture(t);
+    }
+
+    /** Window Capture and Browser: live pictures from outside the app. */
+    private static boolean isCapture(SourceType t) {
+        return t == SourceType.WINDOW_CAPTURE || t == SourceType.BROWSER;
+    }
+
+    /** The window or web address of a Window Capture / Browser source, with Change… (and Reload for pages). */
+    private void loadCaptureProps(GridBagConstraints g, Source s) {
+        SourceConfig c = s.getConfig();
+        boolean window = s.getType() == SourceType.WINDOW_CAPTURE;
+        JLabel what = Ui.small(window
+                ? (c.windowTitle == null ? "No window chosen" : c.windowTitle + (c.windowExe == null ? "" : "  ·  " + c.windowExe))
+                : (c.url == null ? "No address" : c.url));
+        what.setToolTipText(what.getText());
+        JButton change = Ui.button("Change…", window ? "monitor" : "edit");
+        change.addActionListener(e -> {
+            if (window) {
+                pickWindow(s);
+            } else {
+                askUrl(s);
+            }
+        });
+        JPanel row = Ui.transparent(new BorderLayout(6, 0));
+        row.add(change, BorderLayout.WEST);
+        row.add(what, BorderLayout.CENTER);
+        if (!window) {
+            JButton reload = Ui.toolButton("refresh", "Load the page again");
+            reload.addActionListener(e -> com.jamc.worship.capture.BrowserSources.reload(c.url));
+            row.add(reload, BorderLayout.EAST);
+        }
+        row(g, window ? "Window" : "Address", row);
+        row(g, "", Ui.label(window
+                ? "<html>Keep the window open; it may be behind other windows, but not minimized. If its title changes, "
+                        + "the same program's window is used.</html>"
+                : "<html>The page runs in a hidden browser at 1920 × 1080. Its sound plays on the Windows default "
+                        + "output.</html>", Palette::mutedText, "small"));
     }
 
     /** Whether resizing keeps 16:9: on by default for presentations, off for older layouts that never set it. */
@@ -2003,7 +2153,7 @@ public class ScenesPanel extends JPanel {
             c.color = colorButton.getHex();
             c.opacity = opacity.getValue() >= 100 ? null : opacity.getValue() / 100.0;
         }
-        if (t == SourceType.CAMERA || t == SourceType.IMAGE || t == SourceType.CHURCH_LOGO || t == SourceType.VIDEO
+        if (t == SourceType.CAMERA || t == SourceType.IMAGE || t == SourceType.CHURCH_LOGO || t == SourceType.VIDEO || isCapture(t)
                 || t == SourceType.SLIDESHOW) {
             c.fit = (FitMode) fitCombo.getSelectedItem();
             c.opacity = opacity.getValue() >= 100 ? null : opacity.getValue() / 100.0;

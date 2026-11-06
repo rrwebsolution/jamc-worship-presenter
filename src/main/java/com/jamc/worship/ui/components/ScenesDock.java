@@ -80,6 +80,10 @@ public class ScenesDock extends JPanel {
         default void sceneSelected(Scene scene) {
         }
 
+        /** Right-click → Add to Service: the scene becomes an item in the service schedule. */
+        default void addToService(Scene scene) {
+        }
+
         /** Cards were dragged into a new order: save it (Preview and Program do not change). */
         default void reorderScenes(List<Scene> order) {
         }
@@ -328,6 +332,7 @@ public class ScenesDock extends JPanel {
             m.add(item("Send to Preview", "monitor", () -> host.sceneClicked(scene)));
             m.add(item("Take Scene Live", "play", () -> host.sendToProgram(scene)));
             m.add(projectorMenu(host, scene));
+            m.add(item("Add to Service", "list", () -> host.addToService(scene)));
             m.addSeparator();
             m.add(item("Edit Scene…", "layers", () -> host.editLayout(scene)));
             m.add(item("Duplicate", "copy", () -> host.duplicateScene(scene)));

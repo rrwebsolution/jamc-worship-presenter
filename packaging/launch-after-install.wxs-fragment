@@ -1,0 +1,11 @@
+    <!-- LiveCat: "Launch LiveCat Multimedia" on the installer's last page, ticked by default.
+         Inserted into jpackage's main.wxs (inside <Product>) by .github/workflows/release.yml. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Launch LiveCat Multimedia" />
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
+    <CustomAction Id="LiveCatLaunchApp" Directory="INSTALLDIR"
+                  ExeCommand="&quot;[INSTALLDIR]LiveCat Multimedia.exe&quot;"
+                  Return="asyncNoWait" Impersonate="yes" />
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LiveCatLaunchApp"
+               Order="999">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
+    </UI>
