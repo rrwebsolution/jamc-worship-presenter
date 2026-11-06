@@ -117,7 +117,7 @@ public final class Compositor {
         }
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
         Scene scene = spec.scene() == null ? DEFAULT_SCENE : spec.scene();
-        List<Source> sources = scene.getSources();
+        List<Source> sources = layers(scene);
         Source slot = presentationSlot(scene, spec.content());
         for (int i = sources.size() - 1; i >= 0; i--) {
             Source s = sources.get(i);
@@ -125,6 +125,50 @@ public final class Compositor {
                 paintSource(g, pw, ph, s, spec, lowerThirdSource, keyMode, contentOnly, slot);
             }
         }
+    }
+
+    /**
+     * The theme background under lyrics and Bible text in a scene that has nothing else behind them (no visible
+     * Media / Video / Image / Slideshow / Camera / Presentation / Color layer filling the screen). Without it the
+     * words stood on black whenever the background video was hidden or the scene was made with a text layer only.
+     */
+    static final Source THEME_BACKGROUND = new Source("Theme background", SourceType.BACKGROUND);
+
+    /** The scene's layers, plus {@link #THEME_BACKGROUND} at the bottom when its text would have nothing behind it. */
+    static List<Source> layers(Scene scene) {
+        List<Source> sources = scene.getSources();
+        boolean text = false;
+        for (Source s : sources) {
+            if (!s.isVisible()) {
+                continue;
+            }
+            switch (s.getType()) {
+                case LYRICS, BIBLE -> text = true;
+                case BACKGROUND -> {
+                    return sources; // the scene shows the content's background itself
+                }
+                case VIDEO, IMAGE, SLIDESHOW, CAMERA, PRESENTATION, COLOR -> {
+                    SourceConfig c = s.getConfig();
+                    if (c.w >= 0.95 && c.h >= 0.95) {
+                        return sources; // a picture fills the screen behind the text
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+        if (!text) {
+            return sources;
+        }
+        List<Source> out = new java.util.ArrayList<>(sources);
+        out.add(THEME_BACKGROUND);
+        return out;
+    }
+
+    /** The theme background is added for words (songs, verses, text slides) only, never for videos, pictures or pages. */
+    private static boolean themeBackgroundApplies(LiveContent content) {
+        return content != null && !content.isVideo() && content.slide() != null && !content.slide().coversBackground()
+                && content.slide().getPresentationId() == null;
     }
 
     /**
@@ -181,7 +225,7 @@ public final class Compositor {
         switch (s.getType()) {
             case BACKGROUND -> {
                 LiveContent content = spec.content();
-                if (keyMode) {
+                if (keyMode || (s == THEME_BACKGROUND && !themeBackgroundApplies(content))) {
                     return;
                 }
                 GlobalBackgroundView global = Rendering.globalBackground();
@@ -714,7 +758,7 @@ public final class Compositor {
         Source toSlot = presentationSlot(scene, to.content());
         String fromBackground = backgroundKey(from, fromSlot);
         boolean sameBackground = fromBackground != null && fromBackground.equals(backgroundKey(to, toSlot));
-        List<Source> sources = scene.getSources();
+        List<Source> sources = layers(scene);
         for (int i = sources.size() - 1; i >= 0; i--) {
             Source s = sources.get(i);
             if (!s.isVisible()) {
@@ -761,8 +805,8 @@ public final class Compositor {
         Scene b = to.scene() == null ? DEFAULT_SCENE : to.scene();
         Source fromSlot = presentationSlot(a, from.content());
         Source toSlot = presentationSlot(b, to.content());
-        List<Source> as = a.getSources().stream().filter(Source::isVisible).toList();
-        List<Source> bs = b.getSources().stream().filter(Source::isVisible).toList();
+        List<Source> as = layers(a).stream().filter(Source::isVisible).toList();
+        List<Source> bs = layers(b).stream().filter(Source::isVisible).toList();
         java.util.Set<String> aKeys = new java.util.HashSet<>();
         java.util.Set<String> bKeys = new java.util.HashSet<>();
         String[] ak = new String[as.size()];
@@ -902,7 +946,7 @@ public final class Compositor {
             return false;
         }
         Scene scene = spec.scene() == null ? DEFAULT_SCENE : spec.scene();
-        boolean hasBackground = scene.getSources().stream()
+        boolean hasBackground = layers(scene).stream()
                 .anyMatch(s -> s.isVisible() && s.getType() == SourceType.BACKGROUND);
         LiveContent c = spec.content();
         return hasBackground && (c == null || (!c.isVideo()

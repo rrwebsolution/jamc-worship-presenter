@@ -242,6 +242,55 @@ class GlobalBackgroundLayerTest {
         return seen;
     }
 
+    /**
+     * A scene with only a Lyrics / Bible layer (its Media layer and background video hidden, or never added) shows
+     * the words on their theme's background, not on black. A scene with a picture behind the text keeps it.
+     */
+    @Test
+    void lyricsAndBibleWithNothingBehindThemShowTheirTheme() {
+        global.active = false;
+        com.jamc.worship.model.Scene lyricsOnly = new com.jamc.worship.model.Scene(1L, "Lyrics and Bible");
+        lyricsOnly.getSources().add(new com.jamc.worship.model.Source("Lyrics", com.jamc.worship.model.SourceType.LYRICS));
+        com.jamc.worship.model.Source media = new com.jamc.worship.model.Source("Media", com.jamc.worship.model.SourceType.BACKGROUND);
+        media.setVisible(false);
+        lyricsOnly.getSources().add(media);
+        com.jamc.worship.model.Source video = new com.jamc.worship.model.Source("bg video", com.jamc.worship.model.SourceType.VIDEO);
+        video.setVisible(false);
+        lyricsOnly.getSources().add(video);
+
+        Slide verse = new Slide("Verse 1", "Amazing grace", null);
+        FrameSpec song = new FrameSpec(LiveContent.snapshot(verse, theme(BackgroundMode.USE_GLOBAL), "t"), true, true, false, lyricsOnly);
+        assertEquals(THEME, corner(song), "the theme background, not black");
+
+        com.jamc.worship.model.Scene bibleOnly = new com.jamc.worship.model.Scene(2L, "Bible");
+        bibleOnly.getSources().add(new com.jamc.worship.model.Source("Bible", com.jamc.worship.model.SourceType.BIBLE));
+        assertEquals(THEME, corner(new FrameSpec(song.content(), true, true, false, bibleOnly)));
+
+        // with a background video on, the words sit on it as they do with a Media layer
+        global.active = true;
+        assertEquals(GLOBAL, corner(song));
+        global.active = false;
+
+        // the scene's own bg video shown again: the theme is gone at once, the video is the background
+        video.setVisible(true);
+        assertEquals(lyricsOnly.getSources().size(), Compositor.layers(lyricsOnly).size(), "no theme layer");
+        org.junit.jupiter.api.Assertions.assertNotEquals(THEME, corner(song));
+        video.setVisible(false);
+        assertEquals(THEME, corner(song), "hidden again: the theme comes back");
+
+        // a full-screen camera behind the lyrics stays the background: no theme painted over it
+        com.jamc.worship.model.Scene camera = new com.jamc.worship.model.Scene(3L, "Camera + Lyrics");
+        camera.getSources().add(new com.jamc.worship.model.Source("Lyrics", com.jamc.worship.model.SourceType.LYRICS));
+        camera.getSources().add(new com.jamc.worship.model.Source("Camera", com.jamc.worship.model.SourceType.CAMERA));
+        assertEquals(1 + 1, Compositor.layers(camera).size(), "no theme layer under a camera");
+
+        // a picture item is not given a theme behind it
+        Slide picture = new Slide("Photo", "", null);
+        picture.setCoversBackground(true);
+        assertEquals(Color.BLACK, corner(new FrameSpec(LiveContent.snapshot(picture, theme(BackgroundMode.USE_GLOBAL), "p"),
+                true, true, false, lyricsOnly)));
+    }
+
     @Test
     void projectorCursorDefaultsToAutoHide() {
         assertEquals(PresentationWindow.CursorMode.AUTO_HIDE, PresentationWindow.CursorMode.parse(null));
