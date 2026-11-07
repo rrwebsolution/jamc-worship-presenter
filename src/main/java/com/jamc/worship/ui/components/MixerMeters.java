@@ -56,6 +56,15 @@ final class MixerMeters {
         channels.add(new Channel(meter, input, gain));
     }
 
+    /**
+     * A channel that never goes into the recording or the stream (e.g. "Listen on the monitor device"): it shows
+     * {@code text} and no wave, its input is not listened to, and it does not count in MASTER.
+     */
+    void addSilent(Meter meter, String text) {
+        meter.setMessage(text);
+        meter.push(0);
+    }
+
     /** The MASTER meter: the loudest channel, times the master gain. */
     void addMaster(Meter meter, DoubleSupplier gain) {
         masters.add(meter);

@@ -540,6 +540,13 @@ public class MainFrame extends JFrame {
                 statusBar.showMessage(autoTake ? "Auto-take on: selecting a slide sends it live."
                         : "Auto-take off: select a slide, then press TAKE or Space.");
             }
+
+            @Override
+            public void studioModeToggled(boolean on) {
+                context.config().set(SettingsPanel.KEY_STUDIO_MODE, String.valueOf(on));
+                context.config().save();
+                applyStudioMode(); // Settings → Live & Scenes shows the same switch when it opens
+            }
         });
         loadLiveSettings();
         liveDock.setOutputRouter(output, displays, () -> this);
@@ -600,7 +607,7 @@ public class MainFrame extends JFrame {
 
             @Override
             public boolean separateLayouts() {
-                return MainFrame.this.separateLayouts();
+                return separateLayoutsTicked(); // the checkbox shows the tick, kept while Studio Mode is off
             }
 
             @Override
@@ -616,6 +623,11 @@ public class MainFrame extends JFrame {
             @Override
             public void audioMixerVisibilityChanged() {
                 SwingUtilities.invokeLater(MainFrame.this::applyMixerVisible);
+            }
+
+            @Override
+            public void studioModeChanged() {
+                SwingUtilities.invokeLater(MainFrame.this::applyStudioMode);
             }
 
             @Override
@@ -693,6 +705,7 @@ public class MainFrame extends JFrame {
         mixerRegion.setVisible(context.config().getBoolean(SettingsPanel.KEY_SHOW_MIXER, true));
         // SCENES (how the output is arranged) above the audio mixer
         scenesDock = new com.jamc.worship.ui.components.ScenesDock(sceneHost);
+        scenesDock.setStudioMode(studioMode());
         JPanel scenesPanelRegion = region(scenesDock);
         scenesPanelRegion.setBorder(Ui.line(false, false, true, false));
         scenesPanelRegion.setMinimumSize(new Dimension(0, 120));
@@ -973,14 +986,19 @@ public class MainFrame extends JFrame {
         log.info("Installing update {}", exe.getFileName());
         saveEverything();
         try {
-            new ProcessBuilder("cmd", "/c", "start", "", exe.toString()).start();
+            Process starter = new ProcessBuilder("cmd", "/c", "start", "", exe.toString()).start();
+            // "start" detaches the installer once cmd has ended; closing ends our child processes, so wait for that
+            starter.waitFor(10, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         } catch (java.io.IOException e) {
             Dialogs.showError(this, "The installer could not be started. It was saved in " + exe.getParent() + ".", e);
             return;
         }
+        exitWatchdog(-1); // the installer runs detached ("start"), so it is not one of our child processes
         releaseResources();
         dispose();
-        System.exit(0);
+        exitProcess(-1);
     }
 
     /**
@@ -1257,7 +1275,8 @@ public class MainFrame extends JFrame {
             // the saved scene waits as the selected scene: nothing shows until the operator presses TAKE
             selectedScene = saved;
             liveDock.setPreviewReady(true);
-            statusBar.showMessage("Scene \"" + saved.getName() + "\" saved. Press TAKE to show it.");
+            statusBar.showMessage("Scene \"" + saved.getName() + "\" saved. Press " + (studioMode() ? "TAKE" : takeKeyName()
+                    + " (TAKE)") + " to show it.");
         });
 
         thumbnails.addSelectionListener(index -> {
@@ -3498,8 +3517,45 @@ public class MainFrame extends JFrame {
         }
     }
 
+    /**
+     * Separate Layouts in effect: ticked, and Studio Mode on. A Preview layout of its own only means something while
+     * Preview is on screen; with Studio Mode off Preview follows Program, and the tick is kept for when it is back on.
+     */
     private boolean separateLayouts() {
+        return separateLayoutsTicked() && studioMode();
+    }
+
+    /** The operator's Separate Layouts tick, whatever Studio Mode is (what the checkboxes show). */
+    private boolean separateLayoutsTicked() {
         return context.config().getBoolean(KEY_SEPARATE_LAYOUTS, false);
+    }
+
+    /**
+     * Separate Layouts came into effect or out of it (its tick, or Studio Mode). In effect: Preview shows its own saved
+     * layout and TAKE SCENE appears. Out of effect because Studio Mode went off: Preview follows Program again, so
+     * nothing unseen waits for the TAKE key.
+     */
+    private void separateLayoutsApplied(boolean byStudioMode) {
+        boolean separate = separateLayouts();
+        Scene inPreview = previewState.scene();
+        if (separate && byStudioMode) {
+            // back on screen: Preview gets the layout it had
+            String previewId = context.config().get(KEY_PREVIEW_SCENE, null);
+            (scenes == null ? List.<Scene>of() : scenes).stream().filter(s -> String.valueOf(s.getId()).equals(previewId))
+                    .findFirst().ifPresent(s -> previewState.setScene(s, false));
+            pendingScene = null;
+        } else if (!separate && byStudioMode && separateLayoutsTicked()) {
+            previewState.setScene(program.scene(), false); // its own layout is put away until Studio Mode is on
+            pendingScene = null;
+        } else {
+            // Preview stays on its scene either way. Sharing again, a scene other than Program's waits there for TAKE
+            pendingScene = separate || inPreview == null || sameLayout(program.scene(), inPreview) ? null : inPreview;
+        }
+        liveDock.setTakeSceneVisible(separate);
+        liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null || pendingScene != null);
+        updatePreviewNote();
+        scenesDock.sync();
+        if (scenesHome != null) scenesHome.sync();
     }
 
     private boolean directSceneSwitch() {
@@ -3669,6 +3725,12 @@ public class MainFrame extends JFrame {
         @Override
         public void sceneSelected(Scene scene) {
             selectedScene = scene;
+            if (!studioMode()) {
+                // Studio Mode off: the card keeps its white ring until the TAKE key puts it live
+                statusBar.showMessage("Scene \"" + scene.getName() + "\" selected. Press " + takeKeyName()
+                        + " (TAKE) to put it live.");
+                return;
+            }
             statusBar.showMessage(separateLayouts()
                     ? "Scene \"" + scene.getName() + "\" selected. TAKE makes it the Preview layout; Program keeps its scene "
                             + "(LIVE or TAKE SCENE changes Program)."
@@ -3851,21 +3913,14 @@ public class MainFrame extends JFrame {
 
         @Override
         public boolean separateLayouts() {
-            return MainFrame.this.separateLayouts();
+            return separateLayoutsTicked(); // the checkbox shows the tick, kept while Studio Mode is off
         }
 
         @Override
         public void setSeparateLayouts(boolean separate) {
             context.config().set(KEY_SEPARATE_LAYOUTS, String.valueOf(separate));
             context.config().save();
-            // Preview stays on its scene either way. Sharing again, a scene other than Program's waits there for TAKE
-            Scene inPreview = previewState.scene();
-            pendingScene = separate || inPreview == null || sameLayout(program.scene(), inPreview) ? null : inPreview;
-            liveDock.setTakeSceneVisible(separate);
-            liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null || pendingScene != null);
-            updatePreviewNote();
-            scenesDock.sync();
-            if (scenesHome != null) scenesHome.sync();
+            separateLayoutsApplied(false);
             statusBar.showMessage(separate
                     ? "Separate layouts: click a scene to set Preview's layout; TAKE changes only the content, TAKE SCENE changes Program's layout."
                     : "Preview keeps its scene. A scene clicked goes to Preview, TAKE puts it live.");
@@ -4090,6 +4145,34 @@ public class MainFrame extends JFrame {
             cfg.save();
         }
         liveDock.setAutoTake(cfg.getBoolean(AppConfig.KEY_AUTO_TAKE, false));
+        liveDock.setStudioMode(studioMode());
+    }
+
+    /**
+     * Settings → Studio Mode (off by default). Off, only the live Program shows: Preview and the TAKE button are hidden,
+     * but the workflow stays the same: a choice is selected first (white ring) and the TAKE key (Space) puts it live.
+     */
+    private boolean studioMode() {
+        return context.config().getBoolean(SettingsPanel.KEY_STUDIO_MODE, false);
+    }
+
+    /** Studio Mode switched: Preview and the TAKE button show or hide; nothing goes live by itself. */
+    private void applyStudioMode() {
+        boolean on = studioMode();
+        liveDock.setStudioMode(on);
+        scenesDock.setStudioMode(on);
+        if (separateLayoutsTicked()) {
+            separateLayoutsApplied(true); // Separate Layouts applies only while Preview is on screen
+        }
+        updateClickHint();
+        statusBar.showMessage(on ? "Studio Mode on: Preview and Program, with the TAKE button."
+                : "Studio Mode off: only Program shows. Select, then press " + takeKeyName() + " (TAKE) to put it live.");
+    }
+
+    /** The key that does TAKE ("Space" unless changed in Settings → Shortcuts). */
+    private String takeKeyName() {
+        javax.swing.KeyStroke k = shortcuts.get(Shortcuts.Action.TAKE);
+        return k == null ? "the TAKE key" : Shortcuts.describe(k);
     }
 
     private GraphicsDevice operatorDevice() {
@@ -4477,9 +4560,57 @@ public class MainFrame extends JFrame {
     private void shutdown() {
         log.info("Shutting down");
         saveEverything();
+        exitWatchdog(-1);
         releaseResources();
         dispose();
+        exitProcess(-1);
+    }
+
+    /**
+     * Ends the app once everything is saved and released. {@code System.exit} alone can hang forever on Windows: while the
+     * process unloads Chromium's DLL (YouTube / Browser sources) it deadlocks, the window is gone but the process and its
+     * Chromium helpers stay, and the next start has no YouTube picture or sound. So the helpers and other child processes
+     * are ended (except {@code keepPid}, a restarted app), then the process ends itself without unloading the DLLs.
+     */
+    private static void exitProcess(long keepPid) {
+        log.info("Closed");
+        ProcessHandle.current().descendants()
+                .filter(p -> p.pid() != keepPid && p.parent().map(pp -> pp.pid() != keepPid).orElse(true))
+                .forEach(ProcessHandle::destroyForcibly);
+        if (System.getProperty("os.name", "").startsWith("Windows")) {
+            try {
+                System.out.flush();
+                System.err.flush();
+                com.sun.jna.platform.win32.Kernel32 k = com.sun.jna.platform.win32.Kernel32.INSTANCE;
+                k.TerminateProcess(k.GetCurrentProcess(), 0);
+            } catch (Throwable e) {
+                log.warn("Could not end the process directly", e);
+            }
+        }
         System.exit(0);
+    }
+
+    /** How long closing may take after everything is saved before the process is ended by force. */
+    private static final long EXIT_WAIT_MS = 8_000;
+
+    /**
+     * Closing Chromium (YouTube / Browser sources) or a driver can hang. The process then lives on without a window, and its
+     * Chromium helpers keep the browser cache locked, so the next start has no YouTube or Browser source picture or
+     * sound. Everything is saved by now: after {@link #EXIT_WAIT_MS} the helpers and other child processes are ended
+     * (except {@code keepPid}, the restarted app) and the process halts.
+     */
+    private static void exitWatchdog(long keepPid) {
+        Thread t = new Thread(() -> {
+            try {
+                Thread.sleep(EXIT_WAIT_MS);
+            } catch (InterruptedException e) {
+                return;
+            }
+            log.warn("Closing did not finish within {} s: ending the app and its helper processes", EXIT_WAIT_MS / 1000);
+            exitProcess(keepPid);
+        }, "exit-watchdog");
+        t.setDaemon(true);
+        t.start();
     }
 
     /** Restarts the application (after a restore or VLC setup). */
@@ -4487,18 +4618,21 @@ public class MainFrame extends JFrame {
         log.info("Restarting");
         saveEverything();
         releaseResources();
+        long keepPid = -1;
         try {
             ProcessHandle.Info info = ProcessHandle.current().info();
             List<String> cmd = new ArrayList<>();
             cmd.add(info.command().orElse("java"));
             info.arguments().ifPresent(args -> cmd.addAll(List.of(args)));
-            new ProcessBuilder(cmd).inheritIO().start();
+            Process next = new ProcessBuilder(cmd).inheritIO().start();
+            keepPid = next.pid();
+            exitWatchdog(keepPid);
         } catch (Exception e) {
             log.error("Could not restart automatically", e);
             Dialogs.showInfo(this, "Restart", "Please start " + branding.applicationName() + " again.");
         }
         dispose();
-        System.exit(0);
+        exitProcess(keepPid);
     }
 
     private static String appVersion() {

@@ -30,8 +30,11 @@ public final class CameraAudio {
     private record Want(String input, int volume, boolean muted, boolean monitorOnly) {
     }
 
-    /** A live sound input of a scene, for its level wave; {@code device} is null when the camera has no input. */
-    public record SceneInput(String name, String device, int volume, boolean muted) {
+    /**
+     * A live sound input of a scene, for its level wave; {@code device} is null when the camera has no input.
+     * {@code monitorOnly}: heard on the monitor device only, never in the recording or the stream.
+     */
+    public record SceneInput(String name, String device, int volume, boolean muted, boolean monitorOnly) {
     }
 
     private final CameraManager cameras;
@@ -74,7 +77,7 @@ public final class CameraAudio {
                     String device = deviceOf(x);
                     SourceConfig c = x.getConfig();
                     return new SceneInput(x.getName(), device, liveVolume.getOrDefault(device, c.volume == null ? 100 : c.volume),
-                            liveMuted.getOrDefault(device, Boolean.TRUE.equals(c.muted)));
+                            liveMuted.getOrDefault(device, Boolean.TRUE.equals(c.muted)), Boolean.TRUE.equals(c.monitorOnly));
                 }).toList();
     }
 

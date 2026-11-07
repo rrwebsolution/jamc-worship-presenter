@@ -98,6 +98,8 @@ public class CameraWorkspacePanel extends JPanel {
     private static final String K_MIRROR = "camera.workspace.mirror";
     private static final String K_FIT = "camera.workspace.fit";
     private static final String K_MULTI = "camera.workspace.multiview";
+    /** Cameras the operator turned off on this page, separated by '|'. */
+    private static final String K_OFF = "camera.workspace.off";
 
     private final CameraManager cameras;
     private final CameraNames names;
@@ -134,6 +136,7 @@ public class CameraWorkspacePanel extends JPanel {
     private final Timer frames = new Timer(33, e -> tick());
     private final CardLayout listCards = new CardLayout();
     private final JPanel listHolder = Ui.transparent(listCards);
+    private final Set<String> off = new LinkedHashSet<>();
     private Consumer<String> statusHandler = s -> { };
     private boolean loading;
     private long ticks;
@@ -239,6 +242,11 @@ public class CameraWorkspacePanel extends JPanel {
             fit.setSelectedItem("FIT".equals(f) ? FitMode.FIT : FitMode.FILL);
             fit.setEnabled(keepAspect.isSelected());
             multiToggle.setSelected(config.getBoolean(K_MULTI, false));
+            for (String cam : config.get(K_OFF, "").split("\\|")) {
+                if (!cam.isBlank()) {
+                    off.add(cam);
+                }
+            }
         } finally {
             loading = false;
         }
@@ -398,6 +406,11 @@ public class CameraWorkspacePanel extends JPanel {
             config.save();
             showView();
         }));
+        if (isOff(cam)) {
+            m.add(item("Turn Camera On", "video", () -> setOff(cam, false)));
+        } else if (!inUse(cam)) {
+            m.add(item("Turn Camera Off", "x", () -> setOff(cam, true)));
+        }
         m.add(item("Refresh Camera", "refresh", () -> refreshCamera(cam)));
         m.add(item("Rename…", "edit", () -> renameCamera(cam)));
         if (cameras.status(cam) == CameraStatus.DISCONNECTED) {
@@ -705,6 +718,44 @@ public class CameraWorkspacePanel extends JPanel {
         monitor.repaint();
     }
 
+    // ------------------------------------------------------------------ on / off
+
+    /**
+     * True when the operator turned this camera off here: its tile shows no picture and its feed is closed. A camera
+     * used by Program or Preview is never shown as off (the app keeps it running).
+     */
+    private boolean isOff(String cam) {
+        return cam != null && off.contains(cam) && !inUse(cam);
+    }
+
+    /** On Program or Preview: the app keeps this camera open, so it cannot be turned off here. */
+    private boolean inUse(String cam) {
+        CameraStatus st = statusOf(cam);
+        return st == CameraStatus.LIVE || st == CameraStatus.PREVIEW;
+    }
+
+    private void setOff(String cam, boolean turnOff) {
+        if (cam == null) {
+            return;
+        }
+        if (turnOff) {
+            if (inUse(cam)) {
+                return; // on Program / Preview: the app keeps it running
+            }
+            off.add(cam);
+            cameras.close(cam);
+        } else {
+            off.remove(cam);
+        }
+        config.set(K_OFF, String.join("|", off));
+        config.save();
+        statusHandler.accept(names.label(cam) + (turnOff ? " turned off." : " turned on."));
+        deviceList.repaint();
+        multiview.repaint();
+        monitor.repaint();
+        updateStatus();
+    }
+
     // ------------------------------------------------------------------ status
 
     /** READY / INITIALIZING / DISCONNECTED / ERROR from the camera itself; LIVE / PREVIEW when a scene uses it. */
@@ -759,6 +810,12 @@ public class CameraWorkspacePanel extends JPanel {
             statusLabel.setToolTipText(cameras.problem(cam));
             String f = formatText(cam);
             liveSize.setText(f == null ? (st.isOffline() ? "–" : "starting…") : f);
+            if (isOff(cam)) {
+                statusLabel.setText("OFF");
+                statusLabel.setForeground(Palette.mutedText());
+                statusLabel.setToolTipText("Turned off on this page. Hover its picture and click the power button to turn it on.");
+                liveSize.setText("–");
+            }
         }
         // one line above the picture when a camera fails because the USB controller is full
         String warn = null;
@@ -811,14 +868,16 @@ public class CameraWorkspacePanel extends JPanel {
             g2.drawString(tag == null ? "CAM" : tag, 17, 10 + (18 + tm.getAscent() - tm.getDescent()) / 2);
             // status badge on the right
             CameraStatus st = statusOf(cam);
+            boolean isOff = isOff(cam);
+            String stText = isOff ? "OFF" : st.label();
             g2.setFont(base.deriveFont(Font.BOLD, 9.5f));
             FontMetrics bm = g2.getFontMetrics();
-            int bw = bm.stringWidth(st.label()) + 12;
+            int bw = bm.stringWidth(stText) + 12;
             int bx = w - bw - 12;
-            g2.setColor(st.color());
+            g2.setColor(isOff ? OFF_COLOR : st.color());
             g2.fillRoundRect(bx, 10, bw, 18, 8, 8);
             g2.setColor(Color.WHITE);
-            g2.drawString(st.label(), bx + 6, 10 + (18 + bm.getAscent() - bm.getDescent()) / 2);
+            g2.drawString(stText, bx + 6, 10 + (18 + bm.getAscent() - bm.getDescent()) / 2);
             // nickname, device, format · audio
             int x = 12 + tagW + 8;
             g2.setFont(base.deriveFont(Font.BOLD, 12.5f));
@@ -829,7 +888,8 @@ public class CameraWorkspacePanel extends JPanel {
             g2.drawString(clip(g2, cam, w - 24), 12, 44);
             String fmt = formatText(cam);
             String audio = cameras.audioDevice(cam) == null ? "NO AUDIO" : "AUDIO";
-            g2.drawString(clip(g2, (fmt == null ? (st.isOffline() ? "–" : "Not running") : fmt) + "  ·  " + audio, w - 24), 12, 60);
+            String running = isOff ? "Turned off" : fmt == null ? (st.isOffline() ? "–" : "Not running") : fmt;
+            g2.drawString(clip(g2, running + "  ·  " + audio, w - 24), 12, 60);
             g2.dispose();
         }
 
@@ -848,30 +908,83 @@ public class CameraWorkspacePanel extends JPanel {
 
     /** The live camera picture with the chosen fit and mirror, 16:9. */
     private final class Monitor extends JComponent {
+        private boolean hover;
+        private Rectangle powerButton;
+
+        Monitor() {
+            setToolTipText(""); // tooltips come from getToolTipText(MouseEvent)
+            MouseAdapter m = new MouseAdapter() {
+                @Override
+                public void mouseMoved(MouseEvent e) {
+                    String cam = selectedCamera();
+                    boolean in = cam != null && fit16x9(0, 0, getWidth(), getHeight()).contains(e.getPoint());
+                    if (in != hover) {
+                        hover = in;
+                        repaint();
+                    }
+                    setCursor(powerButton != null && hover && powerButton.contains(e.getPoint())
+                            ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR) : null);
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    hover = false;
+                    setCursor(null);
+                    repaint();
+                }
+
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    String cam = selectedCamera();
+                    if (SwingUtilities.isLeftMouseButton(e) && hover && powerButton != null && powerButton.contains(e.getPoint())) {
+                        setOff(cam, !isOff(cam));
+                    }
+                }
+            };
+            addMouseListener(m);
+            addMouseMotionListener(m);
+        }
+
+        @Override
+        public String getToolTipText(MouseEvent e) {
+            String cam = selectedCamera();
+            if (hover && powerButton != null && powerButton.contains(e.getPoint())) {
+                return isOff(cam) ? "Turn this camera on" : "Turn this camera off";
+            }
+            return null;
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
+            com.jamc.worship.output.Smoothness.drawn("Camera page");
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
             Rectangle r = fit16x9(0, 0, getWidth(), getHeight());
             g2.setColor(Color.BLACK);
             g2.fillRect(r.x, r.y, r.width, r.height);
             String cam = selectedCamera();
-            BufferedImage img = cam != null && isShowing() ? cameras.frame(cam) : null;
+            boolean isOff = isOff(cam);
+            BufferedImage img = cam != null && !isOff && isShowing() ? cameras.frame(cam) : null;
             if (img != null) {
                 SourceConfig c = new SourceConfig();
                 c.fit = currentFit();
                 c.mirror = mirror.isSelected() ? Boolean.TRUE : null;
                 Compositor.drawCamera(g2, img, r, c, 1f);
             } else {
-                String msg = cam == null ? "No camera detected" : !MediaEngine.get().isAvailable() ? "The camera preview needs VLC"
+                String msg = cam == null ? "No camera detected" : isOff ? "Camera is off" : !MediaEngine.get().isAvailable() ? "The camera preview needs VLC"
                         : cameras.status(cam).isOffline() ? cameras.status(cam).label() : "Starting camera…";
                 centered(g2, r, msg, 14f, Palette.mutedText());
             }
             badge(g2, r.x + 6, r.y + 6, "CAMERA PREVIEW", new Color(0, 0, 0, 170));
+            powerButton = null;
             if (cam != null) {
                 CameraStatus st = statusOf(cam);
-                badgeRight(g2, r.x + r.width - 6, r.y + 6, st.label(), st.color());
+                Rectangle b = badgeRight(g2, r.x + r.width - 6, r.y + 6, isOff ? "OFF" : st.label(), isOff ? OFF_COLOR : st.color());
+                if (hover && !inUse(cam)) {
+                    powerButton = paintPower(g2, b.x - 6, r.y + 6, isOff);
+                }
             }
             g2.setColor(Palette.border());
             g2.drawRect(r.x, r.y, r.width - 1, r.height - 1);
@@ -887,9 +1000,41 @@ public class CameraWorkspacePanel extends JPanel {
     private final class MultiView extends JComponent {
         private final List<Rectangle> tiles = new ArrayList<>();
         private final List<Rectangle> switchPills = new ArrayList<>();
+        private final List<Rectangle> powerButtons = new ArrayList<>();
         private List<String> shown = List.of();
+        private int hover = -1;
 
         MultiView() {
+            setToolTipText(""); // tooltips come from getToolTipText(MouseEvent)
+            MouseAdapter hovering = new MouseAdapter() {
+                @Override
+                public void mouseMoved(MouseEvent e) {
+                    int i = tileAt(e.getX(), e.getY());
+                    if (i != hover) {
+                        int old = hover;
+                        hover = i;
+                        if (old >= 0 && old < tiles.size()) {
+                            repaint(tiles.get(old));
+                        }
+                        if (i >= 0) {
+                            repaint(tiles.get(i));
+                        }
+                    }
+                    setCursor(powerAt(e.getPoint()) >= 0
+                            ? java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR) : null);
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    if (hover >= 0 && hover < tiles.size()) {
+                        repaint(tiles.get(hover));
+                    }
+                    hover = -1;
+                    setCursor(null);
+                }
+            };
+            addMouseMotionListener(hovering);
+            addMouseListener(hovering);
             addMouseListener(new MouseAdapter() {
                 @Override
                 public void mousePressed(MouseEvent e) {
@@ -900,6 +1045,10 @@ public class CameraWorkspacePanel extends JPanel {
                     String cam = shown.get(i);
                     if (e.isPopupTrigger() || SwingUtilities.isRightMouseButton(e)) {
                         cameraMenu(cam).show(MultiView.this, e.getX(), e.getY());
+                        return;
+                    }
+                    if (powerAt(e.getPoint()) == i) {
+                        setOff(cam, !isOff(cam)); // the hover power button: only this camera, nothing else changes
                         return;
                     }
                     if (settings.directSwitch() && i < switchPills.size() && switchPills.get(i) != null
@@ -922,6 +1071,9 @@ public class CameraWorkspacePanel extends JPanel {
             }
             // odd frames: only the cameras in Preview / Program (and the selected one) refresh
             for (int i = 0; i < shown.size() && i < tiles.size(); i++) {
+                if (isOff(shown.get(i))) {
+                    continue;
+                }
                 CameraStatus st = statusOf(shown.get(i));
                 if (st == CameraStatus.LIVE || st == CameraStatus.PREVIEW || shown.get(i).equals(selectedCamera())) {
                     repaint(tiles.get(i));
@@ -938,8 +1090,29 @@ public class CameraWorkspacePanel extends JPanel {
             return -1;
         }
 
+        /** The tile whose (visible) power button is under this point, or -1. */
+        private int powerAt(java.awt.Point p) {
+            for (int i = 0; i < powerButtons.size(); i++) {
+                Rectangle b = powerButtons.get(i);
+                if (b != null && i == hover && b.contains(p)) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        @Override
+        public String getToolTipText(MouseEvent e) {
+            int i = powerAt(e.getPoint());
+            if (i >= 0 && i < shown.size()) {
+                return isOff(shown.get(i)) ? "Turn this camera on" : "Turn this camera off";
+            }
+            return null;
+        }
+
         @Override
         protected void paintComponent(Graphics g) {
+            com.jamc.worship.output.Smoothness.drawn("Camera page multiview");
             Graphics2D g2 = (Graphics2D) g.create();
             Object interpolation = switch (settings.quality()) {
                 case LOW -> RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR;
@@ -955,6 +1128,7 @@ public class CameraWorkspacePanel extends JPanel {
             }
             tiles.clear();
             switchPills.clear();
+            powerButtons.clear();
             if (shown.isEmpty()) {
                 centered(g2, new Rectangle(0, 0, getWidth(), getHeight()), "No camera detected", 14f, Palette.mutedText());
                 g2.dispose();
@@ -973,6 +1147,9 @@ public class CameraWorkspacePanel extends JPanel {
                 Rectangle r = fit16x9(cx, cy, cw, ch);
                 tiles.add(r);
                 switchPills.add(null);
+                // the power button shows only while the mouse is over this tile (never on a camera in Program / Preview)
+                boolean power = i == hover && !inUse(shown.get(i));
+                powerButtons.add(power ? powerBounds(r.x + r.width - 6, r.y + 6) : null);
                 if (clip == null || clip.intersects(r)) {
                     paintTile(g2, r, shown.get(i), i);
                 }
@@ -984,20 +1161,24 @@ public class CameraWorkspacePanel extends JPanel {
             g2.setColor(Color.BLACK);
             g2.fillRect(r.x, r.y, r.width, r.height);
             CameraStatus st = statusOf(cam);
-            BufferedImage img = isShowing() && !st.isOffline() ? cameras.frame(cam) : null;
+            boolean isOff = isOff(cam);
+            BufferedImage img = isShowing() && !isOff && !st.isOffline() ? cameras.frame(cam) : null;
             if (img != null) {
                 SourceConfig c = new SourceConfig();
                 c.fit = FitMode.FIT;
                 Compositor.drawCamera(g2, img, r, c, 1f);
             } else {
-                centered(g2, r, st.isOffline() ? st.label() : "Starting…", 12f, new Color(0x94A3B8));
+                centered(g2, r, isOff ? "Camera off" : st.isOffline() ? st.label() : "Starting…", 12f, new Color(0x94A3B8));
             }
             String tag = names.tag(cam);
             badge(g2, r.x + 6, r.y + 6, (tag == null ? "CAM" : tag) + "  " + names.label(cam).toUpperCase(java.util.Locale.ROOT),
                     new Color(0, 0, 0, 170));
             int pillY = r.y + r.height - 26;
-            badge(g2, r.x + 6, pillY, st.label(), st.color());
-            if (settings.directSwitch() && !st.isOffline() && st != CameraStatus.LIVE) {
+            badge(g2, r.x + 6, pillY, isOff ? "OFF" : st.label(), isOff ? OFF_COLOR : st.color());
+            if (index < powerButtons.size() && powerButtons.get(index) != null) {
+                paintPower(g2, r.x + r.width - 6, r.y + 6, isOff);
+            }
+            if (settings.directSwitch() && !isOff && !st.isOffline() && st != CameraStatus.LIVE) {
                 Rectangle pill = badgeRight(g2, r.x + r.width - 6, pillY, "SWITCH NOW", new Color(0x7C3AED));
                 switchPills.set(index, pill);
             }
@@ -1012,6 +1193,39 @@ public class CameraWorkspacePanel extends JPanel {
     }
 
     // ------------------------------------------------------------------ drawing helpers
+
+    private static final Color OFF_COLOR = new Color(0x334155);
+    private static final int POWER_W = 80;
+    private static final int POWER_H = 24;
+
+    /** Where the hover on/off button goes, its right edge at {@code right}. */
+    private static Rectangle powerBounds(int right, int y) {
+        return new Rectangle(right - POWER_W, y, POWER_W, POWER_H);
+    }
+
+    /**
+     * The hover on/off text button (right edge at {@code right}): red "TURN OFF", or green "TURN ON" when the camera
+     * is off. Returns its bounds for the click test.
+     */
+    private Rectangle paintPower(Graphics2D g2, int right, int y, boolean turnOn) {
+        Rectangle b = powerBounds(right, y);
+        Graphics2D g = (Graphics2D) g2.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        g.setColor(new Color(0, 0, 0, 90));
+        g.fillRoundRect(b.x + 1, b.y + 2, b.width, b.height, 10, 10);
+        g.setColor(turnOn ? new Color(0x16A34A) : new Color(0xDC2626));
+        g.fillRoundRect(b.x, b.y, b.width, b.height, 10, 10);
+        g.setColor(new Color(255, 255, 255, 120));
+        g.drawRoundRect(b.x, b.y, b.width - 1, b.height - 1, 10, 10);
+        String text = turnOn ? "TURN ON" : "TURN OFF";
+        g.setFont((getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont()).deriveFont(Font.BOLD, 10.5f));
+        FontMetrics fm = g.getFontMetrics();
+        g.setColor(Color.WHITE);
+        g.drawString(text, b.x + (b.width - fm.stringWidth(text)) / 2, b.y + (b.height + fm.getAscent() - fm.getDescent()) / 2);
+        g.dispose();
+        return b;
+    }
 
     private static Rectangle fit16x9(int x, int y, int availW, int availH) {
         int w = availW;

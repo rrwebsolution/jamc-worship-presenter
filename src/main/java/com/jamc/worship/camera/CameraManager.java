@@ -79,6 +79,11 @@ public final class CameraManager {
 
         void release();
 
+        /** The longest time between two frames (ms) since the last call, or -1 when not known. */
+        default long takeMaxGapMillis() {
+            return -1;
+        }
+
         /** Stands in while the previous feed is still closing: no picture yet, not failed. */
         Feed NONE = new Feed() {
             @Override public BufferedImage frame() { return null; }
@@ -93,6 +98,7 @@ public final class CameraManager {
                 @Override public long frames() { return p.frameCount(); }
                 @Override public boolean failed() { return p.hasError(); }
                 @Override public void release() { p.release(); }
+                @Override public long takeMaxGapMillis() { return p.takeMaxGapMillis(); }
             };
         }
     }
@@ -863,6 +869,23 @@ public final class CameraManager {
         watching = on;
     }
 
+    /**
+     * The operator turned this camera off in the camera page: its session closes now (off the Swing thread) instead of
+     * after the idle timeout. A camera kept open for Preview / Program stays open. EDT only.
+     */
+    public void close(String name) {
+        String cam = resolve(name);
+        if (cam == null || isKept(cam)) {
+            return;
+        }
+        Session s = sessions.remove(cam);
+        if (s != null) {
+            release(cam, s.feed);
+            log.info("Camera turned off: {}", cam);
+            fire();
+        }
+    }
+
     public void stopAll() {
         sessions.forEach((cam, s) -> release(cam, s.feed));
         sessions.clear();
@@ -902,6 +925,7 @@ public final class CameraManager {
                 }
             }
         }
+        logSmoothness(now);
         wanted.entrySet().removeIf(e -> now - e.getValue() > 60_000 && !isKept(e.getKey()));
         boolean anyMissing = !missing.isEmpty() || wanted.keySet().stream().anyMatch(c -> !cameras.contains(c));
         if ((anyMissing && now - lastDetect > RECHECK_MS) || (watching && now - lastDetect > 3 * RECHECK_MS)) {
@@ -910,6 +934,30 @@ public final class CameraManager {
         prewarm();
         if (changed) {
             fire();
+        }
+    }
+
+    private long lastSmoothnessLog;
+
+    /**
+     * Every 10 s while cameras run, one line: each camera's frame rate and the longest wait between two of its frames.
+     * A camera that itself delivers unevenly (WiFi phone, low light) stutters everywhere, whatever the app does.
+     */
+    private void logSmoothness(long now) {
+        if (now - lastSmoothnessLog < 10_000) {
+            return;
+        }
+        lastSmoothnessLog = now;
+        StringBuilder line = new StringBuilder();
+        sessions.forEach((cam, s) -> {
+            long gap = s.feed.takeMaxGapMillis();
+            if (s.gotFrame && !s.failed && gap >= 0) {
+                line.append(line.isEmpty() ? "" : "; ").append(cam).append(' ').append(s.fps).append(" fps, longest gap ")
+                        .append(gap).append(" ms");
+            }
+        });
+        if (!line.isEmpty()) {
+            log.info("Smoothness: cameras {}", line);
         }
     }
 

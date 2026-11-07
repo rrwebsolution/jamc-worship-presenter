@@ -28,7 +28,6 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
-import javax.swing.JScrollPane;
 // import javax.swing.JSlider;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
@@ -67,6 +66,8 @@ public class SettingsPanel extends JPanel {
     public static final String KEY_PRESENTATION_CLICK_LIVE = "live.presentationClickGoesLive";
     /** Clicking a scene switches Program at once (Direct Switch) instead of Preview + TAKE. */
     public static final String KEY_SCENE_DIRECT = "scenes.directSwitch";
+    /** On: Preview and Program side by side with TAKE. Off (default): only the live Program; TAKE by key (Space). */
+    public static final String KEY_STUDIO_MODE = "live.studioMode";
     public static final String KEY_VLC_PATH = "media.vlcPath";
     public static final String KEY_BIBLE_THEME = "bible.theme";
     public static final String KEY_BIBLE_REF_POSITION = "bible.referencePosition";
@@ -137,6 +138,10 @@ public class SettingsPanel extends JPanel {
         }
 
         /** "Show the Audio Mixer" changed. */
+        /** Studio Mode was switched on or off. */
+        default void studioModeChanged() {
+        }
+
         default void audioMixerVisibilityChanged() {
         }
 
@@ -453,12 +458,8 @@ public class SettingsPanel extends JPanel {
 
         c.weighty = 1;
         content.add(Ui.transparent(new BorderLayout()), c);
-        JScrollPane scroll = new JScrollPane(content);
-        scroll.setBorder(null);
-        scroll.setOpaque(false);
-        scroll.getViewport().setOpaque(false);
-        scroll.getVerticalScrollBar().setUnitIncrement(24);
-        add(scroll, BorderLayout.CENTER);
+        // one column as wide as the window (laptop or PC): the cards fill it and nothing scrolls sideways
+        add(FitWidthColumn.scroll(content), BorderLayout.CENTER);
     }
 
     public void setTheme(String theme) {
@@ -871,7 +872,46 @@ public class SettingsPanel extends JPanel {
                 defaultScene.setSelectedItem(chosen);
             }
         });
-        liveBody.add(rows(flow(Ui.small("Transition:"), transition, Ui.small("Duration:"), duration),
+        // Studio Mode: a switch (the same one sits above the monitors on the Control page) and, on the right, a
+        // picture of what the Control page shows with it
+        boolean studioOn = context.config().getBoolean(KEY_STUDIO_MODE, false);
+        ToggleSwitch studioMode = new ToggleSwitch("Studio Mode", studioOn);
+        StudioModePreview studioPicture = new StudioModePreview();
+        studioPicture.setOn(studioOn);
+        separate.setVisible(studioOn); // Separate Layouts applies only while Preview is on screen (Studio Mode on)
+        studioMode.addActionListener(e -> {
+            context.config().set(KEY_STUDIO_MODE, String.valueOf(studioMode.isSelected()));
+            context.config().save();
+            studioPicture.setOn(studioMode.isSelected());
+            separate.setVisible(studioMode.isSelected());
+            h.studioModeChanged();
+        });
+        liveSync.add(() -> live(() -> {
+            boolean on = context.config().getBoolean(KEY_STUDIO_MODE, false); // switched on the Control page meanwhile
+            studioMode.setSelected(on);
+            studioPicture.setOn(on);
+            separate.setVisible(on);
+        }));
+        JPanel studioText = Ui.transparent(new BorderLayout(0, 6));
+        JPanel switchRow = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        switchRow.add(studioMode);
+        studioText.add(switchRow, BorderLayout.NORTH);
+        studioText.add(Ui.label("<html><div style='width:360px'>On: Preview and Program side by side, with the TAKE "
+                        + "button.<br>Off (default): only the live Program shows; Preview and the TAKE button are hidden, but "
+                        + "what you choose still waits (white ring) until you press the TAKE key (Space).<br>The same switch "
+                        + "is above the monitors on the Control Room page.</div></html>", Palette::mutedText, "small"),
+                BorderLayout.CENTER);
+        // the picture sits right next to the explanation, not at the far edge of the page
+        JPanel studioPair = Ui.transparent(new BorderLayout(24, 0));
+        studioPair.add(studioText, BorderLayout.WEST);
+        JPanel pictureHolder = Ui.transparent(new BorderLayout());
+        pictureHolder.add(studioPicture, BorderLayout.NORTH);
+        studioPair.add(pictureHolder, BorderLayout.CENTER);
+        JPanel studioRow = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        studioRow.add(studioPair);
+        studioRow.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+        liveBody.add(rows(studioRow,
+                flow(Ui.small("Transition:"), transition, Ui.small("Duration:"), duration),
                 autoTake, sceneSwitchRow(),
                 Ui.label("Off: it shows on Preview and Program together (a presentation slide: click selects it, TAKE shows it on both). On: Preview first, TAKE sends it to Program.",
                         Palette::mutedText, "small"),

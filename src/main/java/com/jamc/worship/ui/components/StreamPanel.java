@@ -22,7 +22,6 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPasswordField;
-import javax.swing.JScrollPane;
 import javax.swing.JSlider;
 import javax.swing.JToggleButton;
 import javax.swing.JTextField;
@@ -168,12 +167,8 @@ public class StreamPanel extends JPanel {
 
         c.weighty = 1;
         content.add(Ui.transparent(new BorderLayout()), c);
-        JScrollPane scroll = new JScrollPane(content);
-        scroll.setBorder(null);
-        scroll.setOpaque(false);
-        scroll.getViewport().setOpaque(false);
-        scroll.getVerticalScrollBar().setUnitIncrement(24);
-        add(scroll, BorderLayout.CENTER);
+        // one column as wide as the window (laptop or PC): the cards fill it and nothing scrolls sideways
+        add(FitWidthColumn.scroll(content), BorderLayout.CENTER);
 
         for (StreamSettings.Preset p : StreamSettings.Preset.values()) {
             preset.addItem(p);

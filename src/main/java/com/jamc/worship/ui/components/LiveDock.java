@@ -54,7 +54,14 @@ public class LiveDock extends JPanel {
         /** Separate Preview layout mode: Program switches to the scene shown in Preview (content stays). */
         default void takeScene() {
         }
+
+        /** The Studio Mode switch above the monitors was flipped. */
+        default void studioModeToggled(boolean on) {
+        }
     }
+
+    /** Studio Mode on / off, right above the monitors (the same setting as Settings → Live & Scenes). */
+    private final ToggleSwitch studioSwitch = new ToggleSwitch("Studio Mode", false);
 
     private final TransportControls programTransport = new TransportControls(true);
     private final JPanel programMediaRow = Ui.transparent(new BorderLayout(6, 0));
@@ -69,6 +76,12 @@ public class LiveDock extends JPanel {
     private final Actions actions;
     private final PreviewMonitor preview;
     private final ProgramMonitor programMonitor;
+    /** The Preview monitor with its DISPLAY row; hidden while Studio Mode is off. */
+    private JComponent previewColumn;
+    /** TAKE with the transition choice between the monitors; hidden while Studio Mode is off (Settings has the transition). */
+    private JComponent takeColumn;
+    private boolean studioMode;
+    private boolean takeSceneWanted;
     private final JButton takeButton = new JButton("TAKE →");
     private final JButton takeSceneButton = new JButton("TAKE SCENE →");
     private String previewNote;
@@ -108,25 +121,46 @@ public class LiveDock extends JPanel {
 
 
         GridBagConstraints c = new GridBagConstraints();
+        // row 0: the Studio Mode switch, at the right above the monitors
+        studioSwitch.setToolTipText("<html><b>Studio Mode</b><br>On: Preview and Program side by side, with the TAKE button."
+                + "<br>Off: only the live Program; select, then press the TAKE key (Space).<br>"
+                + "The same switch is in Settings → Live &amp; Scenes.</html>");
+        studioSwitch.addActionListener(e -> actions.studioModeToggled(studioSwitch.isSelected()));
+        JPanel top = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        top.add(studioSwitch);
+        c.gridx = 0;
         c.gridy = 0;
+        c.gridwidth = 3;
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.weightx = 1;
+        c.weighty = 0;
+        c.insets = new Insets(0, 0, 4, 8);
+        add(top, c);
+        c.gridwidth = 1;
+
+        c.gridy = 1;
         c.fill = GridBagConstraints.BOTH;
         c.weighty = 1;
         c.insets = new Insets(0, 0, 6, 8);
 
         c.gridx = 0;
         c.weightx = 1;
-        add(withDisplayRow(monitor(preview), OutputService.Source.PREVIEW), c);
+        previewColumn = withDisplayRow(monitor(preview), OutputService.Source.PREVIEW);
+        previewColumn.setVisible(studioMode);
+        add(previewColumn, c);
 
         c.gridx = 1;
         c.weightx = 0;
-        add(buildTakeColumn(), c);
+        takeColumn = buildTakeColumn();
+        takeColumn.setVisible(studioMode);
+        add(takeColumn, c);
 
         c.gridx = 2;
         c.weightx = 1;
         add(withDisplayRow(monitor(programMonitor), OutputService.Source.PROGRAM), c);
 
         c.gridx = 0;
-        c.gridy = 2;
+        c.gridy = 3;
         c.gridwidth = 3;
         c.gridheight = 1;
         c.weighty = 0;
@@ -146,7 +180,7 @@ public class LiveDock extends JPanel {
         add(programMediaRow, c);
 
         c.gridx = 0;
-        c.gridy = 1;
+        c.gridy = 2;
         c.gridwidth = 3;
         c.gridheight = 1;
         c.weighty = 0;
@@ -160,8 +194,30 @@ public class LiveDock extends JPanel {
 
     /** Shows TAKE SCENE (separate Preview layout mode only). */
     public void setTakeSceneVisible(boolean visible) {
-        takeSceneButton.setVisible(visible);
+        takeSceneWanted = visible;
+        takeSceneButton.setVisible(visible && studioMode);
         revalidate();
+    }
+
+    /**
+     * Settings → Studio Mode. On: Preview and Program side by side, TAKE between them. Off (the default): only the live
+     * Program shows; Preview and the TAKE button are hidden, but the workflow is the same: what is chosen waits
+     * (selected, white ring) and the TAKE key (Space) puts it live. The transition is chosen in Settings meanwhile.
+     */
+    public void setStudioMode(boolean on) {
+        studioMode = on;
+        studioSwitch.setSelected(on);
+        previewColumn.setVisible(on);
+        takeColumn.setVisible(on);
+        takeButton.setVisible(on);
+        takeSceneButton.setVisible(on && takeSceneWanted);
+        updateTakeTooltip();
+        revalidate();
+        repaint();
+    }
+
+    public boolean isStudioMode() {
+        return studioMode;
     }
 
     /**

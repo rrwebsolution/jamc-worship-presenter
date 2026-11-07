@@ -70,6 +70,7 @@ public final class Main {
 
         AppConfig config = new AppConfig(paths);
         config.load();
+        com.jamc.worship.stream.MixerChannels.install(config); // Audio Mixer names, filters, layout
 
         try {
             SwingUtilities.invokeAndWait(() -> {

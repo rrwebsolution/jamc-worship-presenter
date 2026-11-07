@@ -465,18 +465,29 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         } else {
             StringBuilder f = new StringBuilder();
             for (int i = 0; i < gains.size(); i++) {
+                // the channel's own Audio Mixer filters, mono / balance and sync delay come first (Filters…, Properties…)
+                String chain = MixerChannels.get().chain(names.get(i));
+                f.append('[').append(i + 1).append(":a]");
+                if (!chain.isEmpty()) {
+                    f.append(chain).append(',');
+                }
                 // named (volume@mic / volume@aux / volume@media) so a level can change during the recording
-                f.append('[').append(i + 1).append(":a]volume@").append(names.get(i)).append('=')
+                f.append("volume@").append(names.get(i)).append('=')
                         .append(fmt(gains.get(i)[0] * master))
                         .append(",aresample=48000:async=1000[a").append(i + 1).append("];"); // gaps filled, drift corrected
             }
+            String masterChain = MixerChannels.get().chain(MixerChannels.MASTER);
+            String mixed = masterChain.isEmpty() ? "aout" : "mixed";
             if (gains.size() == 1) {
-                f.append("[a1]anull[aout]");
+                f.append("[a1]anull[").append(mixed).append(']');
             } else {
                 for (int i = 0; i < gains.size(); i++) {
                     f.append("[a").append(i + 1).append(']');
                 }
-                f.append("amix=inputs=").append(gains.size()).append(":normalize=0:dropout_transition=0[aout]");
+                f.append("amix=inputs=").append(gains.size()).append(":normalize=0:dropout_transition=0[").append(mixed).append(']');
+            }
+            if (!masterChain.isEmpty()) {
+                f.append(";[mixed]").append(masterChain).append("[aout]"); // MASTER's filters: on everything together
             }
             c.addAll(List.of("-filter_complex", f.toString(), "-map", "0:v", "-map", "[aout]"));
         }

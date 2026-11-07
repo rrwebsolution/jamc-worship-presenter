@@ -44,10 +44,21 @@ final class SceneActionBar extends JPanel {
         setScene(null);
     }
 
+    private boolean studioMode = true;
+
+    /** Studio Mode off: no Preview, so no PREVIEW button; a card click puts the scene live. */
+    void setStudioMode(boolean on) {
+        studioMode = on;
+        preview.setVisible(on);
+        setScene(scene);
+        revalidate();
+    }
+
     /** The selected scene, or null: the buttons work only with a selection. */
     void setScene(Scene s) {
         scene = s;
-        selectedLabel.setText(s == null ? "Click a scene to select it" : "Selected: " + s.getName());
+        selectedLabel.setText(s == null ? (studioMode ? "Click a scene to select it" : "Click a scene, then Space (TAKE)")
+                : "Selected: " + s.getName() + (studioMode ? "" : " · Space = TAKE"));
         preview.setEnabled(s != null);
         live.setEnabled(s != null);
         edit.setEnabled(s != null);

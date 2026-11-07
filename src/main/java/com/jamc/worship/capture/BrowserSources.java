@@ -120,7 +120,6 @@ public final class BrowserSources {
         final int height;
         volatile long lastAsked = System.currentTimeMillis();
         volatile BufferedImage front;
-        BufferedImage back;
         volatile boolean closed;
         CefClient client;
         HeadlessBrowser browser;
@@ -154,21 +153,42 @@ public final class BrowserSources {
             });
         }
 
-        /** CEF paint callback: the buffer is only valid during this call, so copy it now. */
+        /**
+         * CEF paint callback: the buffer is only valid during this call, so copy it now. Only the changed areas are
+         * copied: a page with a small animation (a spinner, a live counter) changes a few pixels, and copying the
+         * whole 1920x1080 page 30 times a second took a fifth of the Swing thread. One picture is updated in place:
+         * this callback and every reader (the Compositor) run on the Swing thread, so nobody sees half a frame.
+         */
         private void onPaint(CefPaintEvent e) {
             if (closed) {
                 return;
             }
             int w = e.getWidth();
             int h = e.getHeight();
-            BufferedImage img = back;
-            if (img == null || img.getWidth() != w || img.getHeight() != h) {
+            BufferedImage img = front;
+            boolean whole = img == null || img.getWidth() != w || img.getHeight() != h;
+            if (whole) {
                 img = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
             }
             int[] px = ((DataBufferInt) img.getRaster().getDataBuffer()).getData();
             ByteBuffer buf = e.getRenderedFrame();
-            buf.duplicate().order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().get(0, px, 0, Math.min(px.length, buf.capacity() / 4));
-            back = front;
+            java.nio.IntBuffer src = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+            int available = Math.min(px.length, buf.capacity() / 4);
+            java.awt.Rectangle[] dirty = e.getDirtyRects();
+            if (whole || dirty == null || dirty.length == 0) {
+                src.get(0, px, 0, available);
+            } else {
+                java.awt.Rectangle all = new java.awt.Rectangle(0, 0, w, h);
+                for (java.awt.Rectangle d : dirty) {
+                    java.awt.Rectangle r = d.intersection(all);
+                    for (int y = r.y; y < r.y + r.height; y++) {
+                        int at = y * w + r.x;
+                        if (r.width > 0 && at + r.width <= available) {
+                            src.get(at, px, at, r.width);
+                        }
+                    }
+                }
+            }
             front = img;
             MediaFrames.frameArrived();
         }
@@ -188,7 +208,6 @@ public final class BrowserSources {
             browser = null;
             client = null;
             front = null;
-            back = null;
         }
     }
 }

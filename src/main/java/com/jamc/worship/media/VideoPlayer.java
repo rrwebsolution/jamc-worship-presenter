@@ -25,8 +25,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * A VLC player that decodes video into an in-memory image instead of a window.
  *
  * <p>Every output surface (projector, Program monitor, OBS window) paints {@link #currentFrame()},
- * so one decode feeds all of them and they stay frame-accurate with each other. Frames are double
- * buffered: VLC writes the back image while painters read the front one.
+ * so one decode feeds all of them and they stay frame-accurate with each other. Frames are triple
+ * buffered: VLC writes the back image while painters read the front one, and the image that was front
+ * a moment ago rests one frame before VLC writes into it again. With two images, VLC wrote the next
+ * frame into the image a painter had just picked up, and cameras showed torn, mixed pictures.
  */
 public final class VideoPlayer implements VideoPlayback {
 
@@ -37,6 +39,11 @@ public final class VideoPlayer implements VideoPlayback {
     private final List<Runnable> finishedListeners = new CopyOnWriteArrayList<>();
     private volatile BufferedImage front;
     private BufferedImage back;
+    /** The previous front: not written until the next frame is done. */
+    private BufferedImage spare;
+    /** For the smoothness log: when the last frame arrived, and the longest wait between two frames since asked. */
+    private volatile long lastFrameNanos;
+    private volatile long maxGapNanos;
     private int[] backPixels;
     /** VLC's buffer can be taller than the picture: a 1920x1080 video may arrive as 1920x1090, with padding below. */
     private int bufferWidth;
@@ -156,6 +163,13 @@ public final class VideoPlayer implements VideoPlayback {
 
     public boolean hasError() {
         return errored;
+    }
+
+    /** The longest time between two frames (ms) since the last call; for the smoothness log. */
+    public long takeMaxGapMillis() {
+        long gap = maxGapNanos;
+        maxGapNanos = 0;
+        return gap / 1_000_000;
     }
 
     /** How many frames have arrived since playback started. */
@@ -385,6 +399,7 @@ public final class VideoPlayer implements VideoPlayback {
         MediaEngine.get().forget(releaser);
         front = null;
         back = null;
+        spare = null;
     }
 
     private void fireState() {
@@ -400,6 +415,7 @@ public final class VideoPlayer implements VideoPlayback {
                 bufferWidth = w;
                 bufferHeight = h;
                 visible = null;
+                spare = null;
                 back = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
                 backPixels = ((DataBufferInt) back.getRaster().getDataBuffer()).getData();
             }
@@ -452,15 +468,22 @@ public final class VideoPlayer implements VideoPlayback {
                 BufferedImage done = back;
                 BufferedImage previous = front;
                 front = done;
-                if (previous != null && previous.getWidth() == done.getWidth() && previous.getHeight() == done.getHeight()) {
-                    back = previous;
-                } else {
-                    back = new BufferedImage(done.getWidth(), done.getHeight(), BufferedImage.TYPE_INT_RGB);
-                }
+                // the next frame goes into the image that left the screen one frame ago, never the one just replaced
+                back = sameSize(spare, done) ? spare : new BufferedImage(done.getWidth(), done.getHeight(), BufferedImage.TYPE_INT_RGB);
+                spare = sameSize(previous, done) ? previous : null;
                 backPixels = ((DataBufferInt) back.getRaster().getDataBuffer()).getData();
                 frameCount++;
+                long now = System.nanoTime();
+                if (lastFrameNanos != 0) {
+                    maxGapNanos = Math.max(maxGapNanos, now - lastFrameNanos);
+                }
+                lastFrameNanos = now;
             }
             MediaFrames.frameArrived();
         }
+    }
+
+    private static boolean sameSize(BufferedImage a, BufferedImage b) {
+        return a != null && a != b && a.getWidth() == b.getWidth() && a.getHeight() == b.getHeight();
     }
 }

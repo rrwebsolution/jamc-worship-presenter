@@ -34,6 +34,25 @@ public class OutputCanvas extends JComponent {
     /** While recording or streaming the recorder needs the Swing thread first, so the small operator monitors repaint less. */
     private static volatile boolean recording;
     private static final long MONITOR_GAP_WHILE_RECORDING_NANOS = 66_000_000; // about 15 fps
+    /**
+     * Every video, camera and browser page reports its frames on its own clock, and each report used to recompose this
+     * canvas. Out of phase, a YouTube video, a browser page and a camera made the Preview and Program monitors repaint
+     * about 100 times a second (each scaling the video in software), which filled the Swing thread: YouTube, which
+     * also runs on it, stuttered and the app hung. Monitors now repaint at most about 50 times a second, outputs 60.
+     * Not 30: a 30 fps camera's frames arrive a little early or late, and a 33 ms gap held some of them back or
+     * dropped them, so cameras on the monitors stuttered.
+     */
+    private static final long MONITOR_GAP_NANOS = 20_000_000;
+    private static final long OUTPUT_GAP_NANOS = 15_000_000;
+    /** Repaints once the gap is over, so the newest frame is always shown (e.g. the last one before a pause). */
+    private final Timer trailingFrame = new Timer(10, e -> {
+        lastFrameRepaint = System.nanoTime();
+        repaint();
+    });
+
+    {
+        trailingFrame.setRepeats(false);
+    }
     private final Runnable imagesChanged;
     private final Timer clock = new Timer(1000, e -> repaint());
     private BufferedImage fromBuffer;
@@ -80,9 +99,16 @@ public class OutputCanvas extends JComponent {
 
     private void frameArrived() {
         long now = System.nanoTime();
-        if (recording && operatorMonitor() && now - lastFrameRepaint < MONITOR_GAP_WHILE_RECORDING_NANOS) {
+        long gap = !operatorMonitor() ? OUTPUT_GAP_NANOS : recording ? MONITOR_GAP_WHILE_RECORDING_NANOS : MONITOR_GAP_NANOS;
+        long wait = gap - (now - lastFrameRepaint);
+        if (wait > 0) {
+            if (!trailingFrame.isRunning()) {
+                trailingFrame.setInitialDelay((int) Math.max(1, wait / 1_000_000));
+                trailingFrame.restart();
+            }
             return;
         }
+        trailingFrame.stop();
         lastFrameRepaint = now;
         repaint();
     }
@@ -101,6 +127,7 @@ public class OutputCanvas extends JComponent {
     public void removeNotify() {
         program.removeListener(repaint);
         MediaFrames.removeListener(frameArrived);
+        trailingFrame.stop();
         Rendering.globalBackground().removeListener(repaint);
         Rendering.renderer().images().removeChangeListener(imagesChanged);
         clock.stop();
@@ -123,6 +150,9 @@ public class OutputCanvas extends JComponent {
 
     @Override
     protected void paintComponent(Graphics g) {
+        if (isShowing()) {
+            Smoothness.drawn(operatorMonitor() ? getClass().getSimpleName() : "Output window");
+        }
         Graphics2D g2 = (Graphics2D) g.create();
         try {
             if (isOpaque()) { // the projector letterboxes in black; operator monitors stay transparent

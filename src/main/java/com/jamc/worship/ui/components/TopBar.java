@@ -35,7 +35,7 @@ import java.util.function.Supplier;
 public class TopBar extends JPanel {
 
     public enum Page {
-        LIBRARY("Control", "library"),
+        LIBRARY("Control Room", "library"),
         SERVICE("Service", "list"),
         SCENE("Scenes", "layers"),
         OUTPUT("Output", "monitor"),
@@ -76,7 +76,7 @@ public class TopBar extends JPanel {
         JPanel brand = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 10, 0));
         // the logo goes back to the Control page
         LogoBadge home = new LogoBadge();
-        home.setToolTipText("Control");
+        home.setToolTipText("Control Room");
         home.setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
         home.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override

@@ -211,6 +211,17 @@ public class ScenesDock extends JPanel {
         return host;
     }
 
+    /** Settings → Studio Mode: off, there is no Preview, so PREVIEW is hidden and a card click puts the scene live. */
+    public void setStudioMode(boolean on) {
+        studioMode = on;
+        actions.setStudioMode(on);
+        separate.setVisible(on); // a Preview layout of its own needs Preview on screen; the tick is kept meanwhile
+        revalidate();
+        repaint();
+    }
+
+    private boolean studioMode = true;
+
     private void select(Scene s) {
         actions.setScene(s);
         grid.repaint();
@@ -359,6 +370,9 @@ public class ScenesDock extends JPanel {
             Scene next = host.previewScene();
             boolean isLive = live != null && Objects.equals(live.getId(), scene.getId());
             boolean isNext = next != null && Objects.equals(next.getId(), scene.getId());
+            if (!studioMode && isLive) {
+                isNext = false; // no Preview on screen: the live scene is only LIVE
+            }
             int w = getWidth();
             int tw = w - 8;
             int th = (int) Math.round(tw * 9 / 16.0);
@@ -370,7 +384,8 @@ public class ScenesDock extends JPanel {
             compositor.paint(t, tw, th, new FrameSpec(sample, true, true, false, scene), null, false);
             t.dispose();
 
-            Color edge = isLive ? Palette.live() : isNext ? Palette.accent() : Palette.border();
+            // Studio Mode off: the scene waiting for the TAKE key is white (not live yet), not Preview blue
+            Color edge = isLive ? Palette.live() : isNext ? (studioMode ? Palette.accent() : Palette.text()) : Palette.border();
             g.setColor(edge);
             g.setStroke(new BasicStroke(isLive || isNext ? 2.5f : 1f));
             g.drawRoundRect(1, 1, w - 3, getHeight() - 3, 10, 10);
@@ -406,8 +421,10 @@ public class ScenesDock extends JPanel {
             if (isLive) {
                 bx = badge(g, bm, "● LIVE", Palette.live(), bx, 8);
             }
-            if (isNext) {
+            if (isNext && studioMode) {
                 badge(g, bm, "▶ PREVIEW", Palette.accent(), bx, 8);
+            } else if (isNext) {
+                badge(g, bm, "▶ NEXT · TAKE KEY", Color.WHITE, new Color(0x0F172A), bx, 8);
             }
             if (Objects.equals(host.defaultSceneId(), scene.getId())) {
                 g.setColor(new Color(0xF59E0B));
@@ -417,10 +434,14 @@ public class ScenesDock extends JPanel {
         }
 
         private int badge(Graphics2D g, FontMetrics bm, String text, Color color, int x, int y) {
+            return badge(g, bm, text, color, Color.WHITE, x, y);
+        }
+
+        private int badge(Graphics2D g, FontMetrics bm, String text, Color color, Color textColor, int x, int y) {
             int bw = bm.stringWidth(text) + 10;
             g.setColor(color);
             g.fillRoundRect(x, y, bw, bm.getHeight() + 2, 8, 8);
-            g.setColor(Color.WHITE);
+            g.setColor(textColor);
             g.drawString(text, x + 5, y + 1 + bm.getAscent());
             return x + bw + 4;
         }

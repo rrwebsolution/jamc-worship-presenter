@@ -135,9 +135,15 @@ final class LiveInputs {
         volatile float gain;
 
         Feed(Path ffmpeg, String device) throws IOException {
-            process = new ProcessBuilder(List.of(ffmpeg.toString(), "-hide_banner", "-loglevel", "error", "-f", "dshow",
-                    "-audio_buffer_size", "20", "-i", "audio=" + device, "-f", "s16le", "-ar", String.valueOf(RATE),
-                    "-ac", String.valueOf(CHANNELS), "-flush_packets", "1", "pipe:1")).start();
+            List<String> cmd = new java.util.ArrayList<>(List.of(ffmpeg.toString(), "-hide_banner", "-loglevel", "error",
+                    "-f", "dshow", "-audio_buffer_size", "20", "-i", "audio=" + device));
+            String chain = MixerChannels.get().chain(MixerChannels.input(device)); // its Audio Mixer filters
+            if (!chain.isEmpty()) {
+                cmd.addAll(List.of("-af", chain));
+            }
+            cmd.addAll(List.of("-f", "s16le", "-ar", String.valueOf(RATE), "-ac", String.valueOf(CHANNELS),
+                    "-flush_packets", "1", "pipe:1"));
+            process = new ProcessBuilder(cmd).start();
             Thread.ofPlatform().daemon().name("input-read").start(this::read);
             Thread.ofPlatform().daemon().name("input-log").start(() -> {
                 try (BufferedReader r = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
