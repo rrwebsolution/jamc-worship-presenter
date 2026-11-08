@@ -24,6 +24,10 @@ public class SourceConfig {
     public String color;
     public Integer fontSize;
     public String fontFamily;
+    /** TEXT / CLOCK: Light … Black (null = Bold, as before). */
+    public com.jamc.worship.model.FontWeight fontWeight;
+    /** TEXT / CLOCK: slanted letters (null = upright). */
+    public Boolean italic;
     /** Camera device name (CAMERA). */
     public String camera;
     /** AUDIO_INPUT: the connected sound input it plays (a microphone, capture audio, a mixer). */
@@ -148,6 +152,8 @@ public class SourceConfig {
         c.color = color;
         c.fontSize = fontSize;
         c.fontFamily = fontFamily;
+        c.fontWeight = fontWeight;
+        c.italic = italic;
         c.camera = camera;
         c.windowTitle = windowTitle;
         c.windowExe = windowExe;

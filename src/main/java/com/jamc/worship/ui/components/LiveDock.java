@@ -247,9 +247,33 @@ public class LiveDock extends JPanel {
     }
 
     /** Loads saved transition settings without notifying {@link Actions}. */
+    /**
+     * Settings → which transitions the drop-down next to TAKE offers (the one in use always stays listed, so the
+     * operator sees what Program does).
+     */
+    public void setShownTransitions(java.util.Set<Transition> shown) {
+        syncing = true;
+        try {
+            Transition current = (Transition) transitionCombo.getSelectedItem();
+            transitionCombo.removeAllItems();
+            for (Transition t : Transition.values()) {
+                if (shown.contains(t) || t == current) {
+                    transitionCombo.addItem(t);
+                }
+            }
+            transitionCombo.setSelectedItem(current);
+            transitionCombo.setMaximumRowCount(Math.min(14, transitionCombo.getItemCount()));
+        } finally {
+            syncing = false;
+        }
+    }
+
     public void setTransition(Transition transition, int durationMs) {
         syncing = true;
         try {
+            if (((javax.swing.DefaultComboBoxModel<Transition>) transitionCombo.getModel()).getIndexOf(transition) < 0) {
+                transitionCombo.addItem(transition); // chosen elsewhere (Settings): listed so the drop-down shows it
+            }
             transitionCombo.setSelectedItem(transition);
             int index = 1;
             for (int i = 0; i < ProgramOutput.DURATIONS_MS.length; i++) {
@@ -454,6 +478,9 @@ public class LiveDock extends JPanel {
         col.add(takeButton, c);
 
         transitionCombo.setToolTipText("Transition used when Program changes");
+        // like TAKE: choosing a transition never takes the keyboard away from the slides (next slide, TAKE keys)
+        transitionCombo.setFocusable(false);
+        durationCombo.setFocusable(false);
         transitionCombo.addActionListener(e -> transitionChanged());
         takeSceneButton.putClientProperty(FlatClientProperties.STYLE,
                 "font: bold -1; margin: 6,8,6,8; arc: 10; background: #B45309; foreground: #FFFFFF");

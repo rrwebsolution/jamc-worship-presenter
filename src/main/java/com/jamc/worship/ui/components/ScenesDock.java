@@ -102,6 +102,14 @@ public class ScenesDock extends JPanel {
         default void showOnProjector(Scene scene, String screenId) {
             showOnProjector(scene);
         }
+
+        /** The operator's choice of List (one scene per row, vertical) instead of Grid (two per row). */
+        default boolean scenesListView() {
+            return false;
+        }
+
+        default void setScenesListView(boolean list) {
+        }
     }
 
     /** A projector or TV in the Display on Projector menu; {@code showing} = it already shows Program. */
@@ -140,12 +148,53 @@ public class ScenesDock extends JPanel {
     }
 
     private static final int THUMB_W = 100;
-    // private static final int THUMB_H = 68;
+    /** List view: the thumbnail's width on the left of each row. */
+    private static final int LIST_THUMB_W = 112;
+    /** Camera states, Browser pages, clocks in a thumbnail: its picture is made again this often (it never plays). */
+    private static final int THUMB_REFRESH_MS = 3_000;
 
     private final Host host;
-    private final JPanel grid = Ui.transparent(new GridLayout(0, 2, 6, 6));
+    private final GridLayout gridLayout = new GridLayout(0, 2, 6, 6);
+    private final JPanel grid = Ui.transparent(gridLayout);
     private final JCheckBox separate = new JCheckBox("Separate Layouts");
     private final Compositor compositor = new Compositor(Rendering.renderer(), true);
+    /** Raised whenever the thumbnails' pictures must be made again (a still is ready, the timer, new scenes). */
+    private int thumbVersion;
+    private boolean listView;
+    private final javax.swing.JToggleButton gridButton = viewButton("grid", "Grid: two scenes per row");
+    private final javax.swing.JToggleButton listButton = viewButton("list", "List: one scene per row (vertical)");
+
+    {
+        compositor.setStillVideos(true); // thumbnails: a still picture of each video, never a playing one
+        com.jamc.worship.media.VideoStills.addListener(this::refreshThumbnails);
+        com.jamc.worship.youtube.YouTubeLibrary.addListener(() -> javax.swing.SwingUtilities.invokeLater(this::refreshThumbnails));
+        Rendering.renderer().images().addChangeListener(() -> javax.swing.SwingUtilities.invokeLater(this::refreshThumbnails));
+    }
+
+    private static javax.swing.JToggleButton viewButton(String icon, String tooltip) {
+        javax.swing.JToggleButton b = new javax.swing.JToggleButton(Icons.get(icon, Icons.SMALL));
+        b.setToolTipText(tooltip);
+        b.setFocusable(false);
+        b.putClientProperty(com.formdev.flatlaf.FlatClientProperties.BUTTON_TYPE,
+                com.formdev.flatlaf.FlatClientProperties.BUTTON_TYPE_TOOLBAR_BUTTON);
+        return b;
+    }
+
+    /** The thumbnails' pictures are made again on their next paint (pictures only: nothing plays). */
+    private void refreshThumbnails() {
+        thumbVersion++;
+        grid.repaint();
+    }
+
+    /** Grid (two per row) or List (one per row, vertical). */
+    private void setListView(boolean list) {
+        listView = list;
+        gridButton.setSelected(!list);
+        listButton.setSelected(list);
+        gridLayout.setColumns(list ? 1 : 2);
+        grid.revalidate();
+        refreshThumbnails();
+    }
     private final LiveContent sample = LiveContent.snapshot(new Slide("Sample", "Amazing grace\nHow sweet the sound", null),
             SlideStyle.fallback().withTextTransform(TextTransform.UPPERCASE), "Sample");
 
@@ -160,7 +209,20 @@ public class ScenesDock extends JPanel {
         add.addActionListener(e -> host.addScene());
         JPanel head = Ui.transparent(new BorderLayout());
         head.add(Ui.label("SCENES", Palette::secondaryText, "semibold"), BorderLayout.WEST);
-        head.add(add, BorderLayout.EAST);
+        JPanel headRight = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
+        gridButton.addActionListener(e -> {
+            setListView(false);
+            host.setScenesListView(false);
+        });
+        listButton.addActionListener(e -> {
+            setListView(true);
+            host.setScenesListView(true);
+        });
+        headRight.add(gridButton);
+        headRight.add(listButton);
+        headRight.add(add);
+        head.add(headRight, BorderLayout.EAST);
+        setListView(host.scenesListView());
 
         // the cards' height follows the column width (see SceneCard.getPreferredSize)
         grid.addComponentListener(new java.awt.event.ComponentAdapter() {
@@ -195,10 +257,10 @@ public class ScenesDock extends JPanel {
         south.add(separate, BorderLayout.SOUTH);
         add(south, BorderLayout.SOUTH);
 
-        // camera thumbnails stay current
-        new Timer(1500, e -> {
+        // thumbnails are pictures: cameras / Browser pages in them are pictured again now and then, never played
+        new Timer(THUMB_REFRESH_MS, e -> {
             if (isShowing()) {
-                grid.repaint();
+                refreshThumbnails();
             }
         }).start();
     }
@@ -241,7 +303,7 @@ public class ScenesDock extends JPanel {
         }
         actions.setScene(keep);
         grid.revalidate();
-        grid.repaint();
+        refreshThumbnails(); // an edited scene gets a new picture
         sync();
     }
 
@@ -333,9 +395,52 @@ public class ScenesDock extends JPanel {
          */
         @Override
         public Dimension getPreferredSize() {
+            if (listView) {
+                int w = grid.getWidth() > 0 ? grid.getWidth() : LIST_THUMB_W + 120;
+                return new Dimension(w, listThumbH() + 8);
+            }
             int w = grid.getWidth() > 0 ? (grid.getWidth() - 6) / 2 : THUMB_W + 12;
             int th = (int) Math.round((w - 8) * 9 / 16.0);
             return new Dimension(w, th + 32);
+        }
+
+        private int listThumbW() {
+            return Math.max(40, Math.min(LIST_THUMB_W, getWidth() / 2));
+        }
+
+        private int listThumbH() {
+            return (int) Math.round(LIST_THUMB_W * 9 / 16.0);
+        }
+
+        /** The scene's picture (made once, again only when {@link #refreshThumbnails} asks): it never plays. */
+        private java.awt.image.BufferedImage thumb;
+        private int thumbMadeAt = -1;
+        private Scene thumbScene;
+
+        private java.awt.image.BufferedImage thumbnail(int tw, int th) {
+            if (thumb == null || thumb.getWidth() != tw || thumb.getHeight() != th || thumbMadeAt != thumbVersion
+                    || thumbScene != scene) {
+                // a slightly larger picture, drawn down, stays sharp on HiDPI screens
+                java.awt.geom.AffineTransform tx = getGraphicsConfiguration() == null ? null
+                        : getGraphicsConfiguration().getDefaultTransform();
+                double sc = tx == null ? 1 : Math.max(1, tx.getScaleX());
+                int iw = (int) Math.round(tw * sc);
+                int ih = (int) Math.round(th * sc);
+                java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(iw, ih, java.awt.image.BufferedImage.TYPE_INT_RGB);
+                Graphics2D t = img.createGraphics();
+                try {
+                    t.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    t.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                    t.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                    compositor.paint(t, iw, ih, new FrameSpec(sample, true, true, false, scene), null, false);
+                } finally {
+                    t.dispose();
+                }
+                thumb = img;
+                thumbMadeAt = thumbVersion;
+                thumbScene = scene;
+            }
+            return thumb;
         }
 
         private void menu(MouseEvent e) {
@@ -374,15 +479,14 @@ public class ScenesDock extends JPanel {
                 isNext = false; // no Preview on screen: the live scene is only LIVE
             }
             int w = getWidth();
-            int tw = w - 8;
-            int th = (int) Math.round(tw * 9 / 16.0);
+            int tw = listView ? listThumbW() : w - 8;
+            int th = listView ? listThumbH() : (int) Math.round(tw * 9 / 16.0);
 
             g.setColor(Palette.secondaryBackground());
             g.fillRoundRect(0, 0, w - 1, getHeight() - 1, 10, 10);
-            // live thumbnail of the layout with sample lyrics
-            Graphics2D t = (Graphics2D) g.create(4, 4, tw, th);
-            compositor.paint(t, tw, th, new FrameSpec(sample, true, true, false, scene), null, false);
-            t.dispose();
+            // a picture of the layout with sample lyrics (videos as a still): nothing moves here
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(thumbnail(tw, th), 4, 4, tw, th, null);
 
             // Studio Mode off: the scene waiting for the TAKE key is white (not live yet), not Preview blue
             Color edge = isLive ? Palette.live() : isNext ? (studioMode ? Palette.accent() : Palette.text()) : Palette.border();
@@ -398,37 +502,44 @@ public class ScenesDock extends JPanel {
                         w - (isLive || isNext ? 9 : 3), getHeight() - (isLive || isNext ? 9 : 3), 8, 8);
             }
 
-            int y = th + 8;
             g.setFont(getFont().deriveFont(Font.BOLD, 11.5f));
             FontMetrics fm = g.getFontMetrics();
+            // Grid: the name under the picture. List: the name beside it, centered in the row
+            int nameX = listView ? tw + 12 : 6;
+            int y = listView ? (getHeight() - fm.getHeight()) / 2 : th + 8;
             var ic = Icons.get(icon(scene), 13, () -> isLive ? Palette.live() : Palette.secondaryText());
-            ic.paintIcon(this, g, 6, y + (fm.getHeight() - 13) / 2);
+            ic.paintIcon(this, g, nameX, y + (fm.getHeight() - 13) / 2);
             g.setColor(Palette.text());
             String name = scene.getName();
-            int maxW = w - 30;
+            int maxW = w - nameX - 24 - (listView ? 18 : 0);
             while (fm.stringWidth(name) > maxW && name.length() > 3) {
                 name = name.substring(0, name.length() - 2);
             }
             if (!name.equals(scene.getName())) {
                 name = name + "…";
             }
-            g.drawString(name, 24, y + fm.getAscent());
+            g.drawString(name, nameX + 18, y + fm.getAscent());
 
             // status in words as well as color; both when Preview and Program use the same scene
             g.setFont(getFont().deriveFont(Font.BOLD, 9f));
             FontMetrics bm = g.getFontMetrics();
-            int bx = 8;
+            int bx = listView ? nameX : 8;
+            int by = listView ? Math.min(getHeight() - bm.getHeight() - 4, y + fm.getHeight() + 2) : 8;
             if (isLive) {
-                bx = badge(g, bm, "● LIVE", Palette.live(), bx, 8);
+                bx = badge(g, bm, "● LIVE", Palette.live(), bx, by);
             }
             if (isNext && studioMode) {
-                badge(g, bm, "▶ PREVIEW", Palette.accent(), bx, 8);
+                badge(g, bm, "▶ PREVIEW", Palette.accent(), bx, by);
             } else if (isNext) {
-                badge(g, bm, "▶ NEXT · TAKE KEY", Color.WHITE, new Color(0x0F172A), bx, 8);
+                badge(g, bm, "▶ NEXT · TAKE KEY", Color.WHITE, new Color(0x0F172A), bx, by);
             }
             if (Objects.equals(host.defaultSceneId(), scene.getId())) {
                 g.setColor(new Color(0xF59E0B));
-                g.drawString("★", tw - 6, 9 + bm.getAscent() + 2);
+                if (listView) {
+                    g.drawString("★", w - 16, y + fm.getAscent()); // end of the row
+                } else {
+                    g.drawString("★", tw - 6, 9 + bm.getAscent() + 2);
+                }
             }
             g.dispose();
         }

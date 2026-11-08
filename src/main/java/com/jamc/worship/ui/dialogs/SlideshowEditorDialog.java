@@ -334,11 +334,11 @@ public final class SlideshowEditorDialog extends JDialog {
         List<MediaCategory> cats = List.of(MediaCategory.IMAGE, MediaCategory.BACKGROUND);
         LibraryPickerDialog.Spec<MediaItem> spec = new LibraryPickerDialog.Spec<>(
                 many ? "Add Images" : "Replace Image", "Search images…", "image",
-                "No images in the library yet.<br>Import them in Library → Images first.",
+                "No images in the library yet.<br>Click UPLOAD to add some from this computer.",
                 text -> media.find(cats, text, false).stream().filter(m -> m.getKind() == MediaKind.IMAGE).toList(),
                 MediaItem::getName,
                 m -> (m.getWidth() == null ? "image" : m.getWidth() + "×" + m.getHeight()),
-                m -> Rendering.renderer().images().get(m.getPath()));
+                m -> Rendering.renderer().images().get(m.getPath())).withUpload(LibraryUploads.media(media, MediaKind.IMAGE));
         if (many) {
             return LibraryPickerDialog.pickMany(parent, spec, "images");
         }

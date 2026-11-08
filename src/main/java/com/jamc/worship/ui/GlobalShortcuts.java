@@ -100,8 +100,14 @@ public final class GlobalShortcuts implements KeyEventDispatcher {
         if (focus instanceof JTextField field && isSearch(field)) {
             return KeyboardContext.SEARCH;
         }
-        if (focus instanceof JTextComponent || focus instanceof JComboBox
-                || (focus != null && SwingUtilities.getAncestorOfClass(JComboBox.class, focus) != null)) {
+        JComboBox<?> combo = focus instanceof JComboBox<?> cb ? cb
+                : focus == null ? null : (JComboBox<?>) SwingUtilities.getAncestorOfClass(JComboBox.class, focus);
+        if (combo != null) {
+            // a drop-down that was just used (e.g. the Program transition) keeps the focus: while it is closed and
+            // not typed into, the shortcuts work again (next slide, TAKE…); open, or editable, its keys are its own
+            return combo.isEditable() || combo.isPopupVisible() ? KeyboardContext.TEXT_EDITING : KeyboardContext.PRESENTATION;
+        }
+        if (focus instanceof JTextComponent) {
             return KeyboardContext.TEXT_EDITING;
         }
         return KeyboardContext.PRESENTATION;

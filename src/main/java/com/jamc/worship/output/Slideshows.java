@@ -57,6 +57,8 @@ public final class Slideshows {
     private final LongSupplier clock;
     private final Map<String, Play> program = new LinkedHashMap<>();
     private final Map<String, Play> preview = new LinkedHashMap<>();
+    /** The scene editor's own position of each slideshow: PREV / NEXT there work without Preview or Program. */
+    private final Map<String, Play> editor = new LinkedHashMap<>();
     private final Timer timer;
     private final Random random = new Random();
     private final List<Runnable> listeners = new ArrayList<>();
@@ -254,6 +256,11 @@ public final class Slideshows {
             String first = firstImage(s.getConfig());
             return first == null ? null : new View(first, null, 1f, Transition.CUT);
         }
+        return view(p, s);
+    }
+
+    /** The current image of one running slideshow, with its transition from the previous one. */
+    private View view(Play p, Source s) {
         int img = p.image();
         if (img < 0) {
             return null;
@@ -294,6 +301,51 @@ public final class Slideshows {
         if (p != null) {
             control(p, control);
         }
+    }
+
+    /**
+     * PREV / NEXT (and Play / Pause / Stop / Restart) in the SCENE EDITOR: the editor's own position of this
+     * slideshow, whether or not the scene is in Preview or on Program (those are not changed here).
+     */
+    public void controlEditor(Source s, Control control) {
+        Play p = editor.computeIfAbsent(key(s), k -> new Play());
+        p.configure(s.getConfig());
+        if (p.images.isEmpty()) {
+            return;
+        }
+        control(p, control);
+    }
+
+    /** What the scene editor shows for this slideshow: its own position, else the first image. */
+    public View editorView(Source s) {
+        Play p = editor.get(key(s));
+        if (p == null) {
+            return view(s, true);
+        }
+        p.configure(s.getConfig()); // images added / removed in the editor
+        return view(p, s);
+    }
+
+    /** The editor's position (1-based) and image count of this slideshow; position 1 before PREV / NEXT. */
+    public int[] editorPosition(Source s) {
+        Play p = editor.get(key(s));
+        if (p == null) {
+            int n = existing(s.getConfig()).size();
+            return new int[]{n == 0 ? 0 : 1, n};
+        }
+        return new int[]{p.images.isEmpty() ? 0 : p.position + 1, p.images.size()};
+    }
+
+    /** The scene editor left the screen: its slideshows stop advancing (they keep their image). */
+    public void pauseEditor() {
+        editor.values().forEach(p -> p.playing = false);
+        updateTimer();
+    }
+
+    /** True while the editor's own copy of this slideshow plays by itself (PLAY in the editor). */
+    public boolean editorPlaying(Source s) {
+        Play p = editor.get(key(s));
+        return p != null && p.playing;
     }
 
     /** The NEXT / PREVIOUS image keyboard shortcuts: every slideshow in the Preview scene. */
@@ -434,7 +486,7 @@ public final class Slideshows {
         long now = clock.getAsLong();
         boolean repaint = false;
         boolean advanced = false;
-        for (Map<String, Play> plays : List.of(program, preview)) {
+        for (Map<String, Play> plays : List.of(program, preview, editor)) {
             for (Play p : plays.values()) {
                 if (p.playing && p.images.size() > 1 && now - p.shownAt >= p.durationNanos()) {
                     p.step(1, now);
@@ -466,7 +518,7 @@ public final class Slideshows {
             return;
         }
         boolean needed = false;
-        for (Map<String, Play> plays : List.of(program, preview)) {
+        for (Map<String, Play> plays : List.of(program, preview, editor)) {
             for (Play p : plays.values()) {
                 needed |= p.playing || p.previousImage >= 0;
             }

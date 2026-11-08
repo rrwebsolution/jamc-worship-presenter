@@ -179,6 +179,16 @@ public final class Compositor {
         this.editorMode = on;
     }
 
+    private boolean stillVideos;
+
+    /**
+     * Thumbnail mode: a scene's VIDEO sources show one still picture and never start a player, so a
+     * thumbnail does not move and does not slow down Preview / Program.
+     */
+    public void setStillVideos(boolean on) {
+        this.stillVideos = on;
+    }
+
     /**
      * The visible Presentation source that shows this content's slide in its own box, or null when the
      * slide fills the screen as usual. A DYNAMIC source takes any library presentation slide; a FIXED one
@@ -286,7 +296,10 @@ public final class Compositor {
                 if (content != null && !content.isVideo() && spec.text() && (fixed || !hidesPresentation(spec, slot))) {
                     // a scene may place the text itself (e.g. smaller, at the bottom over a camera)
                     // inside the layer's box when the scene gives it one (smaller box = smaller text)
-                    boolean fullFrame = c.x <= 0 && c.y <= 0 && c.w >= 1 && c.h >= 1;
+                    // exactly the whole screen: the theme's own text layout. A box made BIGGER than the screen (past its
+                    // edges) is a box too, so the words grow with it like any other layer
+                    boolean fullFrame = Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001
+                            && Math.abs(c.w - 1) < 0.001 && Math.abs(c.h - 1) < 0.001;
                     g.drawImage(layer(content, pw, ph, true, c.textPosition, c.textScale, fullFrame ? null : rect), 0, 0, null);
                 }
             }
@@ -296,7 +309,10 @@ public final class Compositor {
                 }
             }
             case CAMERA -> {
-                if (!keyMode) {
+                if (!keyMode && stillVideos) {
+                    // thumbnail: no camera picture (nothing to keep refreshing), only its name and state
+                    cameraState(g, rect, s.getName(), frames.cameraStatus(c.camera), ph);
+                } else if (!keyMode) {
                     BufferedImage frame = frames.camera(c.camera);
                     if (frame != null) {
                         drawCamera(g, frame, rect, c, opacity(c));
@@ -311,7 +327,22 @@ public final class Compositor {
                 }
             }
             case VIDEO -> {
-                if (!keyMode && c.path != null) {
+                if (!keyMode && c.path != null && stillVideos) {
+                    // thumbnail: one still picture, no player
+                    if (!Boolean.FALSE.equals(c.videoEnabled)) {
+                        BufferedImage still = frames.sceneVideoStill(s);
+                        if (still != null) {
+                            drawFit(g, still, rect, c.fit, opacity(c));
+                        } else {
+                            paintSourceNote(g, rect, "▶ " + s.getName(), ph);
+                        }
+                    }
+                } else if (!keyMode && c.path != null && editorMode) {
+                    // scene editor: its own silent player, paused until PLAY (Preview / Program untouched)
+                    if (!Boolean.FALSE.equals(c.videoEnabled)) {
+                        drawFit(g, frames.editorVideo(s), rect, c.fit, opacity(c));
+                    }
+                } else if (!keyMode && c.path != null) {
                     // picture of the source's own player (on Program it also plays the sound)
                     BufferedImage frame = frames.sceneVideo(s);
                     if (!Boolean.FALSE.equals(c.videoEnabled)) {
@@ -395,7 +426,8 @@ public final class Compositor {
      */
     private void paintSlideshow(Graphics2D g, Rectangle rect, Source s, boolean keyMode, int ph) {
         Slideshows shows = slideshows;
-        Slideshows.View v = shows == null ? null : shows.view(s, preview || editorMode);
+        // the scene editor has its own position (its PREV / NEXT), Preview and Program theirs
+        Slideshows.View v = shows == null ? null : editorMode ? shows.editorView(s) : shows.view(s, preview);
         SourceConfig c = s.getConfig();
         float op = opacity(c);
         if ("black".equals(c.slideBackground) && !keyMode) {
@@ -531,7 +563,9 @@ public final class Compositor {
             }
             Rectangle r = box != null ? box : new Rectangle(0, 0, pw, ph);
             if (text) {
-                renderer.paintTextLayer(g, r, slide.getHeading(), slide.getText(), slide.getCaption(), style);
+                // a box bigger than the screen: big words, but wrapped inside the screen (never cut off at its edge)
+                renderer.paintTextLayer(g, r, slide.getHeading(), slide.getText(), slide.getCaption(), style,
+                        new Rectangle(0, 0, pw, ph));
             } else {
                 renderer.paintBackground(g, r, style, true);
             }
@@ -640,6 +674,36 @@ public final class Compositor {
         }
     }
 
+    /** A camera in a thumbnail: its name and state on a slate, READY in green. */
+    private static void cameraState(Graphics2D g, Rectangle r, String name, com.jamc.worship.camera.CameraStatus status, int ph) {
+        if (r.width <= 0 || r.height <= 0) {
+            return;
+        }
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.clipRect(r.x, r.y, r.width, r.height);
+        g2.setPaint(new java.awt.GradientPaint(r.x, r.y, new Color(0x1E293B), r.x, r.y + r.height, new Color(0x0F172A)));
+        g2.fillRect(r.x, r.y, r.width, r.height);
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        int size = Math.max(9, Math.min(r.height / 6, Math.round(64f * ph / H)));
+        String state = status == null ? "STARTING" : status.label();
+        Color stateColor = status == com.jamc.worship.camera.CameraStatus.READY ? com.jamc.worship.camera.CameraStatus.READY_TEXT
+                : status == null || status == com.jamc.worship.camera.CameraStatus.INITIALIZING ? new Color(0xFBBF24)
+                : status.isOffline() ? new Color(0xF87171) : Color.WHITE;
+        g2.setFont(new Font("Segoe UI", Font.BOLD, size));
+        FontMetrics fm = g2.getFontMetrics();
+        g2.setFont(new Font("Segoe UI", Font.PLAIN, Math.max(8, size * 2 / 3)));
+        FontMetrics nm = g2.getFontMetrics();
+        int y = r.y + (r.height - fm.getHeight() - nm.getHeight()) / 2;
+        g2.setColor(new Color(0x94A3B8));
+        String n = name == null ? "Camera" : name;
+        g2.drawString(n, r.x + (r.width - nm.stringWidth(n)) / 2, y + nm.getAscent());
+        g2.setFont(new Font("Segoe UI", Font.BOLD, size));
+        g2.setColor(stateColor);
+        String label = "● " + state;
+        g2.drawString(label, r.x + (r.width - fm.stringWidth(label)) / 2, y + nm.getHeight() + fm.getAscent());
+        g2.dispose();
+    }
+
     private static void slate(Graphics2D g, Rectangle r, String title, String detail, int ph) {
         Graphics2D g2 = (Graphics2D) g.create();
         g2.clipRect(r.x, r.y, r.width, r.height);
@@ -700,7 +764,10 @@ public final class Compositor {
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         float size = (c.fontSize == null ? 48 : c.fontSize) * ph / (float) H;
-        Font font = new Font(c.fontFamily == null ? "Segoe UI" : c.fontFamily, Font.BOLD, Math.max(1, Math.round(size)));
+        // the layer's own weight (Bold when none was chosen) and italic
+        Font font = com.jamc.worship.render.Fonts.create(c.fontFamily == null ? "Segoe UI" : c.fontFamily,
+                c.fontWeight == null ? com.jamc.worship.model.FontWeight.BOLD : c.fontWeight, Boolean.TRUE.equals(c.italic),
+                Math.max(1, Math.round(size)));
         g2.setFont(font);
         FontMetrics fm = g2.getFontMetrics();
         int x = r.x + (r.width - fm.stringWidth(text)) / 2;
@@ -809,8 +876,8 @@ public final class Compositor {
                 paintSource(g, pw, ph, s, to, lowerThirdSource, keyMode, false, toSlot);
                 continue;
             }
-            fadeSource(g, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, fromAlpha);
-            fadeSource(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, toAlpha);
+            fadeSide(g, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, fromAlpha, false);
+            fadeSide(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, toAlpha, true);
         }
     }
 
@@ -857,11 +924,11 @@ public final class Compositor {
         int ib = bs.size() - 1;
         while (ia >= 0 || ib >= 0) {
             while (ia >= 0 && !bKeys.contains(ak[ia])) {
-                fadeSource(g, pw, ph, as.get(ia), from, fromSlot, lowerThirdSource, keyMode, fromAlpha);
+                fadeSide(g, pw, ph, as.get(ia), from, fromSlot, lowerThirdSource, keyMode, fromAlpha, false);
                 ia--;
             }
             while (ib >= 0 && !aKeys.contains(bk[ib])) {
-                fadeSource(g, pw, ph, bs.get(ib), to, toSlot, lowerThirdSource, keyMode, toAlpha);
+                fadeSide(g, pw, ph, bs.get(ib), to, toSlot, lowerThirdSource, keyMode, toAlpha, true);
                 ib--;
             }
             if (ib >= 0) {
@@ -909,6 +976,53 @@ public final class Compositor {
     private BufferedImage fadeBuffer;
 
     /** Paints one source at an opacity (through a buffer, so every kind of layer fades the same way). */
+    /** The transition of the per-layer change being painted (null: plain fades with the given opacities). */
+    private Transition fxTransition;
+    private float fxProgress;
+
+    /**
+     * {@link #paintLayered} with any {@link Transition} (wipes, slides, zoom, circle as well as the fades): only the
+     * content layers move, the others stay.
+     */
+    public void paintLayered(Graphics2D g, int pw, int ph, FrameSpec from, FrameSpec to, ProgramOutput lowerThirdSource,
+                             boolean keyMode, Transition transition, float progress) {
+        fxTransition = transition;
+        fxProgress = progress;
+        try {
+            paintLayered(g, pw, ph, from, to, lowerThirdSource, keyMode, 0f, 1f);
+        } finally {
+            fxTransition = null;
+        }
+    }
+
+    /** {@link #paintSceneChange} with any {@link Transition}: only the layers that differ move. */
+    public void paintSceneChange(Graphics2D g, int pw, int ph, FrameSpec from, FrameSpec to, ProgramOutput lowerThirdSource,
+                                 boolean keyMode, Transition transition, float progress) {
+        fxTransition = transition;
+        fxProgress = progress;
+        try {
+            paintSceneChange(g, pw, ph, from, to, lowerThirdSource, keyMode, 0f, 1f);
+        } finally {
+            fxTransition = null;
+        }
+    }
+
+    /** One side (old or new) of a changing layer: with the transition's clip / shift / scale, else the plain fade. */
+    private void fadeSide(Graphics2D g, int pw, int ph, Source s, FrameSpec spec, Source slot, ProgramOutput lt,
+                          boolean keyMode, float alpha, boolean incoming) {
+        if (fxTransition == null) {
+            fadeSource(g, pw, ph, s, spec, slot, lt, keyMode, alpha);
+            return;
+        }
+        Graphics2D side = (Graphics2D) g.create();
+        try {
+            float a = TransitionFx.prepare(fxTransition, side, pw, ph, fxProgress, incoming, false);
+            fadeSource(side, pw, ph, s, spec, slot, lt, keyMode, a);
+        } finally {
+            side.dispose();
+        }
+    }
+
     private void fadeSource(Graphics2D g, int pw, int ph, Source s, FrameSpec spec, Source slot, ProgramOutput lt,
                             boolean keyMode, float alpha) {
         if (alpha <= 0f || (spec.black())) {

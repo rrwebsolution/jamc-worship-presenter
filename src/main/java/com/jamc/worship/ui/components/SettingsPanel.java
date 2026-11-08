@@ -125,6 +125,14 @@ public class SettingsPanel extends JPanel {
 
         void setTransition(com.jamc.worship.output.Transition transition, int durationMs);
 
+        /** The transitions the drop-down next to TAKE offers (ticked in Settings). */
+        default java.util.Set<com.jamc.worship.output.Transition> shownTransitions() {
+            return com.jamc.worship.output.Transition.DEFAULT_SHOWN;
+        }
+
+        default void setShownTransitions(java.util.Set<com.jamc.worship.output.Transition> shown) {
+        }
+
         boolean autoTake();
 
         void setAutoTake(boolean on);
@@ -910,8 +918,40 @@ public class SettingsPanel extends JPanel {
         JPanel studioRow = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
         studioRow.add(studioPair);
         studioRow.setBorder(BorderFactory.createEmptyBorder(0, 0, 8, 0));
+        // TRANSITIONS NEXT TO TAKE: only the ticked ones are offered there (the classic three by default)
+        JPanel shownGrid = Ui.transparent(new java.awt.GridLayout(0, 4, 12, 2));
+        java.util.Map<com.jamc.worship.output.Transition, JCheckBox> shownBoxes = new java.util.EnumMap<>(com.jamc.worship.output.Transition.class);
+        Runnable saveShown = () -> {
+            if (syncing) {
+                return;
+            }
+            java.util.Set<com.jamc.worship.output.Transition> set = java.util.EnumSet.noneOf(com.jamc.worship.output.Transition.class);
+            shownBoxes.forEach((t, box) -> {
+                if (box.isSelected()) {
+                    set.add(t);
+                }
+            });
+            if (set.isEmpty()) {
+                set.add(com.jamc.worship.output.Transition.CUT); // the list is never empty
+                shownBoxes.get(com.jamc.worship.output.Transition.CUT).setSelected(true);
+            }
+            h.setShownTransitions(set);
+        };
+        for (com.jamc.worship.output.Transition t : com.jamc.worship.output.Transition.values()) {
+            JCheckBox box = new JCheckBox(t.toString());
+            box.setToolTipText("Offer \"" + t + "\" in the transition list next to TAKE");
+            box.addActionListener(e -> saveShown.run());
+            shownBoxes.put(t, box);
+            shownGrid.add(box);
+        }
+        liveSync.add(() -> live(() -> {
+            java.util.Set<com.jamc.worship.output.Transition> shown = h.shownTransitions();
+            shownBoxes.forEach((t, box) -> box.setSelected(shown.contains(t)));
+        }));
         liveBody.add(rows(studioRow,
                 flow(Ui.small("Transition:"), transition, Ui.small("Duration:"), duration),
+                Ui.small("Transitions to show next to TAKE (Preview → Program):"),
+                shownGrid,
                 autoTake, sceneSwitchRow(),
                 Ui.label("Off: it shows on Preview and Program together (a presentation slide: click selects it, TAKE shows it on both). On: Preview first, TAKE sends it to Program.",
                         Palette::mutedText, "small"),

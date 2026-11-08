@@ -42,6 +42,7 @@ public final class SceneVideos {
 
     private static final Logger log = LoggerFactory.getLogger(SceneVideos.class);
     private static final long PREVIEW_IDLE_MS = 5_000;
+    private static final long EDITOR_IDLE_MS = 60_000;
     private static final int MAX_PREVIEW = 4;
 
     /** A scene video that is playing. */
@@ -180,6 +181,122 @@ public final class SceneVideos {
         v.config = c;
         v.lastUsed = System.currentTimeMillis();
         return v.player.currentFrame();
+    }
+
+    /** Scene editor players: its own (never Preview's or Program's), silent, PAUSED until the operator presses PLAY. */
+    private final Map<String, Slot> editor = new HashMap<>();
+
+    /**
+     * The scene editor's picture of a video source: its own player, loaded paused (the first picture, or the still
+     * while VLC has none yet). PLAY / PAUSE in the editor ({@link #setEditorPlaying}) never touches Preview or Program.
+     */
+    public BufferedImage editorFrame(Source s) {
+        Slot v = editorSlot(s);
+        if (v == null) {
+            return null;
+        }
+        v.lastUsed = System.currentTimeMillis();
+        BufferedImage f = v.player.currentFrame();
+        if (f == null && !YouTubeRef.is(s.getConfig().path)) {
+            Path file = resolver.apply(s.getConfig().path);
+            f = file == null ? null : VideoStills.get(file); // paused before VLC drew a picture: the still
+        }
+        return f;
+    }
+
+    /** True while the editor's player of this source plays (false = paused, the default). */
+    public boolean editorPlaying(Source s) {
+        Slot v = editor.get(key(s));
+        return v != null && v.player.isPlaying();
+    }
+
+    /** PLAY / PAUSE in the scene editor: only the editor's own player of this source. */
+    public void setEditorPlaying(Source s, boolean play) {
+        Slot v = editorSlot(s);
+        if (v == null) {
+            return;
+        }
+        v.lastUsed = System.currentTimeMillis();
+        if (play) {
+            v.player.setMuted(true); // the editor is silent: the church never hears a video being arranged
+            v.player.playOrResume();
+        } else {
+            v.player.pause();
+        }
+    }
+
+    /** The scene editor left the screen (another page): every editor video pauses where it is. */
+    public void pauseEditor() {
+        for (Slot v : editor.values()) {
+            if (v.player.isPlaying()) {
+                v.player.pause();
+            }
+        }
+    }
+
+    private Slot editorSlot(Source s) {
+        SourceConfig c = s.getConfig();
+        if (c.path == null || !VideoPlayback.available(c.path)) {
+            return null;
+        }
+        String k = key(s);
+        Slot v = editor.get(k);
+        if (v == null) {
+            String mrl = mrl(c.path);
+            if (mrl == null) {
+                return null;
+            }
+            try {
+                VideoPlayback player = VideoPlayback.create(c.path);
+                player.setMuted(true);
+                player.cue(mrl, loops(c)); // paused: nothing moves until PLAY
+                v = new Slot(k, c.path, player, c, s.getName());
+                editor.put(k, v);
+            } catch (RuntimeException e) {
+                log.warn("Could not open scene video {} in the editor", c.path, e);
+                return null;
+            }
+        }
+        v.config = c;
+        return v;
+    }
+
+    /**
+     * A still picture of a scene's video source for thumbnails: never starts a player (null while it is
+     * being made, for a YouTube source, or when the file is missing).
+     */
+    public BufferedImage still(Source s) {
+        SourceConfig c = s.getConfig();
+        if (c.path == null) {
+            return null;
+        }
+        String k = key(s);
+        if (YouTubeRef.is(c.path)) {
+            // YouTube's own picture of the video (kept on disk once seen)
+            BufferedImage t = com.jamc.worship.youtube.YouTubeLibrary.thumbnail(YouTubeRef.id(c.path), null);
+            return t != null ? t : frozen.computeIfAbsent(k, x -> runningFrame(k));
+        }
+        Path file = resolver.apply(c.path);
+        if (file == null || !Files.isRegularFile(file)) {
+            return null;
+        }
+        if (VideoStills.missing(file)) {
+            VideoStills.offer(file, runningFrame(k)); // already playing (e.g. on Program): one frame, frozen
+        }
+        return VideoStills.get(file);
+    }
+
+    /** Frozen frames for YouTube thumbnails while YouTube's picture is not loaded (e.g. offline). */
+    private final Map<String, BufferedImage> frozen = new HashMap<>();
+
+    /** A copy of the current picture of a player of this source that already runs, or null (none started). */
+    private BufferedImage runningFrame(String k) {
+        Slot slot = program.get(k);
+        if (slot == null) {
+            slot = preview.get(k);
+        }
+        BufferedImage f = slot == null ? null : slot.player.currentFrame();
+        return f == null || VideoStills.isDark(f) ? null : VideoStills.copy(f);
     }
 
     /**
@@ -475,12 +592,17 @@ public final class SceneVideos {
     private void sweep() {
         program.values().forEach(this::checkSound);
         long now = System.currentTimeMillis();
-        Iterator<Map.Entry<String, Slot>> it = preview.entrySet().iterator();
-        while (it.hasNext()) {
-            Map.Entry<String, Slot> e = it.next();
-            if (now - e.getValue().lastUsed > PREVIEW_IDLE_MS) {
-                e.getValue().player.release();
-                it.remove();
+        for (Map<String, Slot> players : List.of(preview, editor)) {
+            // not drawn for a while (editor closed, source removed): released. A PAUSED editor video is not redrawn,
+            // so the editor's players wait longer (its place and PLAY / PAUSE are kept while the scene is edited)
+            long idle = players == editor ? EDITOR_IDLE_MS : PREVIEW_IDLE_MS;
+            Iterator<Map.Entry<String, Slot>> it = players.entrySet().iterator();
+            while (it.hasNext()) {
+                Map.Entry<String, Slot> e = it.next();
+                if (now - e.getValue().lastUsed > idle) {
+                    e.getValue().player.release();
+                    it.remove();
+                }
             }
         }
     }

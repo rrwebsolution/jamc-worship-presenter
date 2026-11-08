@@ -288,6 +288,31 @@ public final class MediaHub implements LiveFrames {
     }
 
     @Override
+    public BufferedImage sceneVideoStill(com.jamc.worship.model.Source source) {
+        return sceneVideos.still(source);
+    }
+
+    @Override
+    public BufferedImage editorVideo(com.jamc.worship.model.Source source) {
+        return sceneVideos.editorFrame(source);
+    }
+
+    @Override
+    public boolean editorVideoPlaying(com.jamc.worship.model.Source source) {
+        return sceneVideos.editorPlaying(source);
+    }
+
+    @Override
+    public void setEditorVideoPlaying(com.jamc.worship.model.Source source, boolean play) {
+        sceneVideos.setEditorPlaying(source, play);
+    }
+
+    @Override
+    public void pauseEditorVideos() {
+        sceneVideos.pauseEditor();
+    }
+
+    @Override
     public BufferedImage camera(String name) {
         return cameras.frame(name);
     }

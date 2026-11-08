@@ -8,7 +8,8 @@ import java.awt.Color;
  * when a Preview or Program scene uses the camera.
  */
 public enum CameraStatus {
-    READY("READY", new Color(0x64748B)),
+    /** Dark green badge with bright green text: ready stands out, and is still told apart from LIVE (solid green). */
+    READY("READY", new Color(0x14532D)),
     PREVIEW("PREVIEW", new Color(0x1677FF)),
     LIVE("LIVE", new Color(0x16A34A)),
     INITIALIZING("INITIALIZING", new Color(0xD97706)),
@@ -31,6 +32,14 @@ public enum CameraStatus {
     public Color color() {
         return color;
     }
+
+    /** Badge text: READY in bright green, the others white. */
+    public Color textColor() {
+        return this == READY ? READY_TEXT : Color.WHITE;
+    }
+
+    /** The green of the READY text. */
+    public static final Color READY_TEXT = new Color(0x4ADE80);
 
     /** True when the camera cannot give a picture (the scene shows its offline image instead). */
     public boolean isOffline() {

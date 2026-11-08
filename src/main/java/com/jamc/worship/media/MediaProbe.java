@@ -47,6 +47,11 @@ public final class MediaProbe {
      * show one. Blocks for up to a few seconds: call it off the event thread.
      */
     public static BufferedImage thumbnail(Path file, int width) {
+        return thumbnail(file, width, 0.1f);
+    }
+
+    /** Like {@link #thumbnail(Path, int)}, at this position (0..1) of the video. */
+    public static BufferedImage thumbnail(Path file, int width, float position) {
         MediaEngine engine = MediaEngine.get();
         if (!engine.isAvailable() || !Files.isRegularFile(file)) {
             return null;
@@ -61,7 +66,7 @@ public final class MediaProbe {
             while (System.currentTimeMillis() < deadline && !player.hasError()) {
                 frame = player.currentFrame();
                 if (frame != null && !seeked) {
-                    player.seek(0.1f); // the first frame is often black
+                    player.seek(position); // the first frame is often black
                     seeked = true;
                     deadline = Math.min(deadline, System.currentTimeMillis() + 400);
                 }

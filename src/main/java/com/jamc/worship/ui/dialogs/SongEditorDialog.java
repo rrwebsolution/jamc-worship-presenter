@@ -315,6 +315,9 @@ public class SongEditorDialog extends JDialog {
         lyricsArea.setMargin(new Insets(10, 12, 10, 12));
         JScrollPane scroll = new JScrollPane(lyricsArea);
         scroll.getVerticalScrollBar().setUnitIncrement(16);
+        // slide numbers down the left side, like EasyWorship: one number where each slide starts (Enter on an empty
+        // line, or a heading, starts the next one)
+        com.jamc.worship.ui.LineNumberGutter.install(scroll, lyricsArea, com.jamc.worship.service.LyricsParser::slideNumbers);
         pane.add(scroll, BorderLayout.CENTER);
 
         JLabel help = Ui.small("<html>Put each heading (Verse 1, Chorus, Bridge, [Tag]…) on its own line above its lyrics. "

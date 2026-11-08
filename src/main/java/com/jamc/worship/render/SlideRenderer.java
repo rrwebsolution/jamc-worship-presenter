@@ -81,6 +81,41 @@ public final class SlideRenderer {
      * Paints only the text (with shadow/outline) over whatever is already there. Used by scenes,
      * where the text layer and the background layer can have other sources (camera) between them.
      */
+    /**
+     * A scene's text box that may stick out past the screen ({@code screen}): the words get the box's size (a bigger
+     * box, bigger words), but the lines wrap and are placed in the part of the box that is ON the screen, so no line
+     * is cut off at the screen's edge.
+     */
+    public void paintTextLayer(Graphics2D g0, Rectangle r, String heading, String body, String caption, SlideStyle style,
+                               Rectangle screen) {
+        if (screen == null || screen.contains(r)) {
+            paintTextLayer(g0, r, heading, body, caption, style);
+            return;
+        }
+        Rectangle area = r.intersection(screen);
+        if (r.width <= 0 || r.height <= 0 || area.width <= 0 || area.height <= 0) {
+            return;
+        }
+        double scale = r.width / (double) WIDTH; // the font size follows the whole box
+        int frameWidth = (int) Math.round(area.width / scale);
+        int frameHeight = (int) Math.round(area.height / scale);
+        frameWidth = Math.abs(frameWidth - WIDTH) <= 2 ? WIDTH : frameWidth;
+        frameHeight = Math.abs(frameHeight - HEIGHT) <= 2 ? HEIGHT : frameHeight;
+        TextTransform t = style.textTransform();
+        TextRenderer.TextBlock block = text.layout(t.apply(heading), t.apply(body), t.apply(caption), style, frameHeight, frameWidth);
+        if (block.isEmpty()) {
+            return;
+        }
+        Graphics2D g = (Graphics2D) g0.create();
+        try {
+            g.translate(area.x, area.y);
+            g.scale(area.width / (double) frameWidth, area.height / (double) frameHeight);
+            paintText(g, block, style);
+        } finally {
+            g.dispose();
+        }
+    }
+
     public void paintTextLayer(Graphics2D g0, Rectangle r, String heading, String body, String caption, SlideStyle style) {
         if (r.width <= 0 || r.height <= 0) {
             return;

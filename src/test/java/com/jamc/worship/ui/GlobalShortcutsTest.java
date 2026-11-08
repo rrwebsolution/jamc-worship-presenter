@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.KeyStroke;
@@ -51,6 +52,12 @@ class GlobalShortcutsTest {
         assertEquals(TEXT_EDITING, GlobalShortcuts.context(new JTextArea()));
         assertEquals(PRESENTATION, GlobalShortcuts.context(new JButton()));
         assertEquals(PRESENTATION, GlobalShortcuts.context(null));
+        // a closed drop-down that was just used (e.g. the Program transition) does not block next slide / TAKE
+        assertEquals(PRESENTATION, GlobalShortcuts.context(new JComboBox<>(new String[]{"Fade", "Cut"})));
+        JComboBox<String> editable = new JComboBox<>(new String[]{"1", "2"});
+        editable.setEditable(true);
+        assertEquals(TEXT_EDITING, GlobalShortcuts.context(editable), "a drop-down typed into keeps its keys");
+        assertEquals(TEXT_EDITING, GlobalShortcuts.context(editable.getEditor().getEditorComponent()));
 
         assertTrue(GlobalShortcuts.allowed(BACKTICK, SEARCH), "` = TAKE works in a search box");
         assertFalse(GlobalShortcuts.allowed(KeyStroke.getKeyStroke(KeyEvent.VK_B, 0), SEARCH), "B is typed");

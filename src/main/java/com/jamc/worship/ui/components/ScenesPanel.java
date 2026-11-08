@@ -63,6 +63,7 @@ import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
 import java.awt.Rectangle;
+import java.awt.RenderingHints;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
@@ -164,6 +165,9 @@ public class ScenesPanel extends JPanel {
     private final JTextField textField = new JTextField();
     private final ColorButton colorButton = new ColorButton("Text color", Color.WHITE);
     private final JSpinner fontSpin = new JSpinner(new SpinnerNumberModel(48, 8, 300, 2));
+    /** TEXT / CLOCK: how heavy the letters are, and slanted or not. */
+    private final JComboBox<com.jamc.worship.model.FontWeight> weightCombo = new JComboBox<>(com.jamc.worship.model.FontWeight.values());
+    private final JCheckBox italicBox = new JCheckBox("Italic");
     private final JComboBox<String> cameraCombo = new JComboBox<>();
     private final JComboBox<String> songMode = new JComboBox<>(new String[]{"From library (any song sent)", "This song only"});
     // CAMERA source: crop (% of the picture at each edge), rotation, mirror, offline picture
@@ -209,7 +213,55 @@ public class ScenesPanel extends JPanel {
         program.addListener(preview::repaint);
         MediaFrames.addListener(preview::repaint);
         Rendering.renderer().images().addChangeListener(preview::repaint);
+        // the editor goes off screen (another page, back to the scene list): its videos and
+        // slideshows pause by themselves, so nothing keeps playing unseen
+        preview.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.SHOWING_CHANGED) != 0 && !preview.isShowing()) {
+                pauseEditorPlayback();
+            }
+        });
         wireProps();
+        // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z) while the scene editor is on screen
+        bindKey("scene.undo", javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_Z, java.awt.event.InputEvent.CTRL_DOWN_MASK), this::undo);
+        bindKey("scene.redo", javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_Y, java.awt.event.InputEvent.CTRL_DOWN_MASK), this::redo);
+        bindKey("scene.redo2", javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_Z,
+                java.awt.event.InputEvent.CTRL_DOWN_MASK | java.awt.event.InputEvent.SHIFT_DOWN_MASK), this::redo);
+    }
+
+    private void bindKey(String name, javax.swing.KeyStroke key, Runnable action) {
+        getInputMap(WHEN_IN_FOCUSED_WINDOW).put(key, name);
+        getActionMap().put(name, new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                action.run();
+            }
+
+            @Override
+            public boolean isEnabled() {
+                return preview.isShowing(); // only while the editor is on screen; elsewhere the key goes on as usual
+            }
+        });
+    }
+
+    /**
+     * Ctrl+F in the scene editor: FIT TO CANVAS for the selected layer. Returns false when the editor is not on
+     * screen or nothing is selected (Ctrl+F is then Find Lyrics as usual).
+     */
+    public boolean fitSelectedToCanvas() {
+        if (!preview.isShowing() || editing == null || sourceList.getSelectedValue() == null) {
+            return false;
+        }
+        setBox(0, 0, 1, 1);
+        statusHandler.accept("\"" + sourceList.getSelectedValue().getName() + "\" fits the canvas (Ctrl+Z undoes it).");
+        return true;
+    }
+
+    /** Pauses every video and slideshow playing in the scene editor (Preview and Program are not touched). */
+    private void pauseEditorPlayback() {
+        Rendering.frames().pauseEditorVideos();
+        if (slideshows != null) {
+            slideshows.pauseEditor();
+        }
     }
 
     public void setScenesChanged(Consumer<List<Scene>> l) {
@@ -376,7 +428,7 @@ public class ScenesPanel extends JPanel {
     private JComponent buildPreview() {
         JPanel p = Ui.panel(new BorderLayout(0, 10), Palette::panelBackground);
         p.setBorder(BorderFactory.createEmptyBorder(12, 16, 12, 16));
-        saveButton.setToolTipText("Save this scene and show it in Preview. Program changes only at TAKE.");
+        saveButton.setToolTipText("Save this scene. If it is on Preview or Program it updates there at once; otherwise TAKE shows it.");
         saveButton.addActionListener(e -> saveEditing());
         revertButton.setToolTipText("Throw away the unsaved changes and go back to the saved scene");
         revertButton.addActionListener(e -> {
@@ -392,8 +444,16 @@ public class ScenesPanel extends JPanel {
                 previewChosen.accept(saved);
             }
         });
+        undoButton.setToolTipText("Undo the last change (Ctrl+Z). Back to the saved scene, SAVE SCENE is not needed.");
+        undoButton.addActionListener(e -> undo());
+        redoButton.setToolTipText("Redo (Ctrl+Y or Ctrl+Shift+Z)");
+        redoButton.addActionListener(e -> redo());
+        undoButton.setEnabled(false);
+        redoButton.setEnabled(false);
         JPanel buttons = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         buttons.add(draftState);
+        buttons.add(undoButton);
+        buttons.add(redoButton);
         buttons.add(revertButton);
         buttons.add(saveButton);
         buttons.add(previewButton);
@@ -402,8 +462,8 @@ public class ScenesPanel extends JPanel {
         head.add(buttons, BorderLayout.EAST);
         p.add(head, BorderLayout.NORTH);
         p.add(preview, BorderLayout.CENTER);
-        p.add(Ui.label("<html>SCENE EDITOR: changes here stay a draft until SAVE SCENE, which stores the scene; "
-                + "it shows only when you press TAKE. Layers are drawn from the "
+        p.add(Ui.label("<html>SCENE EDITOR: changes here stay a draft until SAVE SCENE. Saved, a scene on Preview or Program "
+                + "updates there at once (other scenes show at TAKE). Layers are drawn from the "
                 + "bottom of the Sources list upwards; lyrics show what is on Program.</html>",
                 Palette::mutedText, "small"), BorderLayout.SOUTH);
         updateDraftState();
@@ -498,7 +558,110 @@ public class ScenesPanel extends JPanel {
 
     // ------------------------------------------------------------------ editing
 
+    // ------------------------------------------------------------------ undo / redo (Ctrl+Z / Ctrl+Y)
+
+    /** States before each edit (newest last), and states undone (for redo). */
+    private final java.util.ArrayDeque<Scene> undoStack = new java.util.ArrayDeque<>();
+    private final java.util.ArrayDeque<Scene> redoStack = new java.util.ArrayDeque<>();
+    /** The draft as it is now (after the last edit), and the saved version as text (unsaved = different). */
+    private Scene historyCurrent;
+    private String savedSnapshot;
+    private long lastEditAt;
+    private static final int UNDO_LIMIT = 100;
+    /** Edits closer together than this (a drag, typing in a box) are one undo step. */
+    private static final long MERGE_MS = 600;
+    private static final com.fasterxml.jackson.databind.ObjectMapper SNAPSHOT_JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+    private boolean restoringHistory;
+    private final JButton undoButton = Ui.button("UNDO", null);
+    private final JButton redoButton = Ui.button("REDO", null);
+
+    /** The scene's layers as text: two drafts with the same text look and work the same. */
+    private static String snapshot(Scene s) {
+        if (s == null) {
+            return "";
+        }
+        try {
+            return s.getName() + "|" + SNAPSHOT_JSON.writeValueAsString(s.getSources());
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return s.getName() + "|" + System.identityHashCode(s);
+        }
+    }
+
+    /** A scene was opened, reverted or reloaded: a fresh history, and this version counts as saved. */
+    private void resetHistory() {
+        undoStack.clear();
+        redoStack.clear();
+        historyCurrent = editing == null ? null : editing.copy();
+        savedSnapshot = snapshot(editing);
+        lastEditAt = 0;
+        updateUndoButtons();
+    }
+
+    private void recordEdit() {
+        if (restoringHistory || editing == null) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (historyCurrent != null && (undoStack.isEmpty() || now - lastEditAt > MERGE_MS)) {
+            undoStack.addLast(historyCurrent);
+            if (undoStack.size() > UNDO_LIMIT) {
+                undoStack.removeFirst();
+            }
+        }
+        lastEditAt = now;
+        historyCurrent = editing.copy();
+        redoStack.clear();
+        updateUndoButtons();
+    }
+
+    /** Ctrl+Z: back one step. Back to the saved version, SAVE SCENE is not clickable again. */
+    private void undo() {
+        if (editing == null || undoStack.isEmpty()) {
+            return;
+        }
+        redoStack.addLast(historyCurrent);
+        restoreHistory(undoStack.removeLast());
+        statusHandler.accept("Undo" + (dirty ? "" : ": back to the saved scene"));
+    }
+
+    /** Ctrl+Y / Ctrl+Shift+Z: the step undone again. */
+    private void redo() {
+        if (editing == null || redoStack.isEmpty()) {
+            return;
+        }
+        undoStack.addLast(historyCurrent);
+        restoreHistory(redoStack.removeLast());
+        statusHandler.accept("Redo");
+    }
+
+    private void restoreHistory(Scene state) {
+        int selected = sourceList.getSelectedIndex();
+        historyCurrent = state;
+        editing = state.copy();
+        lastEditAt = 0; // the next edit starts a new step
+        restoringHistory = true;
+        try {
+            showEditing();
+            if (selected >= 0 && selected < sourceModel.size()) {
+                sourceList.setSelectedIndex(selected); // the same layer stays selected where it can
+            }
+        } finally {
+            restoringHistory = false;
+        }
+        dirty = !snapshot(editing).equals(savedSnapshot);
+        editCount++;
+        updateDraftState();
+    }
+
+    private void updateUndoButtons() {
+        undoButton.setEnabled(editing != null && !undoStack.isEmpty());
+        redoButton.setEnabled(editing != null && !redoStack.isEmpty());
+    }
+
     private void showEditing() {
+        if (!restoringHistory) {
+            resetHistory(); // another scene, the saved version again, or a reload
+        }
         sourceModel.clear();
         if (editing != null) {
             sourceModel.addAll(editing.getSources());
@@ -526,7 +689,9 @@ public class ScenesPanel extends JPanel {
         editing.setSources(list);
         preview.repaint();
         // only the draft changes: Preview and Program keep their own copies until SAVE → Preview → TAKE
-        dirty = true;
+        recordEdit();
+        // unsaved only when it differs from the saved version (an edit undone by hand counts as saved again)
+        dirty = savedSnapshot == null || !snapshot(editing).equals(savedSnapshot);
         editCount++;
         updateDraftState();
     }
@@ -600,8 +765,11 @@ public class ScenesPanel extends JPanel {
                 statusHandler.accept("The scene was deleted meanwhile; it was not saved.");
                 return;
             }
-            if (editing != null && Objects.equals(editing.getId(), saved.getId()) && editCount == version) {
-                dirty = false;
+            if (editing != null && Objects.equals(editing.getId(), saved.getId())) {
+                // what was written is the saved version now; Ctrl+Z can still go back past it (it is then unsaved)
+                savedSnapshot = snapshot(snapshot);
+                dirty = editCount != version && !snapshot(editing).equals(savedSnapshot);
+                updateUndoButtons();
                 updateDraftState();
             }
             statusHandler.accept("Scene \"" + saved.getName() + "\" saved.");
@@ -817,42 +985,33 @@ public class ScenesPanel extends JPanel {
         return choice < 0 || choice == options.size() - 1 ? -1 : choice;
     }
 
-    /** A source that shows whatever picture or video is sent (the slide / media background of what is on Program). */
-    private void addDynamicMedia(String name) {
-        addNamed(SourceType.BACKGROUND, name);
-    }
-
-    /** ADD SOURCE → Images: FROM LIBRARY (any image sent), SPECIFIC FILE (one image) or IMAGE SLIDESHOW. */
+    /**
+     * ADD SOURCE → Images: ONE IMAGE (Select Image, with UPLOAD FILE… in it) or IMAGE SLIDESHOW. Whatever image is
+     * sent to Preview is the separate "Media" source.
+     */
     private void addImages() {
         if (editing == null) {
             return;
         }
-        int choice = askLibraryMode("Add Image Source", "image",
-                "shows whatever image or media you send to Preview / TAKE.",
-                "choose one image; only that image shows here, whatever else you click.", "image", "IMAGE SLIDESHOW");
+        Object[] options = {"ONE IMAGE", "IMAGE SLIDESHOW", "CANCEL"};
+        int choice = javax.swing.JOptionPane.showOptionDialog(this,
+                Ui.label("<html>Add <b>one image</b>, or an <b>image slideshow</b> of several?</html>", Palette::text, null),
+                "Add Image Source", javax.swing.JOptionPane.DEFAULT_OPTION, javax.swing.JOptionPane.PLAIN_MESSAGE,
+                null, options, options[0]);
         if (choice == 0) {
-            addDynamicMedia("Media (from library)");
-        } else if (choice == 1) {
             addMediaFromLibrary(MediaKind.IMAGE);
-        } else if (choice == 2) {
+        } else if (choice == 1) {
             addSlideshow();
         }
     }
 
-    /** ADD SOURCE → Videos: FROM LIBRARY (any video sent) or SPECIFIC FILE (one video, played by the scene). */
+    /** ADD SOURCE → Videos: straight to Select Video (UPLOAD FILE… there adds one from the computer). */
     private void addVideos() {
-        if (editing == null) {
-            return;
-        }
-        int choice = askLibraryMode("Add Video Source", "video",
-                "shows whatever video or media you send to Preview / TAKE.",
-                "choose one video; only that video plays here, whatever else you click.", "video");
-        if (choice == 0) {
-            addDynamicMedia("Media (from library)");
-        } else if (choice == 1) {
+        if (editing != null) {
             addMediaFromLibrary(MediaKind.VIDEO);
         }
     }
+
 
     /** IMAGE SLIDESHOW: pick several library images, order them, set how they play; one source. */
     private void addSlideshow() {
@@ -892,7 +1051,10 @@ public class ScenesPanel extends JPanel {
 
     private void slideshowControl(Source s, com.jamc.worship.output.Slideshows.Control control) {
         if (slideshows != null) {
-            slideshows.control(s, control);
+            // the editor's own images move (also when the scene is in neither Preview nor Program); Preview and
+            // Program are not changed from the editor (PREV / NEXT under the monitors do that)
+            slideshows.controlEditor(s, control);
+            preview.repaint();
             updateSlideshowStatus();
         }
     }
@@ -903,20 +1065,15 @@ public class ScenesPanel extends JPanel {
             slideshowTimer.stop();
             return;
         }
+        // the big number is the editor's image (what PREV / NEXT here move); Preview / Program below it when live
+        int[] at = slideshows.editorPosition(s);
         var st = slideshows.status(s);
-        int count = s.getConfig().imageIds == null ? 0 : s.getConfig().imageIds.size();
-        if (st == null) {
-            slideshowStatus.setText("<html><center>" + count + (count == 1 ? " image" : " images")
-                    + "<br>not in Preview</center></html>");
-        } else {
-            // the big number is Preview (what NEXT / PREVIOUS move); Program below it
-            slideshowStatus.setText("<html><center><b style='font-size:13px'>"
-                    + (st.previewPosition() > 0 ? st.previewPosition() + " / " + st.count() : "–") + "</b><br>"
-                    + "<span style='font-size:9px'>PREVIEW"
-                    + (st.programPosition() > 0 ? " · PROGRAM " + st.programPosition() + " / " + st.count() : "")
-                    + (st.playing() && st.nextInMs() >= 0 ? " · next in " + String.format("%.1f s", st.nextInMs() / 1000.0) : "")
-                    + "</span></center></html>");
-        }
+        String live = st == null ? "" : (st.previewPosition() > 0 ? " · PREVIEW " + st.previewPosition() + " / " + st.count() : "")
+                + (st.programPosition() > 0 ? " · PROGRAM " + st.programPosition() + " / " + st.count() : "");
+        slideshowStatus.setText("<html><center><b style='font-size:13px'>"
+                + (at[1] > 0 ? at[0] + " / " + at[1] : "–") + "</b><br>"
+                + "<span style='font-size:9px'>" + (at[1] == 0 ? "no images" : "IN EDITOR"
+                + (slideshows.editorPlaying(s) ? " · playing" : "")) + live + "</span></center></html>");
     }
 
     /** Lets Songs / Lyrics… pick from the song library. */
@@ -1248,9 +1405,10 @@ public class ScenesPanel extends JPanel {
     private Presentation pickPresentation() {
         return LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<Presentation>(
                 "Select Presentation", "Search presentations…", "presentation",
-                "No presentations in the library yet.<br>Import one in Library → Presentations first.",
+                "No presentations in the library yet.<br>Click UPLOAD FILE… to add a PowerPoint.",
                 presentations::list, Presentation::name, p -> p.slideCountText() + "  ·  " + p.sourceFileName(),
-                p -> Rendering.thumbnails().get(presentations.thumbnail(p, 1).toString())));
+                p -> Rendering.thumbnails().get(presentations.thumbnail(p, 1).toString()))
+                .withUpload(com.jamc.worship.ui.dialogs.LibraryUploads.presentations(presentations)));
     }
 
     /** + ADD SOURCE → Presentation from Library: references the library presentation by id. */
@@ -1311,14 +1469,44 @@ public class ScenesPanel extends JPanel {
         return LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<MediaItem>(
                 "Select " + (kind == MediaKind.AUDIO ? "Audio" : kind == MediaKind.VIDEO ? "Video" : "Image"),
                 "Search " + what.toLowerCase() + "…", kind == MediaKind.VIDEO ? "video" : kind == MediaKind.AUDIO ? "audio" : "image",
-                "Nothing in the library yet.<br>Import files in Library → " + what + " first.",
+                "Nothing in the library yet.<br>Click UPLOAD FILE… to add one from this computer.",
                 text -> media.find(cats, text, false).stream().filter(m -> m.getKind() == kind).toList(),
                 MediaItem::getName,
                 m -> (m.isYouTube() ? "YouTube video" : (m.getCategory() == MediaCategory.BACKGROUND ? "Background " : "") + m.getKind().name().toLowerCase())
                         + (m.getWidth() == null ? "" : "  ·  " + m.getWidth() + "×" + m.getHeight())
                         + (m.getDurationMs() == null ? "" : "  ·  " + TransportControls.format(m.getDurationMs())),
-                m -> kind == MediaKind.IMAGE ? Rendering.renderer().images().get(m.getPath())
-                        : m.isYouTube() ? com.jamc.worship.youtube.YouTubeLibrary.thumbnail(m.getYoutubeVideoId(), m.getThumbnailUrl()) : null));
+                this::thumbnailOf).withUpload(com.jamc.worship.ui.dialogs.LibraryUploads.media(media, kind)));
+    }
+
+    /** A picture of a library item: the image itself, a still of a video, YouTube's picture; null for audio. */
+    private java.awt.image.BufferedImage thumbnailOf(MediaItem m) {
+        if (m == null) {
+            return null;
+        }
+        if (m.getKind() == MediaKind.IMAGE) {
+            return Rendering.renderer().images().get(m.getPath());
+        }
+        if (m.isYouTube()) {
+            return com.jamc.worship.youtube.YouTubeLibrary.thumbnail(m.getYoutubeVideoId(), m.getThumbnailUrl());
+        }
+        return m.getKind() == MediaKind.VIDEO ? com.jamc.worship.media.VideoStills.get(media.resolve(m)) : null;
+    }
+
+    /** The picture of a source's chosen file (image, video still, YouTube picture), for its properties. */
+    private java.awt.image.BufferedImage thumbnailOf(SourceConfig c, SourceType t) {
+        if (c.path == null) {
+            return null;
+        }
+        if (t == SourceType.IMAGE) {
+            return Rendering.renderer().images().get(c.path);
+        }
+        if (t == SourceType.VIDEO) {
+            if (com.jamc.worship.youtube.YouTubeRef.is(c.path)) {
+                return com.jamc.worship.youtube.YouTubeLibrary.thumbnail(com.jamc.worship.youtube.YouTubeRef.id(c.path), null);
+            }
+            return com.jamc.worship.media.VideoStills.get(media.resolve(c.path));
+        }
+        return null;
     }
 
     private void insertSource(Source s) {
@@ -1411,6 +1599,8 @@ public class ScenesPanel extends JPanel {
         offlineCombo.addActionListener(e -> apply.run());
         offlineImageButton.addActionListener(e -> chooseOfflineImage());
         colorButton.addColorListener(c -> apply.run());
+        weightCombo.addActionListener(e -> apply.run());
+        italicBox.addActionListener(e -> apply.run());
         opacity.addChangeListener(e -> apply.run());
         textPlace.addActionListener(e -> apply.run());
         textScale.addChangeListener(e -> apply.run());
@@ -1444,7 +1634,7 @@ public class ScenesPanel extends JPanel {
         selectFromLibrary.addActionListener(e -> selectFromLibrary());
         prevSlide.addActionListener(e -> stepSlide(-1));
         nextSlide.addActionListener(e -> stepSlide(1));
-        fitToCanvas.setToolTipText("Fill the whole 16:9 output (X 0, Y 0, 1920 × 1080)");
+        fitToCanvas.setToolTipText("Fill the whole 16:9 output (X 0, Y 0, 1920 × 1080). Shortcut: Ctrl+F");
         fitToCanvas.addActionListener(e -> setBox(0, 0, 1, 1));
         resetPosition.setToolTipText("Back to where this source was when you selected it");
         resetPosition.addActionListener(e -> {
@@ -1735,10 +1925,17 @@ public class ScenesPanel extends JPanel {
                 opacity.setValue(c.opacity == null ? 100 : (int) Math.round(c.opacity * 100));
             }
             if (t == SourceType.IMAGE || t == SourceType.VIDEO || t == SourceType.AUDIO) {
+                if (t != SourceType.AUDIO) {
+                    // a picture of the chosen file (a video as one still): the operator sees what this source shows
+                    row(g, "", new MediaThumb(() -> thumbnailOf(c, t), c.path == null ? "None chosen" : null));
+                }
                 row(g, "Media", Ui.label(c.path == null ? "None chosen" : fileName(c.path),
                         Palette::text, "semibold"));
                 row(g, "", selectFromLibrary);
                 selectFromLibrary.setText("CHANGE FROM LIBRARY");
+                if (t == SourceType.VIDEO && c.path != null) {
+                    row(g, "Editor", editorPlayButton(s));
+                }
             }
             if (t == SourceType.LYRICS && c.songId != null) {
                 JButton open = Ui.button("OPEN SONG", "music");
@@ -1808,6 +2005,12 @@ public class ScenesPanel extends JPanel {
                 row(g, "Color", colorButton);
                 fontSpin.setValue(c.fontSize == null ? 48 : c.fontSize);
                 row(g, "Size", fontSpin);
+                weightCombo.setSelectedItem(c.fontWeight == null ? com.jamc.worship.model.FontWeight.BOLD : c.fontWeight);
+                weightCombo.setToolTipText("How heavy the letters are (Bold when none is chosen)");
+                row(g, "Weight", weightCombo);
+                italicBox.setSelected(Boolean.TRUE.equals(c.italic));
+                italicBox.setToolTipText("Slanted letters");
+                row(g, "Style", italicBox);
             }
             if (t == SourceType.LYRICS || t == SourceType.BIBLE || t == SourceType.BACKGROUND || t == SourceType.LOWER_THIRD) {
                 String help = switch (t) {
@@ -1853,14 +2056,14 @@ public class ScenesPanel extends JPanel {
             warn.add(drop);
             row(g, "", warn);
         }
-        // MANUAL NAVIGATION first: Previous / Next change PREVIEW; TAKE puts that image on Program
+        // MANUAL NAVIGATION first: Previous / Next move the images HERE in the editor (Preview / Program are not changed)
         JButton prev = Ui.button("PREVIOUS", "chevron-left");
-        prev.setToolTipText("Previous image in Preview (Program changes at TAKE)");
+        prev.setToolTipText("Previous image here in the editor (Preview and Program are not changed)");
         prev.getAccessibleContext().setAccessibleName("Previous image");
         prev.addActionListener(e -> slideshowControl(s, com.jamc.worship.output.Slideshows.Control.PREVIOUS));
         JButton next = Ui.primaryButton("NEXT", "chevron-right");
         next.setHorizontalTextPosition(javax.swing.SwingConstants.LEADING);
-        next.setToolTipText("Next image in Preview (Program changes at TAKE)");
+        next.setToolTipText("Next image here in the editor (Preview and Program are not changed)");
         next.getAccessibleContext().setAccessibleName("Next image");
         next.addActionListener(e -> slideshowControl(s, com.jamc.worship.output.Slideshows.Control.NEXT));
         JPanel nav = Ui.transparent(new BorderLayout(8, 0));
@@ -1869,8 +2072,8 @@ public class ScenesPanel extends JPanel {
         nav.add(slideshowStatus, BorderLayout.CENTER);
         nav.add(next, BorderLayout.EAST);
         row(g, "Navigate", nav);
-        row(g, "", Ui.label("<html>NEXT / PREVIOUS change Preview. TAKE shows that image on Program "
-                + "(projector and livestream).</html>", Palette::mutedText, "small"));
+        row(g, "", Ui.label("<html>NEXT / PREVIOUS look through the images here in the editor. During the service use "
+                + "PREV / NEXT under Preview / Program (or the arrow keys); TAKE shows the image live.</html>", Palette::mutedText, "small"));
         // AUTO PLAY: optional and off by default; it also advances Preview only
         slideAuto.setSelected(Boolean.TRUE.equals(c.autoplay));
         slideAuto.setToolTipText("Off (default): you move the images with Previous / Next. On: Preview advances by "
@@ -1886,7 +2089,7 @@ public class ScenesPanel extends JPanel {
         slideSeconds.setEnabled(slideAuto.isSelected());
         row(g, "Every (s)", slideSeconds);
         JPanel autoButtons = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 2, 0));
-        autoButtons.add(slideButton(s, "play", "Play (Auto Play in Preview)", com.jamc.worship.output.Slideshows.Control.PLAY));
+        autoButtons.add(slideButton(s, "play", "Play (here in the editor)", com.jamc.worship.output.Slideshows.Control.PLAY));
         autoButtons.add(slideButton(s, "pause", "Pause", com.jamc.worship.output.Slideshows.Control.PAUSE));
         autoButtons.add(slideButton(s, "x", "Stop (back to the first image)", com.jamc.worship.output.Slideshows.Control.STOP));
         autoButtons.add(slideButton(s, "refresh", "Restart from the first image", com.jamc.worship.output.Slideshows.Control.RESTART));
@@ -2011,6 +2214,14 @@ public class ScenesPanel extends JPanel {
                 || t == SourceType.SLIDESHOW || isCapture(t);
     }
 
+    /**
+     * Layers that resize as a whole when a handle is dragged (Shift + drag stretches one side): pictures, and the
+     * lyrics / Bible words, whose size follows the box, so a bigger box (even past the scene's edges) gives bigger words.
+     */
+    private static boolean growsAsWhole(SourceType t) {
+        return keepsAspect(t) || t == SourceType.LYRICS || t == SourceType.BIBLE;
+    }
+
     /** Window Capture and Browser: live pictures from outside the app. */
     private static boolean isCapture(SourceType t) {
         return t == SourceType.WINDOW_CAPTURE || t == SourceType.BROWSER;
@@ -2095,6 +2306,99 @@ public class ScenesPanel extends JPanel {
                 : "Only this presentation. Its slides sent from the library show here; other presentations never do "
                 + "(this box keeps its last slide).";
         row(g, "", Ui.label("<html><body style='width:190px'>" + help + "</html>", Palette::mutedText, "small"));
+    }
+
+    /**
+     * PLAY / PAUSE of a video in the scene editor (paused by default). Only the editor's own silent player moves:
+     * Preview and Program, and how the video plays when the scene goes live, are not changed.
+     */
+    private JButton editorPlayButton(Source s) {
+        JButton b = Ui.button("PLAY", "play");
+        b.setToolTipText("Play or pause this video here in the editor (silent). Preview and Program are not affected.");
+        Runnable show = () -> {
+            boolean playing = Rendering.frames().editorVideoPlaying(s);
+            b.setText(playing ? "PAUSE" : "PLAY");
+            b.setIcon(Icons.get(playing ? "pause" : "play", Icons.SMALL));
+        };
+        b.addActionListener(e -> {
+            Rendering.frames().setEditorVideoPlaying(s, !Rendering.frames().editorVideoPlaying(s));
+            preview.repaint();
+            // VLC changes state a moment later; the button follows (also when a video that does not loop ends)
+            Timer t = new Timer(300, ev -> show.run());
+            t.setRepeats(false);
+            t.start();
+        });
+        // keeps the button right while it is on screen (e.g. the video reached its end)
+        Timer follow = new Timer(1000, ev -> {
+            if (b.isShowing()) {
+                show.run();
+            } else if (!b.isDisplayable()) {
+                ((Timer) ev.getSource()).stop();
+            }
+        });
+        follow.start();
+        show.run();
+        return b;
+    }
+
+    /**
+     * A source's chosen file as a picture (16:9, the image fitted inside): an image itself, a video as one still
+     * (never playing), a YouTube video's picture. Shown again once a still or picture has loaded.
+     */
+    private static final class MediaThumb extends JComponent {
+        private final java.util.function.Supplier<java.awt.image.BufferedImage> picture;
+        private final String emptyText;
+        private final Runnable redraw = this::repaint;
+
+        MediaThumb(java.util.function.Supplier<java.awt.image.BufferedImage> picture, String emptyText) {
+            this.picture = picture;
+            this.emptyText = emptyText;
+            setPreferredSize(new Dimension(192, 108));
+            setMinimumSize(new Dimension(120, 68));
+        }
+
+        @Override
+        public void addNotify() {
+            super.addNotify();
+            com.jamc.worship.media.VideoStills.addListener(redraw);
+            com.jamc.worship.youtube.YouTubeLibrary.addListener(redraw);
+            Rendering.renderer().images().addChangeListener(redraw);
+        }
+
+        @Override
+        public void removeNotify() {
+            com.jamc.worship.media.VideoStills.removeListener(redraw);
+            com.jamc.worship.youtube.YouTubeLibrary.removeListener(redraw);
+            Rendering.renderer().images().removeChangeListener(redraw);
+            super.removeNotify();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            int w = Math.min(getWidth(), (int) Math.round(getHeight() * 16 / 9.0));
+            int h = (int) Math.round(w * 9 / 16.0);
+            g.setColor(Color.BLACK);
+            g.fillRect(0, 0, w, h);
+            java.awt.image.BufferedImage img = picture.get();
+            if (img != null) {
+                double sc = Math.min(w / (double) img.getWidth(), h / (double) img.getHeight());
+                int iw = (int) Math.round(img.getWidth() * sc);
+                int ih = (int) Math.round(img.getHeight() * sc);
+                g.drawImage(img, (w - iw) / 2, (h - ih) / 2, iw, ih, null);
+            } else {
+                String text = emptyText != null ? emptyText : "Loading picture…";
+                g.setColor(Palette.mutedText());
+                g.setFont(getFont().deriveFont(11f));
+                java.awt.FontMetrics fm = g.getFontMetrics();
+                g.drawString(text, (w - fm.stringWidth(text)) / 2, h / 2 + fm.getAscent() / 2);
+            }
+            g.setColor(Palette.border());
+            g.drawRect(0, 0, w - 1, h - 1);
+            g.dispose();
+        }
     }
 
     private void row(GridBagConstraints g, String label, JComponent c) {
@@ -2216,6 +2520,9 @@ public class ScenesPanel extends JPanel {
             c.text = textField.getText().isBlank() ? null : textField.getText();
             c.color = colorButton.getHex();
             c.fontSize = ((Number) fontSpin.getValue()).intValue();
+            com.jamc.worship.model.FontWeight w = (com.jamc.worship.model.FontWeight) weightCombo.getSelectedItem();
+            c.fontWeight = w == null || w == com.jamc.worship.model.FontWeight.BOLD ? null : w; // Bold = the default (null)
+            c.italic = italicBox.isSelected() ? Boolean.TRUE : null;
         }
         sourceList.repaint();
         sceneEdited();
@@ -2440,10 +2747,14 @@ public class ScenesPanel extends JPanel {
         private double startX;
         private double startY;
         private double[] startBox;
+        /** While moving: the layer's center sits on the scene's center line (snapped; the guide lights up). */
+        private boolean snapX;
+        private boolean snapY;
 
         ScenePreview() {
             setPreferredSize(new Dimension(480, 270));
-            setToolTipText("Click a layer to select it. Drag to move; drag the small squares to resize. Right-click for Fill Scene.");
+            setToolTipText("<html>Click a layer to select it. Drag to move; drag the small squares to resize (a picture grows as a "
+                    + "whole; Shift + drag stretches one side).<br>Layers may go past the edges. Right-click for Fill Scene.</html>");
             compositor.setEditorMode(true); // empty or missing Presentation sources show a placeholder here only
             MouseAdapter mouse = new MouseAdapter() {
                 @Override
@@ -2465,7 +2776,7 @@ public class ScenesPanel extends JPanel {
 
                 @Override
                 public void mouseDragged(MouseEvent e) {
-                    dragged(e.getX(), e.getY());
+                    dragged(e.getX(), e.getY(), e.isShiftDown());
                 }
 
                 @Override
@@ -2476,6 +2787,8 @@ public class ScenesPanel extends JPanel {
                     }
                     if (mode >= 0) {
                         mode = -1;
+                        snapX = false;
+                        snapY = false;
                         sceneEdited();
                     }
                 }
@@ -2563,7 +2876,7 @@ public class ScenesPanel extends JPanel {
             startBox = new double[]{c.x, c.y, c.w, c.h};
         }
 
-        private void dragged(int x, int y) {
+        private void dragged(int x, int y, boolean free) {
             Source s = sourceList.getSelectedValue();
             if (mode < 0 || s == null || startBox == null) {
                 return;
@@ -2575,25 +2888,43 @@ public class ScenesPanel extends JPanel {
             double bw = startBox[2];
             double bh = startBox[3];
             double min = 0.05;
+            // a layer may go PAST the edges of the scene (bigger than the screen, or partly off it, e.g. to crop a
+            // camera): edges between -1 and 2 scene widths and sizes up to 2x, the same range as X / Y / W / H
+            double lo = -1;
+            double hi = 2;
+            double maxSize = 2;
+            snapX = false;
+            snapY = false;
             if (mode == 0) {
-                bx = Math.clamp(bx + dx, 0, 1 - bw);
-                by = Math.clamp(by + dy, 0, 1 - bh);
+                // a moved layer keeps a little of itself on screen, so it can always be grabbed again
+                bx = clampSafe(bx + dx, Math.max(lo, 0.02 - bw), Math.min(hi - bw, 0.98));
+                by = clampSafe(by + dy, Math.max(lo, 0.02 - bh), Math.min(hi - bh, 0.98));
+                // CENTER GUIDES: near the middle it snaps to the exact center (the cross lights up)
+                double snap = 8.0 / Math.max(1, frame.width);
+                if (Math.abs(bx + bw / 2 - 0.5) < snap) {
+                    bx = 0.5 - bw / 2;
+                    snapX = true;
+                }
+                if (Math.abs(by + bh / 2 - 0.5) < snap * 16 / 9.0) {
+                    by = 0.5 - bh / 2;
+                    snapY = true;
+                }
             } else {
                 if (mode == 1 || mode == 7 || mode == 8) { // left edge
-                    double nx = Math.clamp(bx + dx, 0, bx + bw - min);
+                    double nx = clampSafe(bx + dx, Math.max(lo, bx + bw - maxSize), bx + bw - min);
                     bw = bw + (bx - nx);
                     bx = nx;
                 }
                 if (mode == 3 || mode == 4 || mode == 5) { // right edge
-                    bw = Math.clamp(bw + dx, min, 1 - bx);
+                    bw = clampSafe(bw + dx, min, Math.min(maxSize, hi - bx));
                 }
                 if (mode == 1 || mode == 2 || mode == 3) { // top edge
-                    double ny = Math.clamp(by + dy, 0, by + bh - min);
+                    double ny = clampSafe(by + dy, Math.max(lo, by + bh - maxSize), by + bh - min);
                     bh = bh + (by - ny);
                     by = ny;
                 }
                 if (mode == 5 || mode == 6 || mode == 7) { // bottom edge
-                    bh = Math.clamp(bh + dy, min, 1 - by);
+                    bh = clampSafe(bh + dy, min, Math.min(maxSize, hi - by));
                 }
                 if (keepsAspect(s.getType()) && aspectOn(s)) {
                     // keep 16:9 (equal fractions of the 16:9 frame): the edge being dragged decides the size
@@ -2602,7 +2933,8 @@ public class ScenesPanel extends JPanel {
                     boolean fromTop = mode == 1 || mode == 2 || mode == 3;
                     double right = bx + bw;
                     double bottom = by + bh;
-                    size = Math.clamp(size, min, Math.min(fromLeft ? right : 1 - bx, fromTop ? bottom : 1 - by));
+                    size = clampSafe(size, min, Math.max(min, Math.min(maxSize,
+                            Math.min(fromLeft ? right - lo : hi - bx, fromTop ? bottom - lo : hi - by))));
                     if (fromLeft) {
                         bx = right - size;
                     }
@@ -2611,6 +2943,28 @@ public class ScenesPanel extends JPanel {
                     }
                     bw = size;
                     bh = size;
+                } else if (growsAsWhole(s.getType()) && !free) {
+                    // a PICTURE layer (image, video, camera, slideshow…) grows and shrinks as a whole: width and height
+                    // together, in the box's own shape, so the picture really gets bigger (a Fit picture in a box made
+                    // only wider would stay the same size). Shift + drag stretches one side only.
+                    double sw = startBox[2];
+                    double sh = startBox[3];
+                    double scale = mode == 2 || mode == 6 ? bh / sh : mode == 4 || mode == 8 ? bw / sw
+                            : Math.max(bw / sw, bh / sh); // a corner: whichever way the mouse went further
+                    scale = clampSafe(scale, Math.max(min / sw, min / sh), Math.min(maxSize / sw, maxSize / sh));
+                    double nw = sw * scale;
+                    double nh = sh * scale;
+                    boolean fromLeft = mode == 1 || mode == 7 || mode == 8;
+                    boolean fromTop = mode == 1 || mode == 2 || mode == 3;
+                    double right = startBox[0] + sw;
+                    double bottom = startBox[1] + sh;
+                    // the opposite corner (or the opposite side's middle) stays where it was
+                    bx = fromLeft ? right - nw : mode == 2 || mode == 6 ? startBox[0] + (sw - nw) / 2 : startBox[0];
+                    by = fromTop ? bottom - nh : mode == 4 || mode == 8 ? startBox[1] + (sh - nh) / 2 : startBox[1];
+                    bx = clampSafe(bx, lo, hi - nw); // still within the range X / Y can hold
+                    by = clampSafe(by, lo, hi - nh);
+                    bw = nw;
+                    bh = nh;
                 }
             }
             SourceConfig c = s.getConfig();
@@ -2632,6 +2986,58 @@ public class ScenesPanel extends JPanel {
 
         private static double round(double v) {
             return Math.round(v * 1000) / 1000.0;
+        }
+
+        /** Like Math.clamp, but never throws when a box typed far outside the scene leaves no room (lo wins). */
+        private static double clampSafe(double v, double lo, double hi) {
+            return hi < lo ? lo : Math.clamp(v, lo, hi);
+        }
+
+        private static final Color GUIDE = new Color(255, 255, 255, 70);
+        private static final Color GUIDE_ON = new Color(0x22C55E);
+
+        /**
+         * CENTER GUIDES: a thin dashed cross through the middle of the scene (editor only, never on the outputs).
+         * A line turns green and solid when the selected layer's center is exactly on it.
+         */
+        private void paintCenterGuides(Graphics2D g, Rectangle r) {
+            if (editing == null) {
+                return;
+            }
+            Source sel = sourceList.getSelectedValue();
+            boolean onX = snapX;
+            boolean onY = snapY;
+            if (sel != null && !onX && !onY) {
+                SourceConfig c = sel.getConfig();
+                onX = c.w < 0.98 && Math.abs(c.x + c.w / 2 - 0.5) < 0.0015; // a full-width layer is always "centered"
+                onY = c.h < 0.98 && Math.abs(c.y + c.h / 2 - 0.5) < 0.0015;
+            }
+            int cx = r.x + r.width / 2;
+            int cy = r.y + r.height / 2;
+            java.awt.Stroke dashed = new java.awt.BasicStroke(1f, java.awt.BasicStroke.CAP_BUTT, java.awt.BasicStroke.JOIN_MITER,
+                    10f, new float[]{5f, 5f}, 0f);
+            java.awt.Stroke solid = new java.awt.BasicStroke(1.5f);
+            g.setStroke(onX ? solid : dashed);
+            g.setColor(onX ? GUIDE_ON : GUIDE);
+            g.drawLine(cx, r.y, cx, r.y + r.height - 1); // vertical line: centered left-right
+            g.setStroke(onY ? solid : dashed);
+            g.setColor(onY ? GUIDE_ON : GUIDE);
+            g.drawLine(r.x, cy, r.x + r.width - 1, cy); // horizontal line: centered top-bottom
+            // a small mark in the middle
+            g.setStroke(new java.awt.BasicStroke(1.5f));
+            g.setColor(onX && onY ? GUIDE_ON : new Color(255, 255, 255, 120));
+            g.drawOval(cx - 4, cy - 4, 8, 8);
+            if (onX || onY) {
+                String text = onX && onY ? "CENTERED" : onX ? "CENTERED LEFT–RIGHT" : "CENTERED TOP–BOTTOM";
+                g.setFont(getFont().deriveFont(java.awt.Font.BOLD, 9.5f));
+                java.awt.FontMetrics fm = g.getFontMetrics();
+                int tw = fm.stringWidth(text) + 10;
+                g.setColor(new Color(0, 0, 0, 170));
+                g.fillRoundRect(cx - tw / 2, r.y + r.height - fm.getHeight() - 10, tw, fm.getHeight() + 2, 8, 8);
+                g.setColor(GUIDE_ON);
+                g.drawString(text, cx - tw / 2 + 5, r.y + r.height - 9 - fm.getDescent());
+            }
+            g.setStroke(new java.awt.BasicStroke(1f));
         }
 
         @Override
@@ -2662,11 +3068,12 @@ public class ScenesPanel extends JPanel {
             Graphics2D g3 = (Graphics2D) g.create();
             g3.setColor(Palette.border());
             g3.drawRect(r.x, r.y, r.width - 1, r.height - 1);
+            paintCenterGuides(g3, r);
             if (editing != null) {
                 // this canvas is the editor's own draft: say so, so nobody mistakes it for Preview or Program
                 boolean onProgram = program.scene() != null && Objects.equals(program.scene().getId(), editing.getId());
                 String badge = "SCENE EDITOR" + (dirty ? " · UNSAVED" : "")
-                        + (onProgram ? " · PROGRAM UNCHANGED UNTIL SAVE → PREVIEW → TAKE" : "");
+                        + (onProgram ? (dirty ? " · ON PROGRAM: SAVE TO UPDATE IT" : " · ON PROGRAM") : "");
                 g3.setFont(getFont().deriveFont(java.awt.Font.BOLD, 9.5f));
                 java.awt.FontMetrics bm = g3.getFontMetrics();
                 int bw = bm.stringWidth(badge) + 12;

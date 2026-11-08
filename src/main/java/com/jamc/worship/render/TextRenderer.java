@@ -43,7 +43,8 @@ public final class TextRenderer {
     }
 
     private record Key(String text, String caption, String heading, String family, int size, FontWeight weight, boolean italic,
-                       TextAlign align, com.jamc.worship.model.TextPosition position, double lineSpacing, int frameHeight) {
+                       TextAlign align, com.jamc.worship.model.TextPosition position, double lineSpacing, int frameHeight,
+                       int frameWidth) {
     }
 
     private final Map<Key, TextBlock> cache = Collections.synchronizedMap(new LinkedHashMap<>(64, 0.75f, true) {
@@ -70,10 +71,18 @@ public final class TextRenderer {
      * scene can give the lyrics a smaller, wider or lower box). Text shrinks until it fits the box.
      */
     public TextBlock layout(String heading, String text, String caption, SlideStyle style, int frameHeight) {
+        return layout(heading, text, caption, style, frameHeight, FRAME_WIDTH);
+    }
+
+    /**
+     * Same, in a box {@code frameWidth} units wide: the lines wrap and are aligned within that width (e.g. the part
+     * of a scene's lyrics box that is on the screen, when the box is bigger than the screen).
+     */
+    public TextBlock layout(String heading, String text, String caption, SlideStyle style, int frameHeight, int frameWidth) {
         Key key = new Key(text == null ? "" : text.strip(), caption == null || caption.isBlank() ? null : caption.strip(),
                 heading == null || heading.isBlank() ? null : heading.strip(),
                 style.fontFamily(), style.fontSize(), style.fontWeight(), style.italic(), style.align(),
-                style.position(), style.lineSpacing(), Math.clamp(frameHeight, 60, 20000));
+                style.position(), style.lineSpacing(), Math.clamp(frameHeight, 60, 20000), Math.clamp(frameWidth, 240, 20000));
         return cache.computeIfAbsent(key, TextRenderer::compute);
     }
 
@@ -84,7 +93,7 @@ public final class TextRenderer {
         }
         Font base = Fonts.create(k.family(), k.weight(), k.italic(), k.size());
 
-        float boxW = FRAME_WIDTH - 2f * MARGIN_X;
+        float boxW = k.frameWidth() - 2f * MARGIN_X;
         float marginY = Math.min(MARGIN_Y, k.frameHeight() * 0.065f);
         float boxH = k.frameHeight() - 2f * marginY;
         float minSize = Math.min(SlideStyle.MIN_FONT_SIZE * 2f, k.size());
@@ -125,7 +134,7 @@ public final class TextRenderer {
         Shape headingShape = null;
         if (k.heading() != null) {
             TextLayout tl = new TextLayout(k.heading(), headingFont, FRC);
-            headingShape = tl.getOutline(AffineTransform.getTranslateInstance(alignX(k.align(), tl.getAdvance()), top + tl.getAscent()));
+            headingShape = tl.getOutline(AffineTransform.getTranslateInstance(alignX(k.align(), tl.getAdvance(), k.frameWidth()), top + tl.getAscent()));
             bounds = union(bounds, headingShape.getBounds2D());
             top += headingH + headingGap;
         }
@@ -134,7 +143,7 @@ public final class TextRenderer {
         for (String line : lines) {
             if (!line.isEmpty()) {
                 TextLayout tl = new TextLayout(line, font, FRC);
-                float x = alignX(k.align(), tl.getAdvance());
+                float x = alignX(k.align(), tl.getAdvance(), k.frameWidth());
                 Shape s = tl.getOutline(AffineTransform.getTranslateInstance(x, y));
                 shapes.add(s);
                 bounds = union(bounds, s.getBounds2D());
@@ -148,7 +157,7 @@ public final class TextRenderer {
         if (k.caption() != null) {
             TextLayout tl = new TextLayout(k.caption(), captionFont, FRC);
             float cy = top + textH + captionGap + tl.getAscent();
-            captionShape = tl.getOutline(AffineTransform.getTranslateInstance(alignX(k.align(), tl.getAdvance()), cy));
+            captionShape = tl.getOutline(AffineTransform.getTranslateInstance(alignX(k.align(), tl.getAdvance(), k.frameWidth()), cy));
             bounds = union(bounds, captionShape.getBounds2D());
         }
         return new TextBlock(List.copyOf(shapes), captionShape, headingShape, size, bounds == null ? new Rectangle2D.Float() : bounds);
@@ -158,11 +167,11 @@ public final class TextRenderer {
         return Math.max(22f, textSize * 0.5f);
     }
 
-    private static float alignX(TextAlign align, float advance) {
+    private static float alignX(TextAlign align, float advance, int frameWidth) {
         return switch (align) {
             case LEFT -> MARGIN_X;
-            case CENTER -> (FRAME_WIDTH - advance) / 2f;
-            case RIGHT -> FRAME_WIDTH - MARGIN_X - advance;
+            case CENTER -> (frameWidth - advance) / 2f;
+            case RIGHT -> frameWidth - MARGIN_X - advance;
         };
     }
 

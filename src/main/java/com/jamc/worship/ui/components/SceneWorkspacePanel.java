@@ -34,6 +34,12 @@ public class SceneWorkspacePanel extends JPanel {
     private final JLabel title = Ui.label(" ", Palette::text, "h2");
     private final JLabel meta = Ui.secondary(" ");
     private final Compositor compositor = new Compositor(Rendering.renderer(), true);
+
+    {
+        compositor.setStillVideos(true); // the scene's videos show a still picture here, never a playing one
+        com.jamc.worship.media.VideoStills.addListener(this::repaint);
+        com.jamc.worship.youtube.YouTubeLibrary.addListener(() -> javax.swing.SwingUtilities.invokeLater(this::repaint));
+    }
     private final LiveContent sample = LiveContent.snapshot(new Slide("Sample", "Amazing grace\nHow sweet the sound", null),
             SlideStyle.fallback().withTextTransform(TextTransform.UPPERCASE), "Sample");
     private final View view = new View();

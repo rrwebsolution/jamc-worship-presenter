@@ -57,6 +57,28 @@ class SlideshowTest {
         Compositor.installSlideshows(null);
     }
 
+    /** SCENE EDITOR: PREV / NEXT move the editor's images even when the scene is in neither Preview nor Program. */
+    @Test
+    void editorNextWorksWithoutPreview() {
+        Slideshows shows = shows();
+        Source s = announcements(1L).getSources().getFirst();
+        assertEquals("one.png", shows.editorView(s).current(), "the first image before NEXT");
+        shows.controlEditor(s, Slideshows.Control.NEXT);
+        assertEquals("two.png", shows.editorView(s).current());
+        shows.controlEditor(s, Slideshows.Control.NEXT);
+        assertEquals("four.png", shows.editorView(s).current(), "the missing image is skipped");
+        assertEquals(3, shows.editorPosition(s)[0]);
+        assertEquals(4, shows.editorPosition(s)[1]);
+        shows.controlEditor(s, Slideshows.Control.PREVIOUS);
+        assertEquals("two.png", shows.editorView(s).current());
+        assertNull(shows.status(s), "Preview and Program were not touched");
+        shows.controlEditor(s, Slideshows.Control.PLAY);
+        assertTrue(shows.editorPlaying(s));
+        shows.pauseEditor(); // the editor left the screen
+        assertFalse(shows.editorPlaying(s));
+        assertEquals("two.png", shows.editorView(s).current(), "paused where it was");
+    }
+
     /** Manual by default: NEXT / PREVIOUS move Preview only; TAKE puts Preview's image on Program. */
     @Test
     void nextChangesPreviewAndTakeChangesProgram() {

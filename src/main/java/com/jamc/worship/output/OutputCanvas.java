@@ -184,31 +184,16 @@ public class OutputCanvas extends JComponent {
                 // Another scene: only the layers that differ transition (CAM 1 → CAM 2 under the same lyrics
                 // changes only the camera); shared layers stay.
                 boolean sameScene = Compositor.contentChangeOnly(from, to);
-                float fromAlpha;
-                float toAlpha;
-                switch (program.activeTransition()) {
-                    case CROSSFADE -> {
-                        fromAlpha = 1f - p;
-                        toAlpha = p;
-                    }
-                    case FADE -> {
-                        fromAlpha = p < 0.5f ? 1f - p * 2f : 0f;
-                        toAlpha = p < 0.5f ? 0f : p * 2f - 1f;
-                    }
-                    default -> {
-                        fromAlpha = 0f;
-                        toAlpha = 1f;
-                    }
-                }
+                Transition kind = program.activeTransition();
                 Graphics2D d = (Graphics2D) g2.create();
                 d.translate(r.x, r.y);
                 d.scale(r.width / (double) pw, r.height / (double) ph);
                 d.clipRect(0, 0, pw, ph);
                 d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
                 if (sameScene) {
-                    compositor.paintLayered(d, pw, ph, from, to, program, keyMode, fromAlpha, toAlpha);
+                    compositor.paintLayered(d, pw, ph, from, to, program, keyMode, kind, p);
                 } else {
-                    compositor.paintSceneChange(d, pw, ph, from, to, program, keyMode, fromAlpha, toAlpha);
+                    compositor.paintSceneChange(d, pw, ph, from, to, program, keyMode, kind, p);
                 }
                 d.dispose();
             } else if (!keyMode && Compositor.sitsOnGlobal(from) && Compositor.sitsOnGlobal(to)) {
@@ -227,20 +212,9 @@ public class OutputCanvas extends JComponent {
                 bg.dispose();
                 g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
                 Composite base = g2.getComposite();
-                switch (program.activeTransition()) {
-                    case CROSSFADE -> {
-                        draw(g2, fromBuffer, r, 1f - p, base);
-                        draw(g2, toBuffer, r, p, base);
-                    }
-                    case FADE -> {
-                        if (p < 0.5f) {
-                            draw(g2, fromBuffer, r, 1f - p * 2f, base);
-                        } else {
-                            draw(g2, toBuffer, r, p * 2f - 1f, base);
-                        }
-                    }
-                    case CUT -> draw(g2, toBuffer, r, 1f, base);
-                }
+                // transparent content over the running background: both sides fade (or move) over it
+                drawSide(g2, fromBuffer, r, program.activeTransition(), p, false, false, base);
+                drawSide(g2, toBuffer, r, program.activeTransition(), p, true, false, base);
                 g2.setComposite(base);
             } else {
                 fromBuffer = ensure(fromBuffer, pw, ph);
@@ -249,22 +223,11 @@ public class OutputCanvas extends JComponent {
                 compose(toBuffer, to);
                 g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
                 Composite base = g2.getComposite();
-                switch (program.activeTransition()) {
-                    case CROSSFADE -> {
-                        draw(g2, fromBuffer, r, 1f, base);
-                        draw(g2, toBuffer, r, p, base);
-                    }
-                    case FADE -> {
-                        g2.setColor(keyMode ? Compositor.KEY_GREEN : Color.BLACK);
-                        g2.fillRect(r.x, r.y, r.width, r.height);
-                        if (p < 0.5f) {
-                            draw(g2, fromBuffer, r, 1f - p * 2f, base);
-                        } else {
-                            draw(g2, toBuffer, r, p * 2f - 1f, base);
-                        }
-                    }
-                    case CUT -> draw(g2, toBuffer, r, 1f, base);
-                }
+                // whole frames: black (or the key green) behind, for a fade or where a slide / zoom leaves a gap
+                g2.setColor(keyMode ? Compositor.KEY_GREEN : Color.BLACK);
+                g2.fillRect(r.x, r.y, r.width, r.height);
+                drawSide(g2, fromBuffer, r, program.activeTransition(), p, false, true, base);
+                drawSide(g2, toBuffer, r, program.activeTransition(), p, true, true, base);
                 g2.setComposite(base);
             }
             paintOverlay(g2, r);
@@ -311,11 +274,24 @@ public class OutputCanvas extends JComponent {
                 ? img : new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
     }
 
-    private static void draw(Graphics2D g, BufferedImage img, Rectangle r, float alpha, Composite base) {
-        if (alpha <= 0f) {
-            return;
+    /**
+     * One side (old = {@code incoming} false, new = true) of a whole-frame transition, drawn into the screen
+     * rectangle with the transition's clip / shift / scale ({@link TransitionFx}) and opacity.
+     */
+    private static void drawSide(Graphics2D g, BufferedImage img, Rectangle r, Transition t, float p, boolean incoming,
+                                 boolean opaque, Composite base) {
+        Graphics2D side = (Graphics2D) g.create();
+        try {
+            side.translate(r.x, r.y);
+            side.scale(r.width / (double) img.getWidth(), r.height / (double) img.getHeight());
+            side.clipRect(0, 0, img.getWidth(), img.getHeight());
+            float a = TransitionFx.prepare(t, side, img.getWidth(), img.getHeight(), p, incoming, opaque);
+            if (a > 0f) {
+                side.setComposite(a >= 1f ? base : AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
+                side.drawImage(img, 0, 0, null);
+            }
+        } finally {
+            side.dispose();
         }
-        g.setComposite(alpha >= 1f ? base : AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
-        g.drawImage(img, r.x, r.y, r.width, r.height, null);
     }
 }

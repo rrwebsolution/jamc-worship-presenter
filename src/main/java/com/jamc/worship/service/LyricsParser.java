@@ -61,6 +61,39 @@ public final class LyricsParser {
     record Heading(SectionType type, String label, Integer number) {
     }
 
+    /** True for a section heading line (Verse 1, Chorus, [Tag]…), as {@link #parse} reads it. */
+    public static boolean isHeading(String line) {
+        return parseHeading(line).isPresent();
+    }
+
+    /**
+     * SLIDE NUMBERS for the lyrics editor, like EasyWorship: for each written line, the number of the slide that
+     * starts on it (0 = none). A slide starts after a blank line or at a heading, and the number sits on the
+     * heading line when the slide has one; a heading with no words after it gets no number.
+     */
+    public static int[] slideNumbers(String text) {
+        String normalized = text == null ? "" : text.replace("\r\n", "\n").replace('\r', '\n');
+        String[] lines = normalized.split("\n", -1);
+        int[] out = new int[lines.length];
+        int slide = 0;
+        boolean inSlide = false;
+        int heading = -1;
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (line.isBlank()) {
+                inSlide = false; // Enter on an empty line: the next words are a new slide
+            } else if (isHeading(line)) {
+                inSlide = false;
+                heading = i; // the slide's number goes on its heading
+            } else if (!inSlide) {
+                out[heading >= 0 ? heading : i] = ++slide;
+                heading = -1;
+                inSlide = true;
+            }
+        }
+        return out;
+    }
+
     static Optional<Heading> parseHeading(String line) {
         if (line == null || line.isBlank() || line.length() > 48) {
             return Optional.empty();

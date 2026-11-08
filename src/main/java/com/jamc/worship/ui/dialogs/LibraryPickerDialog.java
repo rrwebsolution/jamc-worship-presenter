@@ -54,7 +54,27 @@ public final class LibraryPickerDialog<T> extends JDialog {
     /** How the dialog shows and finds items. */
     public record Spec<T>(String title, String searchHint, String icon, String emptyText,
                           Function<String, List<T>> search, Function<T, String> name, Function<T, String> detail,
-                          Function<T, BufferedImage> thumbnail) {
+                          Function<T, BufferedImage> thumbnail, Uploader<T> upload) {
+
+        /** A picker without UPLOAD FILE… (songs, cameras, windows…). */
+        public Spec(String title, String searchHint, String icon, String emptyText,
+                    Function<String, List<T>> search, Function<T, String> name, Function<T, String> detail,
+                    Function<T, BufferedImage> thumbnail) {
+            this(title, searchHint, icon, emptyText, search, name, detail, thumbnail, null);
+        }
+
+        /** The same picker with UPLOAD FILE… (the uploaded files go to the Library, then are chosen here). */
+        public Spec<T> withUpload(Uploader<T> uploader) {
+            return new Spec<>(title, searchHint, icon, emptyText, search, name, detail, thumbnail, uploader);
+        }
+    }
+
+    /**
+     * UPLOAD FILE…: picks files on the computer, saves them in the Library, then hands the new library items
+     * to {@code done} on the event thread; always called once, with an empty list when cancelled or nothing was added.
+     */
+    public interface Uploader<T> {
+        void upload(Component parent, boolean many, java.util.function.Consumer<List<T>> done);
     }
 
     private final Spec<T> spec;
@@ -115,6 +135,17 @@ public final class LibraryPickerDialog<T> extends JDialog {
         });
         Rendering.thumbnails().addChangeListener(list::repaint);
         Rendering.renderer().images().addChangeListener(list::repaint);
+        // video stills and YouTube pictures arrive later: the rows show them once ready (removed when it closes)
+        Runnable repaintRows = list::repaint;
+        com.jamc.worship.media.VideoStills.addListener(repaintRows);
+        com.jamc.worship.youtube.YouTubeLibrary.addListener(repaintRows);
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosed(java.awt.event.WindowEvent e) {
+                com.jamc.worship.media.VideoStills.removeListener(repaintRows);
+                com.jamc.worship.youtube.YouTubeLibrary.removeListener(repaintRows);
+            }
+        });
         JScrollPane scroll = new JScrollPane(list);
         scroll.setBorder(Ui.line(true, true, true, true));
         empty.setHorizontalAlignment(SwingConstants.CENTER);
@@ -129,7 +160,27 @@ public final class LibraryPickerDialog<T> extends JDialog {
         JPanel buttons = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         buttons.add(cancel);
         buttons.add(add);
-        root.add(buttons, BorderLayout.SOUTH);
+        JPanel south = Ui.transparent(new BorderLayout());
+        south.add(buttons, BorderLayout.EAST);
+        if (spec.upload() != null) {
+            // UPLOAD FILE…: straight from the computer; saved in the Library and chosen here, no trip to the Library
+            JButton upload = Ui.button(multi ? "UPLOAD FILES…" : "UPLOAD FILE…", "import");
+            upload.setToolTipText("Choose " + (multi ? "files" : "a file") + " on this computer. "
+                    + (multi ? "They are" : "It is") + " saved in the Library by itself and added here.");
+            upload.addActionListener(e -> {
+                upload.setEnabled(false);
+                upload.setText("UPLOADING…"); // a PowerPoint's slides are rendered first: this can take a moment
+                spec.upload().upload(this, multi, items -> {
+                    upload.setEnabled(true);
+                    upload.setText(multi ? "UPLOAD FILES…" : "UPLOAD FILE…");
+                    uploaded(items);
+                });
+            });
+            JPanel left = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
+            left.add(upload);
+            south.add(left, BorderLayout.WEST);
+        }
+        root.add(south, BorderLayout.SOUTH);
         setContentPane(root);
         getRootPane().setDefaultButton(add);
         getRootPane().registerKeyboardAction(e -> dispose(), KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0),
@@ -202,6 +253,24 @@ public final class LibraryPickerDialog<T> extends JDialog {
         if (chosen != null) {
             dispose();
         }
+    }
+
+    /**
+     * Files were uploaded into the Library: one file is chosen at once (ADD TO SCENE); several are ticked and the
+     * list shows them, so ADD N … adds them with any others ticked.
+     */
+    private void uploaded(List<T> items) {
+        if (!isDisplayable() || items.isEmpty()) {
+            return; // the picker was closed meanwhile
+        }
+        if (!multi) {
+            chosen = items.getFirst();
+            dispose();
+            return;
+        }
+        ticked.addAll(items);
+        search.setText(""); // the new files show in the full list
+        load();
     }
 
     private void load() {

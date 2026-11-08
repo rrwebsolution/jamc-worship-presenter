@@ -474,6 +474,13 @@ public final class CameraManager {
         return CameraStatus.READY;
     }
 
+    /** True when the camera is open and its pictures are arriving (it is really connected), not just detected. */
+    public boolean connected(String name) {
+        String cam = resolve(name);
+        Session s = cam == null ? null : sessions.get(cam);
+        return s != null && !s.failed && s.gotFrame && System.currentTimeMillis() - s.lastFrameAt <= STALL_MS;
+    }
+
     /** Why a camera shows ERROR or DISCONNECTED, in words for the operator; null when it is fine. */
     public String problem(String name) {
         String cam = resolve(name);

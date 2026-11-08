@@ -451,7 +451,15 @@ public class SlideThumbnailStrip extends JPanel {
             t.canvas.setContent(t.slide, style);
             t.fit(); // edited words can need another line
             t.caption.repaint();
+            slideEditedListeners.forEach(l -> l.accept(index));
         }
+    }
+
+    private final List<java.util.function.IntConsumer> slideEditedListeners = new ArrayList<>();
+
+    /** A slide was edited in place (e.g. a custom slide's words): told its index, so a live copy can follow. */
+    public void addSlideEditedListener(java.util.function.IntConsumer listener) {
+        slideEditedListeners.add(listener);
     }
 
     public List<Slide> getSlides() {
@@ -895,6 +903,8 @@ public class SlideThumbnailStrip extends JPanel {
     private final class LyricsCard extends JComponent {
         private static final int PAD = 12;
         private static final float LYRICS_PT = 16f;
+        /** The card's number (1, 2, 3…) in a column on the left side; the words start after it. */
+        private static final int GUTTER = 34;
         private final Slide slide;
 
         LyricsCard(Slide slide) {
@@ -937,7 +947,7 @@ public class SlideThumbnailStrip extends JPanel {
         int heightFor(int width) {
             var sfm = getFontMetrics(sectionFont());
             var fm = getFontMetrics(lyricsFont());
-            int lines = Math.max(1, lines(fm, width - 2 * PAD).size());
+            int lines = Math.max(1, lines(fm, width - 2 * PAD - GUTTER).size());
             return PAD + sfm.getHeight() + 8 + lines * fm.getHeight() + PAD;
         }
 
@@ -960,6 +970,16 @@ public class SlideThumbnailStrip extends JPanel {
             g2.setStroke(new java.awt.BasicStroke(live || preview || selected ? 2f : 1f));
             g2.drawRoundRect(1, 1, w - 3, h - 3, 12, 12);
 
+            // the card's NUMBER on the left side (1, 2, 3… as in the order), with a thin line after it
+            String number = index >= 0 ? String.valueOf(index + 1) : "";
+            g2.setFont(getFont().deriveFont(java.awt.Font.BOLD, 15f));
+            var nfm = g2.getFontMetrics();
+            g2.setColor(live ? Palette.danger() : preview ? Palette.accent() : Palette.secondaryText());
+            g2.drawString(number, (GUTTER - nfm.stringWidth(number)) / 2 + 2, (h - nfm.getHeight()) / 2 + nfm.getAscent());
+            g2.setColor(Palette.border());
+            g2.drawLine(GUTTER, PAD - 2, GUTTER, h - PAD + 2);
+            int left = GUTTER + PAD;
+
             // section label (secondary) and state badge on one top row
             g2.setFont(sectionFont());
             var sfm = g2.getFontMetrics();
@@ -975,15 +995,15 @@ public class SlideThumbnailStrip extends JPanel {
                 g2.drawString(badge, w - PAD - badgeW + 6, top);
             }
             g2.setColor(Palette.mutedText());
-            g2.drawString(fitText(section, sfm, w - 2 * PAD - badgeW - 6), PAD, top);
+            g2.drawString(fitText(section, sfm, w - left - PAD - badgeW - 6), left, top);
 
             // the lyrics: the main content
             g2.setFont(lyricsFont());
             var fm = g2.getFontMetrics();
             g2.setColor(Palette.text());
             int y = PAD + sfm.getHeight() + 8 + fm.getAscent();
-            for (String line : lines(fm, w - 2 * PAD)) {
-                g2.drawString(fitText(line, fm, w - 2 * PAD), PAD, y);
+            for (String line : lines(fm, w - left - PAD)) {
+                g2.drawString(fitText(line, fm, w - left - PAD), left, y);
                 y += fm.getHeight();
             }
             g2.dispose();

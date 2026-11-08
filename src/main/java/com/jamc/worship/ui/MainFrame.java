@@ -145,6 +145,12 @@ public class MainFrame extends JFrame {
     private static final String KEY_DEFAULT_SCENE = "scenes.default";
     /** Livestream mode: Preview keeps its own scene (e.g. Worship) while Program keeps another; TAKE moves content only. */
     private static final String KEY_SEPARATE_LAYOUTS = "scenes.separatePreviewLayout";
+    /** Scenes dock: List (one scene per row, vertical) instead of Grid. */
+    private static final String KEY_SCENES_LIST_VIEW = "ui.scenesListView";
+    /** Settings → which transitions the drop-down next to TAKE offers ("CUT,FADE,WIPE_LEFT"). */
+    private static final String KEY_SHOWN_TRANSITIONS = "ui.transitions.shown";
+    /** Scenes page: height of Preview · TAKE · Program under the scenes (draggable divider). */
+    private static final String KEY_SCENES_LIVE_HEIGHT = "ui.scenes.liveHeight";
     private static final String KEY_PREVIEW_SCENE = "scenes.previewScene";
     private static final String KEY_PREVIEW_FIRST = "live.previewFirst";
     private static final String KEY_LYRICS_CLICK_LIVE_RESET = "live.songClickGoesLive.reset2";
@@ -582,6 +588,18 @@ public class MainFrame extends JFrame {
             }
 
             @Override
+            public java.util.Set<Transition> shownTransitions() {
+                return Transition.parseSet(context.config().get(KEY_SHOWN_TRANSITIONS, null));
+            }
+
+            @Override
+            public void setShownTransitions(java.util.Set<Transition> shown) {
+                context.config().set(KEY_SHOWN_TRANSITIONS, Transition.format(shown));
+                context.config().save();
+                liveDock.setShownTransitions(shown); // the drop-down next to TAKE offers only these
+            }
+
+            @Override
             public void setTransition(Transition transition, int durationMs) {
                 // the same as choosing it next to TAKE, and the controls there follow
                 program.setTransition(transition, durationMs);
@@ -659,6 +677,8 @@ public class MainFrame extends JFrame {
         });
         hub.cameraAudio().setSink(streamManager::setLiveInputs);
         hub.sceneVideos().addListener(this::updateProgramMedia);
+        com.jamc.worship.media.VideoStills.addListener(this::redrawSceneCardSoon);
+        com.jamc.worship.youtube.YouTubeLibrary.addListener(this::redrawSceneCardSoon);
         new javax.swing.Timer(1000, e -> updateProgramMediaNote()).start();
 
         setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
@@ -737,6 +757,9 @@ public class MainFrame extends JFrame {
             context.config().save();
         });
         thumbnails.addSlidesChangedListener(this::applyStripMode);
+        // an item edited in the Library while one of its slides is live: Program follows, no TAKE needed
+        thumbnails.addSlidesChangedListener(() -> SwingUtilities.invokeLater(this::followEditsOnProgram));
+        thumbnails.addSlideEditedListener(i -> followEditsOnProgram());
         // CURRENT CONTENT: the lyrics / page cards, beside the selected item's details
         bottomSplit = split(JSplitPane.HORIZONTAL_SPLIT, thumbsPanel, detailPanel, 0.6);
         bottomSplit.setMinimumSize(new Dimension(0, 150));
@@ -768,6 +791,9 @@ public class MainFrame extends JFrame {
         // SCENE: the homepage (scene cards; one scene open with its sources and + ADD SOURCE)
         scenesHome = new com.jamc.worship.ui.components.ScenesHomePanel(sceneHost, region(scenesPanel), s -> scenesPanel.edit(s.getId()));
         scenesHome.setLeaveEditor(scenesPanel::confirmLeave); // unsaved scene changes: Save / Discard / Cancel
+        // Preview · Program under the scenes: the height the operator dragged it to (saved with the window state)
+        scenesHome.setLiveHeight(parseInt(context.config().get(KEY_SCENES_LIVE_HEIGHT, "300"), 300),
+                h -> context.config().set(KEY_SCENES_LIVE_HEIGHT, String.valueOf(h)));
         scenesPanel.setCameraNames(cameraNames);
         scenesPanel.setSongs(context.songService());
         scenesPanel.setSlideshows(slideshows);
@@ -1272,7 +1298,30 @@ public class MainFrame extends JFrame {
         });
         scenesPanel.setPreviewChosen(this::sendSceneToPreview);
         scenesPanel.setSceneSaved(saved -> {
-            // the saved scene waits as the selected scene: nothing shows until the operator presses TAKE
+            // SAVE SCENE (user rule 2026-11-08): a scene that is ON Preview or Program shows the saved version there at
+            // once (size, place, layers), no TAKE needed. Unsaved edits never reach them; other scenes still wait for TAKE.
+            boolean onProgram = program.scene() != null && Objects.equals(program.scene().getId(), saved.getId());
+            boolean onPreview = previewState.scene() != null && Objects.equals(previewState.scene().getId(), saved.getId());
+            if (onProgram) {
+                program.setScene(saved, false); // the same scene edited: it updates in place (no transition)
+            }
+            if (onPreview) {
+                previewState.setScene(saved, false);
+            }
+            if (pendingScene != null && Objects.equals(pendingScene.getId(), saved.getId())) {
+                pendingScene = onProgram ? null : saved; // TAKE brings the saved version (already live: nothing to take)
+            }
+            if (onProgram || onPreview) {
+                selectedScene = null;
+                liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null || pendingScene != null);
+                updatePreviewNote();
+                scenesDock.sync();
+                if (scenesHome != null) scenesHome.sync();
+                statusBar.showMessage("Scene \"" + saved.getName() + "\" saved and updated on "
+                        + (onProgram && onPreview ? "Preview and Program" : onProgram ? "Program" : "Preview") + ".");
+                return;
+            }
+            // not on Preview or Program: it waits as the selected scene; TAKE shows it
             selectedScene = saved;
             liveDock.setPreviewReady(true);
             statusBar.showMessage("Scene \"" + saved.getName() + "\" saved. Press " + (studioMode() ? "TAKE" : takeKeyName()
@@ -1608,13 +1657,39 @@ public class MainFrame extends JFrame {
         Song titled = songLibrary.currentSong();
         thumbnails.setTitle(titled == null ? "Lyrics" : "Lyrics – " + titled.getTitle());
         thumbnails.setEmptyMessage("Select lyrics to see them here.");
+        // the SAME song shown again (saved in Edit Song): the strip stays where it was, on the LIVE slide when one of
+        // its slides is live, else on the slide that was selected (it no longer jumps back to the first slide)
+        int start = sameSongStart(songSlides);
         suppressAutoTake = true; // opening a song never puts a slide live by itself; clicking one does
         try {
-            thumbnails.setSlides(songSlides, songStyle);
+            if (start > 0) {
+                thumbnails.setSlides(songSlides, songStyle, start);
+            } else {
+                thumbnails.setSlides(songSlides, songStyle);
+            }
         } finally {
             suppressAutoTake = false;
         }
         updateClickHint();
+    }
+
+    /** Where the strip should start when it shows the song it already showed: the live slide, else the selected one. */
+    private int sameSongStart(List<Slide> fresh) {
+        List<Slide> shown = thumbnails.getSlides();
+        Long id = fresh.isEmpty() ? null : fresh.getFirst().getSongId();
+        boolean same = id != null && !shown.isEmpty() && id.equals(shown.getFirst().getSongId());
+        if (!same) {
+            return 0; // another song: from its first slide
+        }
+        LiveContent live = program.content();
+        if (live != null && live == takenContent && takenSlide != null && id.equals(takenSlide.getSongId())) {
+            int at = liveMatch(fresh, takenSlide, takenIndex);
+            if (at >= 0) {
+                return at;
+            }
+        }
+        int selected = thumbnails.getSelectedIndex();
+        return selected < 0 ? 0 : Math.min(selected, fresh.size() - 1);
     }
 
     /** True while a workspace refills the slide strip on a category switch: Preview keeps what it has. */
@@ -2403,7 +2478,8 @@ public class MainFrame extends JFrame {
             int before = thumbnails.getSelectedIndex();
             thumbnails.setSelectedIndex(Math.clamp(index, 0, thumbnails.getSlides().size() - 1));
             previewSelectedPresentationSlide();
-            if (thumbnails.getSelectedIndex() != before && !separatePresentation()) {
+            boolean notLive = thumbnails.getLiveIndex() >= 0 && thumbnails.getSelectedIndex() != thumbnails.getLiveIndex();
+            if ((thumbnails.getSelectedIndex() != before || notLive) && !separatePresentation()) {
                 take(false); // LIVE CONTROL, as on the desktop: content only, Program's scene stays
             }
             return null;
@@ -2681,10 +2757,10 @@ public class MainFrame extends JFrame {
                     return presentationTo(0);
                 }
                 case PRESENTATION_PREVIOUS -> {
-                    return presentationTo(thumbnails.getSelectedIndex() - 1);
+                    return presentationTo(presentationStepBase() - 1); // from the LIVE slide, like the keyboard
                 }
                 case PRESENTATION_NEXT -> {
-                    return presentationTo(thumbnails.getSelectedIndex() + 1);
+                    return presentationTo(presentationStepBase() + 1);
                 }
                 case PRESENTATION_LAST -> {
                     return presentationTo(thumbnails.getSlides().size() - 1);
@@ -2852,12 +2928,29 @@ public class MainFrame extends JFrame {
      * Live & Scenes separates presentations; then TAKE puts it live.
      * Only the content changes: Program keeps its scene. Lyrics as before.
      */
+    /**
+     * Where next / previous counts from in a presentation: the LIVE slide (Program), not a slide that was only
+     * clicked (white border, in Preview). With Preview and Program separate for presentations, next only previews,
+     * so it goes on from the clicked slide there.
+     */
+    private int presentationStepBase() {
+        int live = thumbnails.getLiveIndex();
+        return stripSource == StripSource.PRESENTATION && !separatePresentation() && live >= 0
+                ? live : thumbnails.getSelectedIndex();
+    }
+
     private void stepSlide(boolean next) {
         int before = thumbnails.getSelectedIndex();
         boolean presentation = stripSource == StripSource.PRESENTATION;
         suppressAutoTake = presentation; // below, once: the strip's own click rule would send it live twice
         try {
-            if (next) {
+            if (presentation) {
+                // the slide after (or before) the LIVE one, even when another slide was clicked meanwhile
+                int target = presentationStepBase() + (next ? 1 : -1);
+                if (target >= 0 && target < thumbnails.getSlides().size()) {
+                    thumbnails.setSelectedIndex(target);
+                }
+            } else if (next) {
                 thumbnails.selectNext();
             } else {
                 thumbnails.selectPrevious();
@@ -2866,7 +2959,9 @@ public class MainFrame extends JFrame {
             suppressAutoTake = false;
         }
         if (presentation && thumbnails.getSelectedIndex() >= 0) {
-            boolean moved = thumbnails.getSelectedIndex() != before;
+            // moved, or the clicked slide already was the one after LIVE: it goes live either way
+            boolean moved = thumbnails.getSelectedIndex() != before
+                    || (thumbnails.getLiveIndex() >= 0 && thumbnails.getSelectedIndex() != thumbnails.getLiveIndex());
             previewSelectedPresentationSlide();
             if (moved && !separatePresentation()) {
                 take(false); // content only: Program's scene (camera, logo...) stays
@@ -3041,6 +3136,95 @@ public class MainFrame extends JFrame {
                 "What may look different from PowerPoint", javax.swing.JOptionPane.INFORMATION_MESSAGE);
     }
 
+    /**
+     * EDITS FOLLOW PROGRAM: lyrics, a custom slide, an announcement… edited in the Library while one of its slides is
+     * live: Program (projector, stream) shows the new version at once, no TAKE needed and no transition. Only the
+     * same slide of the same item is followed (matched by the song's card, the slide's id, the presentation page);
+     * anything else in the strip leaves Program alone.
+     */
+    private void followEditsOnProgram() {
+        LiveContent live = program.content();
+        if (live == null || live != takenContent || live.isVideo() || live.slide() == null || takenSlide == null) {
+            return; // nothing of ours is live (or something else was taken since)
+        }
+        List<Slide> strip = thumbnails.getSlides();
+        int index = liveMatch(strip, takenSlide, takenIndex);
+        if (index < 0) {
+            return;
+        }
+        Slide fresh = strip.get(index);
+        SlideStyle base = thumbnails.getBaseStyle();
+        SlideStyle style = base != null && stripSource != StripSource.PRESENTATION ? base : live.style();
+        if (fresh != takenSlide || index != takenIndex) {
+            takenSlides = strip;
+            takenIndex = index;
+            takenSlide = fresh;
+        }
+        if (sameContent(fresh, live.slide()) && Objects.equals(style, live.style())) {
+            refreshLiveMarker(); // the rebuilt strip shows the LIVE border on it again
+            return; // e.g. the item opened again unchanged: no update
+        }
+        LiveContent content = LiveContent.snapshot(fresh, style, live.title());
+        takenContent = content;
+        program.updateContent(content);
+        refreshLiveMarker();
+        statusBar.showMessage("The live slide was updated with your changes.");
+    }
+
+    /** Where the live slide is in the rebuilt / edited strip, or -1 when the strip shows something else. */
+    static int liveMatch(List<Slide> strip, Slide taken, int takenAt) {
+        for (int i = 0; i < strip.size(); i++) {
+            if (strip.get(i) == taken) {
+                return i; // edited in place (custom slide)
+            }
+        }
+        for (int i = 0; i < strip.size(); i++) {
+            Slide s = strip.get(i);
+            if (taken.getId() != null && taken.getId().equals(s.getId())) {
+                return i; // the same saved slide (deck reloaded)
+            }
+            if (taken.getPresentationId() != null && taken.getPresentationId().equals(s.getPresentationId())
+                    && taken.getPresentationIndex() == s.getPresentationIndex()) {
+                return i;
+            }
+        }
+        if (taken.getSongId() != null) {
+            // the same song: the same card (a repeated chorus: the repeat nearest the live place), else the same place
+            int best = -1;
+            for (int i = 0; i < strip.size(); i++) {
+                Slide s = strip.get(i);
+                if (taken.getSongId().equals(s.getSongId()) && taken.getCardKey() != null && taken.getCardKey().equals(s.getCardKey())
+                        && (best < 0 || Math.abs(i - takenAt) < Math.abs(best - takenAt))) {
+                    best = i;
+                }
+            }
+            if (best >= 0) {
+                return best;
+            }
+            boolean sameSong = strip.stream().anyMatch(s -> taken.getSongId().equals(s.getSongId()));
+            if (sameSong && takenAt >= 0 && takenAt < strip.size() && taken.getSongId().equals(strip.get(takenAt).getSongId())) {
+                return takenAt;
+            }
+        }
+        return -1;
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper OVERRIDES_JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    /** True when both slides show the same thing (words, picture, own look). */
+    static boolean sameContent(Slide a, Slide b) {
+        if (!Objects.equals(a.getText(), b.getText()) || !Objects.equals(a.getHeading(), b.getHeading())
+                || !Objects.equals(a.getCaption(), b.getCaption()) || !Objects.equals(a.getLabel(), b.getLabel())
+                || !Objects.equals(a.getThumbnail(), b.getThumbnail()) || a.coversBackground() != b.coversBackground()) {
+            return false;
+        }
+        try {
+            return Objects.equals(OVERRIDES_JSON.writeValueAsString(a.getOverrides()), OVERRIDES_JSON.writeValueAsString(b.getOverrides()));
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return false;
+        }
+    }
+
     /** Marks the strip (and presentation grid) slide that is on Program. */
     private void refreshLiveMarker() {
         int idx = -1;
@@ -3131,10 +3315,33 @@ public class MainFrame extends JFrame {
             return; // a PowerPoint scene: the strip shows the presentation's slides (now, or once it is opened)
         }
         showSceneCard(item, scene);
+        sceneCardItem = item;
+        sceneCardScene = scene;
         // pictures used by the scene (e.g. presentation slides) can still be loading: draw the card once more
         javax.swing.Timer again = new javax.swing.Timer(1500, e -> showSceneCard(item, scene));
         again.setRepeats(false);
         again.start();
+    }
+
+    /** The scene item whose card is in the strip: drawn again when a video's still picture is ready. */
+    private ServiceItem sceneCardItem;
+    private Scene sceneCardScene;
+    private javax.swing.Timer sceneCardRedraw;
+
+    /** A scene video's still (or YouTube picture) became ready: the scene card shows it instead of an empty box. */
+    private void redrawSceneCardSoon() {
+        if (sceneCardItem == null || stripSource != StripSource.ITEM || currentTextItem != sceneCardItem) {
+            return;
+        }
+        if (sceneCardRedraw == null) {
+            sceneCardRedraw = new javax.swing.Timer(400, e -> {
+                if (sceneCardItem != null) {
+                    showSceneCard(sceneCardItem, sceneCardScene);
+                }
+            });
+            sceneCardRedraw.setRepeats(false);
+        }
+        sceneCardRedraw.restart(); // several stills at once: one redraw
     }
 
     /**
@@ -3917,6 +4124,17 @@ public class MainFrame extends JFrame {
         }
 
         @Override
+        public boolean scenesListView() {
+            return context.config().getBoolean(KEY_SCENES_LIST_VIEW, false);
+        }
+
+        @Override
+        public void setScenesListView(boolean list) {
+            context.config().set(KEY_SCENES_LIST_VIEW, String.valueOf(list));
+            context.config().save();
+        }
+
+        @Override
         public void setSeparateLayouts(boolean separate) {
             context.config().set(KEY_SEPARATE_LAYOUTS, String.valueOf(separate));
             context.config().save();
@@ -4132,6 +4350,7 @@ public class MainFrame extends JFrame {
         program.setTransition(t, ms);
         previewState.setTransition(t, ms);
         liveDock.setTransition(t, ms);
+        liveDock.setShownTransitions(Transition.parseSet(cfg.get(KEY_SHOWN_TRANSITIONS, null))); // Settings ticks
         if (cfg.get(KEY_PREVIEW_FIRST, null) == null) {
             // Preview → TAKE → Program is the rule: Auto-take (which skips Preview) starts off once for everyone
             cfg.set(AppConfig.KEY_AUTO_TAKE, "false");
@@ -4286,7 +4505,12 @@ public class MainFrame extends JFrame {
         view.add(menuItem("Dark Theme", "moon", null, () -> changeTheme(AppConfig.THEME_DARK)));
         view.add(menuItem("Light Theme", "sun", null, () -> changeTheme(AppConfig.THEME_LIGHT)));
         view.addSeparator();
-        view.add(menuItem("Find Lyrics", "search", shortcuts.get(Shortcuts.Action.SEARCH), this::focusSongSearch));
+        // Ctrl+F: FIT TO CANVAS while the scene editor is open (its selected layer), else Find Lyrics
+        view.add(menuItem("Find Lyrics", "search", shortcuts.get(Shortcuts.Action.SEARCH), () -> {
+            if (!scenesPanel.fitSelectedToCanvas()) {
+                focusSongSearch();
+            }
+        }));
         view.addSeparator();
         view.add(menuItem("Projector Output On/Off", "monitor", null, () -> output.toggle(this)));
         view.add(menuItem("OBS Output Window On/Off", "monitor", null, obs::toggle));

@@ -29,6 +29,31 @@ public interface LiveFrames {
         return video(source.getConfig().path);
     }
 
+    /**
+     * A still picture of a scene's VIDEO source for thumbnails; never starts a player. Null while it is
+     * being made or when there is none.
+     */
+    default BufferedImage sceneVideoStill(com.jamc.worship.model.Source source) {
+        return null;
+    }
+
+    /** The scene editor's own (silent) player of a VIDEO source: paused until PLAY; never Preview's or Program's. */
+    default BufferedImage editorVideo(com.jamc.worship.model.Source source) {
+        return sceneVideoStill(source);
+    }
+
+    default boolean editorVideoPlaying(com.jamc.worship.model.Source source) {
+        return false;
+    }
+
+    /** PLAY / PAUSE of the scene editor's player of this source. */
+    default void setEditorVideoPlaying(com.jamc.worship.model.Source source, boolean play) {
+    }
+
+    /** The scene editor is no longer on screen: all of its videos pause. */
+    default void pauseEditorVideos() {
+    }
+
     /** Frame of the video currently taken live as Program content. */
     BufferedImage programVideo();
 
