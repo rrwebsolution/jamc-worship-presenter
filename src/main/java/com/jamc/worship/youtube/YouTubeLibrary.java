@@ -37,7 +37,17 @@ public final class YouTubeLibrary {
 
     private static volatile YouTubeClient client = new YouTubeClient(() -> null);
     private static volatile Path thumbDir;
-    private static final Map<String, BufferedImage> thumbs = new ConcurrentHashMap<>();
+    /** Most recently seen thumbnails only: every search adds ~20, so an unbounded map grew until the app froze. */
+    private static final int MAX_THUMBS = 300;
+    /** Thumbnails are shown as tiles and small previews; full-size ones (up to 1280 wide) only cost memory. */
+    private static final int THUMB_WIDTH = 480;
+    private static final Map<String, BufferedImage> thumbs = java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, BufferedImage> eldest) {
+                    return size() > MAX_THUMBS; // dropped ones load again from the disk copy when shown
+                }
+            });
     private static final Map<String, Long> retryAt = new ConcurrentHashMap<>();
     private static final Map<String, Boolean> checking = new ConcurrentHashMap<>();
     private static final List<Runnable> listeners = new CopyOnWriteArrayList<>();
@@ -83,7 +93,7 @@ public final class YouTubeLibrary {
             thumbs.put(videoId, NONE); // queued once
             retryAt.remove(videoId);
             worker.submit(() -> {
-                BufferedImage t = loadThumbnail(videoId, url == null ? YouTubeVideo.defaultThumbnail(videoId) : url);
+                BufferedImage t = shrink(loadThumbnail(videoId, url == null ? YouTubeVideo.defaultThumbnail(videoId) : url));
                 if (t != null) {
                     thumbs.put(videoId, t);
                     fire();
@@ -94,6 +104,22 @@ public final class YouTubeLibrary {
             return null;
         }
         return img == NONE ? null : img;
+    }
+
+    private static BufferedImage shrink(BufferedImage img) {
+        if (img == null || img.getWidth() <= THUMB_WIDTH) {
+            return img;
+        }
+        int h = Math.max(1, Math.round(img.getHeight() * (float) THUMB_WIDTH / img.getWidth()));
+        BufferedImage out = new BufferedImage(THUMB_WIDTH, h, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = out.createGraphics();
+        try {
+            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(img, 0, 0, THUMB_WIDTH, h, null);
+        } finally {
+            g.dispose();
+        }
+        return out;
     }
 
     private static BufferedImage loadThumbnail(String id, String url) {

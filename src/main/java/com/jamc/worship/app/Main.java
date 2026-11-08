@@ -67,6 +67,9 @@ public final class Main {
         log.info("Data directory: {}", paths.root());
 
         installCrashHandler(log);
+        HangWatchdog.start();
+        // a normal exit says so; a log that just stops means the process was killed or crashed natively (hs_err_pid*.log)
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> log.info("Process exiting"), "exit-log"));
 
         AppConfig config = new AppConfig(paths);
         config.load();

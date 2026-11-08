@@ -7,7 +7,6 @@ import java.awt.image.BufferedImage;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -20,7 +19,15 @@ final class VideoThumbnails {
 
     private static final int WIDTH = 256;
     private static final BufferedImage NONE = new BufferedImage(1, 1, BufferedImage.TYPE_INT_RGB);
-    private static final Map<Path, BufferedImage> cache = new ConcurrentHashMap<>();
+    /** Most recently shown thumbnails only, so a large library browsed for hours does not fill the memory. */
+    private static final int MAX_THUMBS = 500;
+    private static final Map<Path, BufferedImage> cache = java.util.Collections.synchronizedMap(
+            new java.util.LinkedHashMap<>(64, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<Path, BufferedImage> eldest) {
+                    return size() > MAX_THUMBS; // a dropped one is grabbed again when its tile shows
+                }
+            });
     private static final List<Runnable> listeners = new CopyOnWriteArrayList<>();
     private static final ExecutorService worker = Executors.newSingleThreadExecutor(r -> {
         Thread t = new Thread(r, "video-thumbnails");

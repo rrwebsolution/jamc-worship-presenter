@@ -86,6 +86,7 @@ jobs:
             --input staging --main-jar "jamc-worship-presenter-$v-all.jar" --main-class com.jamc.worship.app.Main `
             --runtime-image runtime --icon packaging/app.ico `
             --java-options "--enable-native-access=ALL-UNNAMED" --java-options "-Dfile.encoding=UTF-8" `
+            --java-options "-XX:MaxRAMPercentage=50" `
             --win-menu --win-menu-group "LiveCat" --win-shortcut --win-dir-chooser --win-per-user-install `
             --win-upgrade-uuid 2c7919e6-0df8-4da3-97ba-26bfd85c0057
           Get-ChildItem dist/*.exe | Rename-Item -NewName "LiveCat-Multimedia-$v.exe"
