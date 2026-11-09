@@ -545,16 +545,19 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
 
     // ------------------------------------------------------------------ internals
 
+    /**
+     * Background videos are decoded on the graphics card (VLC falls back to the processor by itself when it cannot).
+     * Measured with a Pixabay 2730x1440 60 fps background: about 16 frames a second on the processor, 35 with this.
+     */
+    static final String HW_DECODE = ":avcodec-hw=d3d11va";
+
     private Layer start(String mediaPath, boolean startMuted) {
         if (isSolid(mediaPath)) {
             return new ImageLayer(solidImage(mediaPath));
         }
         if (com.jamc.worship.media.OnlineMedia.isUrl(mediaPath)) {
             // an online (Pixabay) background video: streamed by VLC, nothing downloaded
-            VideoPlayer p = new VideoPlayer();
-            p.play(mediaPath, loop, startMuted, ":network-caching=3000");
-            p.setVolume(volume);
-            return new VideoLayer(p);
+            return new VideoLayer(mediaPath, loop, startMuted, volume, ":network-caching=3000", HW_DECODE);
         }
         Path file = resolver.apply(mediaPath);
         if (!Files.isRegularFile(file)) {
@@ -563,10 +566,7 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         if (isImage(mediaPath)) {
             return new ImageLayer(file, this::fire);
         }
-        VideoPlayer p = new VideoPlayer();
-        p.play(file.toString(), loop, startMuted);
-        p.setVolume(volume);
-        return new VideoLayer(p);
+        return new VideoLayer(file.toString(), loop, startMuted, volume, HW_DECODE);
     }
 
     /** True for a still-image background (JPG, PNG, WebP...); anything else is played as a video. */
@@ -637,12 +637,78 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         void release();
     }
 
-    private record VideoLayer(VideoPlayer p) implements Layer {
+    /** Repeats inside VLC's input: the end runs straight into the start (see {@link VideoLayer}). */
+    static final String SEAMLESS_LOOP = ":input-repeat=65535";
+
+    /** VLC options for a background video; a looping one repeats inside the input instead of being reopened. */
+    static String[] videoOptions(boolean loop, String... base) {
+        if (!loop) {
+            return base;
+        }
+        String[] out = java.util.Arrays.copyOf(base, base.length + 1);
+        out[base.length] = SEAMLESS_LOOP;
+        return out;
+    }
+
+    /**
+     * A background video. Looping uses VLC's input repeat, not its playlist repeat: the playlist repeat closes and reopens
+     * the file (or the Pixabay stream, buffering again) at every end, and the picture froze for 0.9 to 1.3 s before the
+     * start came back. Input repeat measured no freeze at all (the normal 33 ms between frames). The repeat is fixed when
+     * the video opens, so switching Loop reopens it at the same point (only when the operator changes Loop).
+     */
+    private static final class VideoLayer implements Layer {
+        private final VideoPlayer p = new VideoPlayer();
+        private final String mrl;
+        private final String[] baseOptions;
+        private boolean looping;
+        /** A Loop change made while paused, applied on the next resume. */
+        private Boolean pendingLoop;
+
+        VideoLayer(String mrl, boolean loop, boolean muted, int volume, String... baseOptions) {
+            this.mrl = mrl;
+            this.baseOptions = baseOptions;
+            this.looping = loop;
+            p.play(mrl, false, muted, videoOptions(loop, baseOptions));
+            p.setVolume(volume);
+        }
+
         public BufferedImage currentFrame() { return p.currentFrame(); }
-        public void playOrResume() { p.playOrResume(); }
+
+        public void playOrResume() {
+            if (pendingLoop != null) {
+                boolean v = pendingLoop;
+                pendingLoop = null;
+                reopen(v);
+                return;
+            }
+            p.playOrResume();
+        }
+
         public void pause() { p.pause(); }
         public void seek(float position) { p.seek(position); }
-        public void setLoop(boolean loop) { p.setLoop(loop); }
+
+        public void setLoop(boolean loop) {
+            if (loop == looping) {
+                pendingLoop = null;
+                return;
+            }
+            if (p.isPlaying()) {
+                reopen(loop);
+            } else {
+                pendingLoop = loop;
+            }
+        }
+
+        /** Opens the video again with the other repeat, from where it was. */
+        private void reopen(boolean loop) {
+            long at = p.time();
+            looping = loop;
+            String[] opts = videoOptions(loop, baseOptions);
+            String[] withStart = java.util.Arrays.copyOf(opts, opts.length + 1);
+            withStart[opts.length] = ":start-time=" + (at / 1000.0);
+            p.play(mrl, false, p.isMuted(), withStart);
+        }
+
         public void setMuted(boolean muted) { p.setMuted(muted); }
         public void setVolume(int volume) { p.setVolume(volume); }
         public long time() { return p.time(); }

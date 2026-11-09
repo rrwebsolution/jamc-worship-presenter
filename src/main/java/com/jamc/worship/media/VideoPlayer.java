@@ -50,6 +50,13 @@ public final class VideoPlayer implements VideoPlayback {
     private int bufferHeight;
     /** The real picture inside the buffer; null until VLC has told it. */
     private volatile Dimension visible;
+    /** The media {@link #visible} was measured for. */
+    private String visibleFor;
+    /** False (the default): pictures bigger than 1920x1080 are scaled down by VLC; true keeps the source size. */
+    private volatile boolean fullResolution;
+    /** Every output is laid out in a 1920x1080 frame; bigger pictures only cost copying and scaling time. */
+    static final int MAX_WIDTH = 1920;
+    static final int MAX_HEIGHT = 1080;
     private volatile String mrl;
     private volatile boolean loop;
     private volatile boolean released;
@@ -119,7 +126,8 @@ public final class VideoPlayer implements VideoPlayback {
         player.controls().setRepeat(loop);
         wantMute = muted;
         player.audio().setMute(muted);
-        if (!player.media().play(mrlOrPath, options)) {
+        // a saved Pixabay address may have a lighter version to open; mrl() stays the stored address
+        if (!player.media().play(OnlineMedia.playable(mrlOrPath), options)) {
             errored = true;
             log.warn("Could not open {}", mrlOrPath);
         }
@@ -134,7 +142,7 @@ public final class VideoPlayer implements VideoPlayback {
         this.mrl = path;
         this.loop = loop;
         player.controls().setRepeat(loop);
-        player.media().startPaused(path);
+        player.media().startPaused(OnlineMedia.playable(path));
         fireState();
     }
 
@@ -159,6 +167,28 @@ public final class VideoPlayer implements VideoPlayback {
         boolean padded = video.width <= bufferWidth && video.height <= bufferHeight
                 && video.width >= bufferWidth * 0.8 && video.height >= bufferHeight * 0.8;
         return padded ? new Dimension(video) : new Dimension(bufferWidth, bufferHeight);
+    }
+
+    /**
+     * The frame buffer VLC is asked for. A source bigger than 1920x1080 (a 2.7K or 4K file, e.g. a Pixabay "medium" of
+     * 2730x1440 at 60 fps) is scaled down by VLC, keeping its shape: copying and drawing such frames filled the Swing
+     * thread, and Program stuttered. With {@code full} (video checks that report the file's real size) nothing is scaled.
+     */
+    static Dimension bufferSize(int sourceWidth, int sourceHeight, boolean full) {
+        int w = Math.max(2, sourceWidth);
+        int h = Math.max(2, sourceHeight);
+        // a 1080p buffer is often a little bigger (1920x1088, 1920x1090): those padding rows are cut off, never scaled
+        if (!full && (w > MAX_WIDTH + 16 || h > MAX_HEIGHT + 16)) {
+            double s = Math.min(MAX_WIDTH / (double) w, MAX_HEIGHT / (double) h);
+            w = Math.max(2, (int) Math.round(w * s) & ~1);
+            h = Math.max(2, (int) Math.round(h * s) & ~1);
+        }
+        return new Dimension(w, h);
+    }
+
+    /** Keeps the source's own size (no scaling down), for checks that report a file's resolution. Call before play. */
+    public void keepFullResolution() {
+        fullResolution = true;
     }
 
     public boolean hasError() {
@@ -409,12 +439,19 @@ public final class VideoPlayer implements VideoPlayback {
     private final class Formats implements BufferFormatCallback {
         @Override
         public BufferFormat getBufferFormat(int sourceWidth, int sourceHeight) {
-            int w = Math.max(2, sourceWidth);
-            int h = Math.max(2, sourceHeight);
+            Dimension size = bufferSize(sourceWidth, sourceHeight, fullResolution);
+            int w = size.width;
+            int h = size.height;
             synchronized (VideoPlayer.this) {
+                // a looping video asks again for the same size at every restart: keep the known picture size, or the
+                // first frames after each loop show the padding rows and the picture jumps (seen as a blink)
+                boolean same = w == bufferWidth && h == bufferHeight && java.util.Objects.equals(mrl, visibleFor);
                 bufferWidth = w;
                 bufferHeight = h;
-                visible = null;
+                visibleFor = mrl;
+                if (!same) {
+                    visible = null;
+                }
                 spare = null;
                 back = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
                 backPixels = ((DataBufferInt) back.getRaster().getDataBuffer()).getData();

@@ -17,8 +17,17 @@ public record PixabayVideo(long id, String pageUrl, String tags, int durationSec
         }
     }
 
-    /** For Program and backgrounds: 1080p (medium) when there is one, else 720p, else the biggest available. */
+    /**
+     * For Program and backgrounds: the biggest size that is at most 1080 pixels high. For a 2.7K or 4K upload Pixabay's
+     * "medium" is 1440p (e.g. 2730x1440 at 60 fps), which streamed and played far too heavily: the background stuttered.
+     * Then the "small" one (about 1080p) is used. Without known sizes: medium, else 720p, else the biggest.
+     */
     public Rendition playback() {
+        for (Rendition r : new Rendition[]{large, medium, small, tiny}) {
+            if (r != null && r.usable() && r.height() > 0 && r.height() <= 1080) {
+                return r;
+            }
+        }
         return first(medium, small, large, tiny);
     }
 

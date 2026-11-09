@@ -153,6 +153,7 @@ public final class MediaProbe {
         VideoPlayer player = null;
         try {
             player = new VideoPlayer();
+            player.keepFullResolution(); // reports the file's real size
             player.play(file.toString(), false, true, ":no-audio");
             long deadline = System.currentTimeMillis() + TIMEOUT_MS;
             while (System.currentTimeMillis() < deadline) {

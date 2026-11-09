@@ -370,6 +370,7 @@ public class MainFrame extends JFrame {
         videoLibrary.setOpenBackground(openBackground);
         backgroundLibrary.setOpenBackground(openBackground);
         com.jamc.worship.pixabay.PixabayThumbnails.install(context.paths().dataDir().resolve("pixabay").resolve("posters"));
+        startPixabayLighterVersions();
         // the one MEDIA PREVIEW monitor for every media library; the background's controls sit under it
         mediaDetail = new MediaOutputPanel(context.mediaService(), hub, globalBackground, backgroundPanel, new MediaOutputPanel.Actions() {
             @Override
@@ -3644,6 +3645,37 @@ public class MainFrame extends JFrame {
             }
         }
         return out;
+    }
+
+    /**
+     * Saved Pixabay videos (library items, the background setting) play their ≤1080p version: the known pairs load now,
+     * and Pixabay is asked once in the background for any that are new (see PixabayLighterVersions).
+     */
+    private void startPixabayLighterVersions() {
+        java.nio.file.Path dir = context.paths().dataDir().resolve("pixabay");
+        com.jamc.worship.media.OnlineMedia.install(dir.resolve("playback.properties"));
+        Thread.ofVirtual().name("pixabay-lighter").start(() -> {
+            try {
+                Map<String, Long> saved = new java.util.LinkedHashMap<>();
+                for (MediaItem m : context.mediaService().find(List.of(), null, false)) {
+                    if (m.isPixabay()) {
+                        saved.put(m.getPath(), m.pixabayId());
+                    }
+                }
+                String bg = globalBackground.path();
+                if (com.jamc.worship.media.OnlineMedia.isUrl(bg)) {
+                    saved.putIfAbsent(bg, 0L);
+                }
+                if (saved.isEmpty()) {
+                    return;
+                }
+                var client = new com.jamc.worship.pixabay.PixabayClient(
+                        () -> context.config().get(com.jamc.worship.pixabay.PixabayClient.KEY_API_KEY, null), dir.resolve("cache"));
+                com.jamc.worship.pixabay.PixabayLighterVersions.update(client, saved);
+            } catch (RuntimeException e) {
+                log.warn("Could not check Pixabay versions", e);
+            }
+        });
     }
 
     private void previewMedia(MediaItem item) {
