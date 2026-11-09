@@ -37,6 +37,12 @@ public class SourceConfig {
     public TextPosition textPosition;
     /** LYRICS / BIBLE: text size relative to the theme (0.6 = smaller lyrics over a camera); null = 1. */
     public Double textScale;
+    /**
+     * LYRICS: how song lyrics are laid out in this scene (a {@link com.jamc.worship.config.ProgramLyricsStyle.Mode} name:
+     * OFF = normal full lyrics, LOWER_THIRD, CENTERED, FULL_SCREEN); null = the default of Settings → Lyrics Appearance.
+     * Preview and Program both follow it; the church projector always shows the full lyrics.
+     */
+    public String lyricsLayout;
     /** IMAGE / VIDEO picked from the media library: the library item's id ({@link #path} is its stored file). */
     public Long mediaId;
     /** PRESENTATION: the library presentation (FIXED mode, or the last one chosen in DYNAMIC mode). */
@@ -164,6 +170,7 @@ public class SourceConfig {
         c.opacity = opacity;
         c.textPosition = textPosition;
         c.textScale = textScale;
+        c.lyricsLayout = lyricsLayout;
         c.mediaId = mediaId;
         c.presentationId = presentationId;
         c.slideIndex = slideIndex;

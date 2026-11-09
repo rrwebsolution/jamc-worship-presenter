@@ -316,6 +316,11 @@ public class SlideThumbnailStrip extends JPanel {
     }
 
     /** Turns on deck editing. Pass null to return to read-only mode. */
+    /** The add / duplicate / delete / move handler of an editable strip (a custom slide deck), or null. */
+    public EditHandler editHandler() {
+        return editHandler;
+    }
+
     public void setEditHandler(EditHandler handler) {
         this.editHandler = handler;
         this.editable = handler != null;

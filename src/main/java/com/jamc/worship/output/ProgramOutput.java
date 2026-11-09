@@ -1,5 +1,6 @@
 package com.jamc.worship.output;
 
+import com.jamc.worship.config.LyricsTransitionSettings;
 import com.jamc.worship.model.LowerThird;
 import com.jamc.worship.model.Scene;
 
@@ -51,6 +52,10 @@ public final class ProgramOutput {
     private Transition activeTransition = Transition.CUT;
     private int activeDurationMs;
     private long startNanos;
+    /** Easing of a running lyrics transition (Settings → Lyrics Transition), or null for the linear Program transition. */
+    private LyricsTransitionSettings.Easing activeEasing;
+    /** Where the Spotify-style lyrics were on screen when this transition cut a running one short, else null. */
+    private LyricsReel.Pose reelStart;
 
     private LowerThird lowerThird;
     private boolean lowerThirdOn;
@@ -213,13 +218,26 @@ public final class ProgramOutput {
 
     public Transition activeTransition() { return activeTransition; }
 
-    /** Transition progress 0..1; 1 when idle. */
+    /** Transition progress 0..1 (eased for lyrics transitions); 1 when idle. */
     public float progress() {
         if (previous == null || activeDurationMs <= 0) {
             return 1f;
         }
-        float p = (System.nanoTime() - startNanos) / 1_000_000f / activeDurationMs;
-        return Math.clamp(p, 0f, 1f);
+        float p = Math.clamp((System.nanoTime() - startNanos) / 1_000_000f / activeDurationMs, 0f, 1f);
+        return activeEasing == null ? p : activeEasing.apply(p);
+    }
+
+    /** Duration of the running transition in ms (0 when idle or a cut). */
+    public int activeDurationMs() {
+        return previous == null ? 0 : activeDurationMs;
+    }
+
+    /**
+     * Spotify-style lyrics: where the cards were when a NEXT / PREVIOUS cut the previous scroll short, so the new
+     * scroll starts from there instead of jumping; null when the scroll starts from rest.
+     */
+    public LyricsReel.Pose reelStart() {
+        return previous == null ? null : reelStart;
     }
 
     public LowerThird lowerThird() {
@@ -268,23 +286,90 @@ public final class ProgramOutput {
             fire();
             return;
         }
-        Transition kind = cameraSwitch ? (cameraFadeMs > 0 ? Transition.CROSSFADE : Transition.CUT) : transition;
-        int ms = cameraSwitch ? cameraFadeMs : durationMs;
+        // lyrics to lyrics in the same scene: the lyrics transition chosen in Settings (Smooth Fade / Spotify-style)
+        LyricsTransitionSettings lyricsFx = cameraSwitch ? null : lyricsTransition(shown, next);
+        Transition kind = cameraSwitch ? (cameraFadeMs > 0 ? Transition.CROSSFADE : Transition.CUT)
+                : lyricsFx != null ? Transition.CROSSFADE : transition;
+        int ms = cameraSwitch ? cameraFadeMs : lyricsFx != null ? lyricsFx.durationMs() : durationMs;
         boolean animate = allowAnimation && kind != Transition.CUT && ms > 0;
+        // NEXT pressed while the lyrics are still scrolling: continue from where the cards are now, no jump
+        LyricsReel.Pose carry = null;
+        if (animate && previous != null && progress() < 1f && LyricsReel.scrolls(shown.content(), next.content())
+                && LyricsReel.scrolls(previous.content(), shown.content())) {
+            carry = LyricsReel.pose(previous.content(), shown.content(), reelStart, progress());
+        }
+        // the Program lyrics style (lower third on the stream) fades the words on its own clock, even under a CUT
+        boolean overlay = allowAnimation && !cameraSwitch && overlayMs > 0 && overlayLyricsChange(shown, next);
+        boolean hold = animate || overlay;
         // A new change during a running transition starts from the frame being transitioned to.
-        previous = animate ? shown : null;
+        previous = hold ? shown : null;
         shown = next;
         activeTransition = animate ? kind : Transition.CUT;
         activeDurationMs = animate ? ms : 0;
+        activeEasing = animate && lyricsFx != null ? lyricsFx.easing() : null;
+        overlayChange = overlay;
+        reelStart = carry;
         startNanos = System.nanoTime();
-        if (animate) {
+        if (hold) {
             timer.start();
         }
         fire();
     }
 
+    /** Fade length of the Program lyrics style (lower third), 0 = cut / style off. */
+    private int overlayMs;
+    /** The running change also fades the Program-style lyrics (on {@link #overlayProgress()}). */
+    private boolean overlayChange;
+
+    /** Sets how long Program-style lyrics (the stream's lower third) take to change; 0 = at once. */
+    public void setLyricsOverlayFade(int ms) {
+        overlayMs = Math.clamp(ms, 0, 2000);
+    }
+
+    /**
+     * Progress 0..1 of the Program-style lyrics (lower third) in the running change, on their own fade length; 1 when
+     * the change is not one of theirs or is over. The projector keeps using {@link #progress()}.
+     */
+    public float overlayProgress() {
+        if (previous == null || !overlayChange || overlayMs <= 0) {
+            return 1f;
+        }
+        return Math.clamp((System.nanoTime() - startNanos) / 1_000_000f / overlayMs, 0f, 1f);
+    }
+
+    /** Song lyrics appear, change or disappear in the same scene (what the Program lyrics style draws). */
+    static boolean overlayLyricsChange(FrameSpec from, FrameSpec to) {
+        if (!Compositor.contentChangeOnly(from, to)) {
+            return false;
+        }
+        LiveContent a = from.content();
+        LiveContent b = to.content();
+        return (isSongLyrics(a) || isSongLyrics(b)) && (a != b || from.text() != to.text());
+    }
+
+    /** A song's lyrics card (not a Bible verse, announcement, picture or video). */
+    public static boolean isSongLyrics(LiveContent c) {
+        return c != null && !c.isVideo() && c.slide() != null && c.slide().getSongId() != null;
+    }
+
+    /**
+     * The lyrics transition for a change from {@code from} to {@code to}, or null for Program's own transition:
+     * only between two lyrics cards sent with a lyrics transition (not NONE), in the same scene, with the words
+     * showing on both sides (Blank, Lyrics off and black keep the Program transition).
+     */
+    static LyricsTransitionSettings lyricsTransition(FrameSpec from, FrameSpec to) {
+        LiveContent a = from.content();
+        LiveContent b = to.content();
+        if (a == null || b == null || a == b || a.lyrics() == null || b.lyrics() == null || a.isVideo() || b.isVideo()
+                || !from.text() || !to.text() || from.background() != to.background()
+                || !Compositor.contentChangeOnly(from, to)) {
+            return null;
+        }
+        return b.lyrics().settings().mode() == LyricsTransitionSettings.Mode.NONE ? null : b.lyrics().settings();
+    }
+
     private void tick() {
-        boolean transitionDone = progress() >= 1f;
+        boolean transitionDone = progress() >= 1f && overlayProgress() >= 1f;
         if (transitionDone) {
             previous = null;
         }

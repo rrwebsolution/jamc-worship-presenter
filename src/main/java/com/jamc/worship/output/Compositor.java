@@ -51,12 +51,12 @@ public final class Compositor {
     private static final Scene DEFAULT_SCENE = defaultScene();
 
     private record LayerKey(LiveContent content, int w, int h, boolean text, com.jamc.worship.model.TextPosition position,
-                            Double scale, Rectangle box) {
+                            Double scale, Rectangle box, Object style) {
         @Override
         public boolean equals(Object o) {
             return o instanceof LayerKey k && k.content == content && k.w == w && k.h == h && k.text == text
                     && k.position == position && java.util.Objects.equals(k.scale, scale)
-                    && java.util.Objects.equals(k.box, box);
+                    && java.util.Objects.equals(k.box, box) && k.style == style;
         }
 
         @Override
@@ -89,9 +89,80 @@ public final class Compositor {
         this.preview = preview;
     }
 
+    /** Spotify-style lyrics pictures for this surface (each surface has its own pixel size). */
+    private final LyricsReel reel = new LyricsReel();
+
+    /** This surface goes out as the live Program picture (stream, recording, OBS, Program monitor), not the projector. */
+    private boolean programLyrics;
+    /** Progress of the Program-style lyrics in a running change (their own fade), 1 when none. */
+    private float overlayProgress = 1f;
+
+    /** Draw song lyrics with the Program lyrics style ({@link com.jamc.worship.config.ProgramLyricsStyle}). */
+    public void setProgramLyrics(boolean on) {
+        programLyrics = on;
+    }
+
+    public void setOverlayProgress(float p) {
+        overlayProgress = Math.clamp(p, 0f, 1f);
+    }
+
+    /**
+     * The bar style for this content in this Lyrics layer on this surface, or null for the normal lyrics look. The
+     * scene's Lyrics layer chooses the layout (Edit Scene → Lyrics layout); none chosen = full lyrics. The look of the bars always comes from Settings.
+     */
+    com.jamc.worship.config.ProgramLyricsStyle programStyle(Source lyrics, LiveContent c) {
+        if (!programLyrics || lyrics == null || !(ProgramOutput.isSongLyrics(c) || sampleLyrics(c))) {
+            return null;
+        }
+        var s = com.jamc.worship.config.ProgramLyricsStyle.applied();
+        // a Lyrics layer shows FULL lyrics unless its scene chose bars (Edit Scene → Lyrics layout)
+        var mode = layoutOf(lyrics, com.jamc.worship.config.ProgramLyricsStyle.Mode.OFF);
+        if (mode == com.jamc.worship.config.ProgramLyricsStyle.Mode.OFF) {
+            return null;
+        }
+        return mode == s.mode() ? s : s.withMode(mode);
+    }
+
+    /** The layout a Lyrics layer asks for, or {@code fallback} (Settings) when it says Default. */
+    static com.jamc.worship.config.ProgramLyricsStyle.Mode layoutOf(Source lyrics, com.jamc.worship.config.ProgramLyricsStyle.Mode fallback) {
+        String v = lyrics.getConfig().lyricsLayout;
+        if (v == null) {
+            return fallback;
+        }
+        try {
+            return com.jamc.worship.config.ProgramLyricsStyle.Mode.valueOf(v);
+        } catch (IllegalArgumentException e) {
+            return fallback;
+        }
+    }
+
+    /** Scene editor and scene pictures: their sample words show the scene's lyrics layout too. */
+    private boolean sampleLyrics(LiveContent c) {
+        return (editorMode || stillVideos) && c != null && !c.isVideo() && c.slide() != null
+                && c.slide().getPresentationId() == null && !c.slide().coversBackground();
+    }
+
+    /** The scene's (first visible) Lyrics layer, which decides the lyrics layout. */
+    private static Source lyricsSource(FrameSpec spec) {
+        Scene scene = spec.scene() == null ? DEFAULT_SCENE : spec.scene();
+        for (Source s : scene.getSources()) {
+            if (s.isVisible() && s.getType() == SourceType.LYRICS) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    /** Lyrics as a transparent overlay in this scene: the song's own theme background is not drawn on this surface. */
+    private boolean transparentLyrics(FrameSpec spec) {
+        var s = programStyle(lyricsSource(spec), spec.content());
+        return s != null && s.transparentOverlay();
+    }
+
     /** Drops cached layers (e.g. after a background image finished loading). */
     public void invalidate() {
         layers.clear();
+        reel.clear();
     }
 
     /**
@@ -235,11 +306,15 @@ public final class Compositor {
         switch (s.getType()) {
             case BACKGROUND -> {
                 LiveContent content = spec.content();
-                if (keyMode || (s == THEME_BACKGROUND && !themeBackgroundApplies(content))) {
+                // the automatic background under a scene's words: also before any words were sent, so TAKE AS
+                // BACKGROUND shows on Preview and Program at once (not only after a lyrics card was clicked)
+                if (keyMode || (s == THEME_BACKGROUND && content != null && !themeBackgroundApplies(content))) {
                     return;
                 }
                 GlobalBackgroundView global = Rendering.globalBackground();
-                if (content == null || hidesPresentation(spec, slot)) {
+                // Program lyrics as a transparent overlay: the song's theme picture never covers the camera / scene;
+                // only the operator's own live background (TAKE AS BACKGROUND) may sit under them, as with nothing sent
+                if (content == null || hidesPresentation(spec, slot) || transparentLyrics(spec)) {
                     // nothing taken yet (or cleared), or a presentation page in a scene without a
                     // Presentation source: the global background alone
                     if (spec.background() && !contentOnly) {
@@ -300,7 +375,8 @@ public final class Compositor {
                     // edges) is a box too, so the words grow with it like any other layer
                     boolean fullFrame = Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001
                             && Math.abs(c.w - 1) < 0.001 && Math.abs(c.h - 1) < 0.001;
-                    g.drawImage(layer(content, pw, ph, true, c.textPosition, c.textScale, fullFrame ? null : rect), 0, 0, null);
+                    g.drawImage(layer(content, pw, ph, true, c.textPosition, c.textScale, fullFrame ? null : rect,
+                            s.getType() == SourceType.LYRICS ? programStyle(s, content) : null), 0, 0, null);
                 }
             }
             case OVERLAY -> {
@@ -542,12 +618,12 @@ public final class Compositor {
 
     /** Slide background or slide text rendered once per content and size. */
     private BufferedImage layer(LiveContent content, int pw, int ph, boolean text) {
-        return layer(content, pw, ph, text, null, null, null);
+        return layer(content, pw, ph, text, null, null, null, null);
     }
 
     private BufferedImage layer(LiveContent content, int pw, int ph, boolean text, com.jamc.worship.model.TextPosition position,
-                                Double scale, Rectangle box) {
-        LayerKey key = new LayerKey(content, pw, ph, text, position, scale, box);
+                                Double scale, Rectangle box, com.jamc.worship.config.ProgramLyricsStyle programStyle) {
+        LayerKey key = new LayerKey(content, pw, ph, text, position, scale, box, programStyle);
         BufferedImage img = layers.get(key);
         if (img == null) {
             img = new BufferedImage(pw, ph, text ? BufferedImage.TYPE_INT_ARGB : BufferedImage.TYPE_INT_RGB);
@@ -562,7 +638,17 @@ public final class Compositor {
                 style = o.applyTo(style);
             }
             Rectangle r = box != null ? box : new Rectangle(0, 0, pw, ph);
-            if (text) {
+            if (programStyle != null) {
+                // Program lyrics style (stream / recording / OBS): a lower third over the picture, placed on the
+                // whole output (not the scene's lyrics box), with its own font, capitals and bars
+                LowerThirdLyrics.paint(g, pw, ph, slide.getText(), programStyle);
+            } else if (text && content.spotifyLyrics()) {
+                // Spotify-style: previous card dimmed above, current in the middle, next dimmed below (inside the screen)
+                Graphics2D clip = (Graphics2D) g.create();
+                clip.clipRect(0, 0, pw, ph);
+                reel.paintRest(clip, r, content, scale == null ? 1 : scale);
+                clip.dispose();
+            } else if (text) {
                 // a box bigger than the screen: big words, but wrapped inside the screen (never cut off at its edge)
                 renderer.paintTextLayer(g, r, slide.getHeading(), slide.getText(), slide.getCaption(), style,
                         new Rectangle(0, 0, pw, ph));
@@ -800,7 +886,10 @@ public final class Compositor {
     }
 
     private void paintGlobal(GlobalBackgroundView global, Graphics2D g, Rectangle rect) {
-        if (preview) {
+        if (stillVideos) {
+            // scene thumbnails (Control page): one frozen picture of the background video, never a playing one
+            global.paintStill(g, rect, preview);
+        } else if (preview) {
             global.paintPreview(g, rect);
         } else {
             global.paint(g, rect);
@@ -876,9 +965,36 @@ public final class Compositor {
                 paintSource(g, pw, ph, s, to, lowerThirdSource, keyMode, false, toSlot);
                 continue;
             }
+            if (s.getType() == SourceType.LYRICS && (programStyle(s, from.content()) != null || programStyle(s, to.content()) != null)) {
+                // Program lyrics style: the bars fade on their own clock (or cut); the camera / scene underneath is untouched
+                float q = overlayProgress;
+                fadeSource(g, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, 1f - q);
+                fadeSource(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, q);
+                continue;
+            }
+            if (s.getType() == SourceType.LYRICS && fxTransition != null && reelScrolls(s, from, to, fromSlot, toSlot)) {
+                // Spotify-style NEXT / PREVIOUS: the cards scroll (one moving stack, nothing fades out and back in)
+                SourceConfig c = s.getConfig();
+                boolean fullFrame = Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001
+                        && Math.abs(c.w - 1) < 0.001 && Math.abs(c.h - 1) < 0.001;
+                LyricsReel.Pose pose = LyricsReel.pose(from.content(), to.content(),
+                        lowerThirdSource == null ? null : lowerThirdSource.reelStart(), fxProgress);
+                Graphics2D clip = (Graphics2D) g.create();
+                clip.clipRect(0, 0, pw, ph);
+                reel.paint(clip, fullFrame ? new Rectangle(0, 0, pw, ph) : rect(c, pw, ph), to.content(), pose,
+                        c.textScale == null ? 1 : c.textScale);
+                clip.dispose();
+                continue;
+            }
             fadeSide(g, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, fromAlpha, false);
             fadeSide(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, toAlpha, true);
         }
+    }
+
+    /** True when this Lyrics layer shows both sides as Spotify-style cards of one song, so it scrolls between them. */
+    private static boolean reelScrolls(Source s, FrameSpec from, FrameSpec to, Source fromSlot, Source toSlot) {
+        return !s.getConfig().isFixedSong() && from.text() && to.text() && !hidesPresentation(from, fromSlot)
+                && !hidesPresentation(to, toSlot) && LyricsReel.scrolls(from.content(), to.content());
     }
 
     /**

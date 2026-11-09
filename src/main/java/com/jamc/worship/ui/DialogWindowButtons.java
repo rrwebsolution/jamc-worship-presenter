@@ -24,9 +24,9 @@ import java.awt.event.WindowEvent;
  * Minimize and Maximize buttons on every dialog's title bar, next to Close (FlatLaf gives dialogs only Close).
  *
  * <p>MAXIMIZE fills the screen the dialog is on (above the taskbar); RESTORE puts it back. MINIMIZE shrinks the
- * dialog to its title bar at the bottom-left of the screen, so Preview and Program can be seen behind it; the
- * same button restores it. (A Java dialog cannot go to the taskbar by itself: Windows would minimize the whole
- * app with it, projector included.) Small message boxes (OK / Cancel questions) are left as they are.
+ * dialog to the Windows taskbar with its own button (see {@link TaskbarMinimize}); LiveCat and the projector keep
+ * running and can be used, and a click on that button brings the dialog back. Where that is not possible it shrinks
+ * to its title bar at the bottom-left of the screen instead, and the same button restores it. Small message boxes (OK / Cancel questions) are left as they are.
  */
 public final class DialogWindowButtons {
 
@@ -143,9 +143,20 @@ public final class DialogWindowButtons {
             apply(workArea(dialog));
         }
 
+        /** Minimized to the Windows taskbar (its own button there); watched until the operator brings it back. */
+        boolean onTaskbar;
+        private final javax.swing.Timer taskbarWatch = new javax.swing.Timer(250, e -> watchTaskbar());
+
         void toggleMinimized() {
             if (minimized) {
                 restore();
+                return;
+            }
+            // Windows: to the taskbar with its own button; LiveCat and the projector keep running
+            if (!onTaskbar && TaskbarMinimize.supported() && TaskbarMinimize.minimize(dialog)) {
+                onTaskbar = true;
+                SoftModal.setBlocking(dialog, false); // minimized: the rest of the app can be used meanwhile
+                taskbarWatch.start();
                 return;
             }
             remember();
@@ -157,6 +168,23 @@ public final class DialogWindowButtons {
             dialog.setMinimumSize(new Dimension(1, 1)); // a dialog's minimum size would stop it shrinking
             apply(new Rectangle(area.x + 8, area.y + area.height - h - 8, Math.min(STRIP_W, area.width - 16), h));
             SoftModal.setBlocking(dialog, false); // minimized: the rest of the app can be used meanwhile
+        }
+
+        /** The operator clicked the dialog's taskbar button (Windows restored it): attach it to LiveCat and block again. */
+        private void watchTaskbar() {
+            if (!dialog.isDisplayable()) {
+                taskbarWatch.stop(); // closed while minimized (e.g. Close on its taskbar button)
+                onTaskbar = false;
+                return;
+            }
+            if (onTaskbar && !TaskbarMinimize.isMinimized(dialog)) {
+                taskbarWatch.stop();
+                onTaskbar = false;
+                TaskbarMinimize.reattach(dialog, true);
+                SoftModal.setBlocking(dialog, true); // full size again: it has the operator's attention
+                dialog.toFront();
+                dialog.requestFocus();
+            }
         }
 
         private void remember() {

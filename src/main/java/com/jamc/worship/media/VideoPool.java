@@ -54,6 +54,8 @@ public final class VideoPool {
             String mrl;
             if (YouTubeRef.is(path)) {
                 mrl = path; // played by the embedded YouTube player, never by VLC
+            } else if (OnlineMedia.isUrl(path)) {
+                mrl = path; // an online (Pixabay) video, streamed by VLC
             } else {
                 Path file = resolver.apply(path);
                 if (!Files.isRegularFile(file)) {

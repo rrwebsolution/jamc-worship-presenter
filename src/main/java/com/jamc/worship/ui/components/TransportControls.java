@@ -37,6 +37,12 @@ public class TransportControls extends JPanel {
     private final Timer poll = new Timer(250, e -> refresh());
     private boolean dragging;
     private boolean syncing;
+    /** The bound video's length as last known: VLC reports 0 once a video has ended. */
+    private long knownLength;
+    /** The bound video played to its end (not looping): the bar sits at the end until it plays again. */
+    private boolean ended;
+    /** Players already telling us when they finish (each is told once). */
+    private final java.util.Set<Object> finishWatched = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
     public TransportControls(boolean compact) {
         super(new BorderLayout(6, 2));
@@ -57,6 +63,8 @@ public class TransportControls extends JPanel {
         stopButton.addActionListener(e -> {
             if (transport != null) {
                 transport.stop();
+                ended = false; // stopped: back at the start, not at the end
+                refresh();
             }
         });
         back10.setToolTipText("Back 10 seconds");
@@ -141,7 +149,19 @@ public class TransportControls extends JPanel {
 
     /** Connects the controls to a player (or disconnects with null). */
     public void bind(Transport t) {
+        if (t != transport) {
+            knownLength = 0;
+            ended = false;
+        }
         this.transport = t;
+        if (unwrap(t) instanceof com.jamc.worship.media.VideoPlayback v && finishWatched.add(v)) {
+            v.addFinishedListener(() -> {
+                if (unwrap(transport) == v) {
+                    ended = true; // played to its end: the bar goes to the end
+                    refresh();
+                }
+            });
+        }
         boolean has = t != null;
         for (var c : new javax.swing.JComponent[]{playButton, stopButton, back10, forward10, seek, volume, mute, loop, fadeIn, fadeOut}) {
             c.setEnabled(has);
@@ -170,12 +190,29 @@ public class TransportControls extends JPanel {
         }
         long len = t.length();
         long pos = t.time();
-        time.setText(format(pos) + " / " + format(len));
-        playButton.setText(t.isPlaying() ? "❚❚" : "▶");
-        if (!dragging && len > 0) {
+        boolean playing = t.isPlaying();
+        if (len > 0) {
+            knownLength = len;
+        }
+        if (playing) {
+            ended = false; // playing again (PLAY after the end, or a loop came round)
+        }
+        playButton.setText(playing ? "❚❚" : "▶");
+        if (ended && !dragging) {
+            // the end: the full length on both sides and the bar at the end (VLC reports 0:00 / 0:00 by now)
+            long full = knownLength > 0 ? knownLength : Math.max(len, pos);
+            time.setText(format(full) + " / " + format(full));
             syncing = true;
-            seek.setValue((int) Math.min(1000, pos * 1000 / len));
+            seek.setValue(1000);
             syncing = false;
+        } else {
+            long shownLen = len > 0 ? len : knownLength;
+            time.setText(format(Math.max(0, pos)) + " / " + format(shownLen));
+            if (!dragging) {
+                syncing = true;
+                seek.setValue(shownLen > 0 ? (int) Math.clamp(Math.max(0, pos) * 1000 / shownLen, 0, 1000) : 0);
+                syncing = false;
+            }
         }
         mute.setSelected(t.isMuted());
         loop.setSelected(t.isLoop());

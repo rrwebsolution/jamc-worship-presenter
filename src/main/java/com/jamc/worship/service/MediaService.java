@@ -118,6 +118,60 @@ public class MediaService {
         return saved;
     }
 
+    /**
+     * Adds a Pixabay video to the library as a reference (nothing is downloaded): the path is its 1080p (or best)
+     * Pixabay address, streamed by VLC. {@code background} files it under Backgrounds, else under Videos. Adding the
+     * same video again returns the item already there (moved to Backgrounds when asked).
+     */
+    public MediaItem addPixabay(com.jamc.worship.pixabay.PixabayVideo video, boolean background) {
+        if (video == null || video.playback() == null) {
+            throw new ValidationException("That Pixabay video has no playable version.");
+        }
+        String id = String.valueOf(video.id());
+        Optional<MediaItem> existing = repository.findBySource(MediaSourceType.PIXABAY, id);
+        if (existing.isPresent()) {
+            MediaItem m = existing.get();
+            if (background && m.getCategory() != MediaCategory.BACKGROUND) {
+                repository.setCategory(m.getId(), MediaCategory.BACKGROUND);
+                m.setCategory(MediaCategory.BACKGROUND);
+            }
+            return m;
+        }
+        var r = video.playback();
+        MediaItem m = new MediaItem();
+        m.setName(video.title());
+        m.setKind(MediaKind.VIDEO);
+        m.setCategory(background ? MediaCategory.BACKGROUND : MediaCategory.VIDEO);
+        m.setPath(r.url());
+        m.setCopied(false);
+        m.setFileSize(r.size() > 0 ? r.size() : null);
+        m.setDurationMs(video.durationSec() > 0 ? video.durationSec() * 1000L : null);
+        m.setWidth(r.width() > 0 ? r.width() : null);
+        m.setHeight(r.height() > 0 ? r.height() : null);
+        m.setSourceType(MediaSourceType.PIXABAY);
+        m.setYoutubeVideoId(id);
+        m.setChannelName(video.user());
+        m.setThumbnailUrl(r.thumbnail() != null ? r.thumbnail() : video.poster());
+        MediaItem saved = repository.insert(m);
+        com.jamc.worship.pixabay.PixabayThumbnails.remember(saved.getPath(), saved.getThumbnailUrl());
+        log.info("Added Pixabay video {} '{}' to the library ({})", id, saved.getName(), saved.getCategory());
+        return saved;
+    }
+
+    /** Points a Pixabay item at the address Pixabay gives now (an old address stopped playing). */
+    public void updatePixabayAddress(MediaItem item, com.jamc.worship.pixabay.PixabayVideo fresh) {
+        if (item == null || !item.isPixabay() || fresh == null || fresh.playback() == null) {
+            return;
+        }
+        String url = fresh.playback().url();
+        if (!url.equals(item.getPath())) {
+            repository.setPath(item.getId(), url);
+            item.setPath(url);
+            com.jamc.worship.pixabay.PixabayThumbnails.remember(url, item.getThumbnailUrl());
+            log.info("Pixabay video {} has a new address", item.getYoutubeVideoId());
+        }
+    }
+
     /** The library item for this YouTube video, if it was added. */
     public Optional<MediaItem> findYouTube(String videoId) {
         return repository.findByYouTubeId(videoId);
@@ -170,11 +224,19 @@ public class MediaService {
         if (YouTubeRef.is(storedPath)) {
             return paths.dataDir().resolve("youtube").resolve("not-a-file").resolve(YouTubeRef.id(storedPath));
         }
+        if (com.jamc.worship.media.OnlineMedia.isUrl(storedPath)) {
+            // an online video (Pixabay) is streamed, never a file: a path that never exists, like YouTube's
+            return paths.dataDir().resolve("online").resolve("not-a-file").resolve(Integer.toHexString(storedPath.hashCode()));
+        }
         Path p = Path.of(storedPath);
         return p.isAbsolute() ? p : paths.root().resolve(p);
     }
 
+    /** The file is on this computer; an online (Pixabay) video always counts as there (its player reports failures). */
     public boolean exists(MediaItem item) {
+        if (com.jamc.worship.media.OnlineMedia.isUrl(item.getPath())) {
+            return true;
+        }
         return Files.isRegularFile(resolve(item));
     }
 

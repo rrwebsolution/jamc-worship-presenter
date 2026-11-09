@@ -197,7 +197,9 @@ public final class SceneVideos {
         }
         v.lastUsed = System.currentTimeMillis();
         BufferedImage f = v.player.currentFrame();
-        if (f == null && !YouTubeRef.is(s.getConfig().path)) {
+        if (f == null && OnlineMedia.isUrl(s.getConfig().path)) {
+            f = com.jamc.worship.pixabay.PixabayThumbnails.forVideo(s.getConfig().path);
+        } else if (f == null && !YouTubeRef.is(s.getConfig().path)) {
             Path file = resolver.apply(s.getConfig().path);
             f = file == null ? null : VideoStills.get(file); // paused before VLC drew a picture: the still
         }
@@ -274,6 +276,11 @@ public final class SceneVideos {
         if (YouTubeRef.is(c.path)) {
             // YouTube's own picture of the video (kept on disk once seen)
             BufferedImage t = com.jamc.worship.youtube.YouTubeLibrary.thumbnail(YouTubeRef.id(c.path), null);
+            return t != null ? t : frozen.computeIfAbsent(k, x -> runningFrame(k));
+        }
+        if (OnlineMedia.isUrl(c.path)) {
+            // a Pixabay video: its poster picture (kept on disk once seen), never a decoder for a thumbnail
+            BufferedImage t = com.jamc.worship.pixabay.PixabayThumbnails.forVideo(c.path);
             return t != null ? t : frozen.computeIfAbsent(k, x -> runningFrame(k));
         }
         Path file = resolver.apply(c.path);
@@ -493,8 +500,8 @@ public final class SceneVideos {
 
     /** What to hand the player: a YouTube reference as is, a file as its full path; null if the file is missing. */
     private String mrl(String path) {
-        if (YouTubeRef.is(path)) {
-            return path;
+        if (YouTubeRef.is(path) || OnlineMedia.isUrl(path)) {
+            return path; // YouTube: its own player; an online (Pixabay) video: streamed by VLC
         }
         Path file = resolver.apply(path);
         return Files.isRegularFile(file) ? file.toString() : null;

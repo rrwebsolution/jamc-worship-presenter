@@ -326,6 +326,13 @@ public final class CameraManager {
         return cameras;
     }
 
+    /** Detected cameras plus the ones in use that went missing (they show DISCONNECTED): for the health monitor. */
+    public List<String> knownCameras() {
+        java.util.LinkedHashSet<String> all = new java.util.LinkedHashSet<>(cameras);
+        all.addAll(List.copyOf(missing));
+        return List.copyOf(all);
+    }
+
     /** Last detected audio capture inputs (microphones, capture-card HDMI audio). */
     public List<String> audioInputs() {
         return audioInputs;

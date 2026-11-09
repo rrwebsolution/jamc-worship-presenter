@@ -46,6 +46,8 @@ public class VideoLibraryPanel extends JPanel {
         allTab.setSelected(true);
         tab("Local", "Video files on this computer", () -> showVideos(MediaLibraryPanel.VIDEOS_LOCAL));
         tab("YouTube", "Videos that play from YouTube", () -> showVideos(MediaLibraryPanel.VIDEOS_YOUTUBE));
+        tab("Pixabay", "Pixabay videos (they stream from Pixabay; + → Pixabay Worship Backgrounds… to find more)",
+                () -> showVideos(MediaLibraryPanel.VIDEOS_PIXABAY));
         backgroundsTab = tab("Backgrounds", "Images, videos, colors and gradients for the background", this::showBackgroundsCard);
         strip.setBorder(BorderFactory.createEmptyBorder(6, 6, 0, 6));
 

@@ -37,6 +37,7 @@ public class SceneWorkspacePanel extends JPanel {
 
     {
         compositor.setStillVideos(true); // the scene's videos show a still picture here, never a playing one
+        compositor.setProgramLyrics(true); // the scene's lyrics layout (lower third or full) shows in its picture
         com.jamc.worship.media.VideoStills.addListener(this::repaint);
         com.jamc.worship.youtube.YouTubeLibrary.addListener(() -> javax.swing.SwingUtilities.invokeLater(this::repaint));
     }

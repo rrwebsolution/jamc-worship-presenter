@@ -253,7 +253,8 @@ public final class SlideRenderer {
         }
     }
 
-    private static void paintText(Graphics2D g, TextRenderer.TextBlock block, SlideStyle style) {
+    /** Paints laid-out text (shadow, outline, fill) exactly as slides do; used by the Spotify-style lyrics reel too. */
+    public static void paintText(Graphics2D g, TextRenderer.TextBlock block, SlideStyle style) {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
         Color fill = Colors.parse(style.fontColor(), Color.WHITE);

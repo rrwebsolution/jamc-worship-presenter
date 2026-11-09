@@ -683,6 +683,7 @@ public class LiveDock extends JPanel {
 
         PreviewMonitor(ProgramOutput previewState) {
             super(previewState, false, true);
+            useProgramLyricsStyle(); // the scene's lyrics layout, exactly as TAKE will put it live
             setOpaque(false);
         }
 
@@ -730,6 +731,7 @@ public class LiveDock extends JPanel {
 
         ProgramMonitor(ProgramOutput program) {
             super(program);
+            useProgramLyricsStyle(); // the live Program picture: the Program lyrics style (lower third)
             setOpaque(false);
         }
 

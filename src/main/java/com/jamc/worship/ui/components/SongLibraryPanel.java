@@ -298,6 +298,11 @@ public class SongLibraryPanel extends JPanel {
         return currentSong;
     }
 
+    /** The row selected in the list (may still be loading), or null. */
+    public Song selectedSong() {
+        return list.getSelectedValue();
+    }
+
     /** Reloads the list, then reselects {@code selectId} if it is still visible. */
     public void refresh(Long selectId) {
         long seq = ++searchSeq;

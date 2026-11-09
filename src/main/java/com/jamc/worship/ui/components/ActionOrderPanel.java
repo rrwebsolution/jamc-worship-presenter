@@ -29,6 +29,7 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.FlowLayout;
 import java.awt.Font;
@@ -36,6 +37,7 @@ import java.awt.FontMetrics;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.StringSelection;
@@ -54,17 +56,17 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Vertical slide cards: one rounded card per slide of whatever the slide strip shows, with the
- * slide's actual words (lyrics, Bible text, announcement text) or, for PowerPoint, a thumbnail and
- * title. The operator recognises the next lyrics at a glance instead of remembering section names;
- * the section ("VERSE 1") and slide number are only small labels.
+ * The ORDER window: one rounded card per slide of whatever the slide strip shows (a song's lyrics, Bible verses,
+ * a presentation, a custom slide deck, a service text item), with the slide's own words (or a page picture).
  *
- * <p>This is the order inside the current content. The service schedule decides which content comes
- * next; these cards decide which slide of it comes next. They share the strip's slides and selection:
- * clicking a card selects the slide and loads it into Preview only (Program changes on TAKE, or on a
- * double-click if that is enabled in Settings). Cards show LIVE, PREVIEW and already-shown states with
- * text and icons, not only colour. Sections can still be reordered, duplicated or removed (songs keep
- * that order as their arrangement).
+ * <p>Each card has a drag handle, its number, the section ("VERSE 1 · 1/2"), the words, its state (green SHOWN for
+ * slides already presented, red LIVE for the slide on Program, blue PREVIEW), and, where the content supports them,
+ * EDIT and ⋮ (more actions). The LIVE card has a red border and a soft red background.
+ *
+ * <p>It shares the strip's slides and selection, so every click, NEXT / PREVIOUS (also from the keyboard and LiveCat
+ * Remote) and TAKE behave exactly as in the strip: lyrics follow the Separate Lyrics setting, other content goes to
+ * Preview first. Dragging a card (or ▲ / ▼) moves its whole section; songs keep the order as their arrangement,
+ * presentations for this showing, custom decks in the deck itself.
  */
 public class ActionOrderPanel extends JPanel {
 
@@ -77,7 +79,7 @@ public class ActionOrderPanel extends JPanel {
         /** Whether a double-click sends a slide live (Settings); otherwise it only previews. */
         boolean doubleClickTakes();
 
-        /** False for content whose order is edited elsewhere (custom slide decks). */
+        /** Whether the order of this content can be changed here. */
         boolean canEditOrder();
 
         /** Applies a new sequence of entries; duplicated entries contain copied slides. */
@@ -90,6 +92,37 @@ public class ActionOrderPanel extends JPanel {
         /** Settings, Interface: cards show the presentation letter case instead of the words as typed. */
         default boolean cardsUseTextCase() {
             return false;
+        }
+
+        /** Moves the entry (section) starting at slide {@code fromSlide}; {@code entries} is the order afterwards. */
+        default void moveEntry(int fromSlide, int toSlide, List<List<Slide>> entries) {
+            applyOrder(entries);
+        }
+
+        /** Duplicates the entry starting at {@code slide}; {@code entries} is the order afterwards. */
+        default void duplicateEntry(int slide, List<List<Slide>> entries) {
+            applyOrder(entries);
+        }
+
+        /** Removes the entry starting at {@code slide}; {@code entries} is the order afterwards. */
+        default void removeEntry(int slide, List<List<Slide>> entries) {
+            applyOrder(entries);
+        }
+
+        /** Whether the card's EDIT button is shown (the content has an editor). */
+        default boolean canEditSlide(int slideIndex) {
+            return false;
+        }
+
+        default void editSlide(int slideIndex) {
+        }
+
+        /** Whether ADD SLIDE is shown (custom slide decks). */
+        default boolean canAddSlide() {
+            return false;
+        }
+
+        default void addSlide(int afterIndex) {
         }
     }
 
@@ -110,6 +143,12 @@ public class ActionOrderPanel extends JPanel {
     private static final int MAX_LINES = 3;
     private static final int THUMB_W = 112;
     private static final int THUMB_H = 63;
+    /** Card layout (px): outer gap, left gutter (handle + number), right column (state), action buttons. */
+    private static final int GAP = 6;
+    private static final int GUTTER = 64;
+    private static final int STATE_W = 92;
+    private static final int ACTION_W = 34;
+    private static final int ARC = 14;
 
     private final SlideThumbnailStrip strip;
     private final Host host;
@@ -117,22 +156,30 @@ public class ActionOrderPanel extends JPanel {
     private long lastSelectionMillis;
     private final DefaultListModel<Slide> model = new DefaultListModel<>();
     private final JList<Slide> list = new JList<>(model);
-    private final JLabel countLabel = Ui.small("");
+    private final JLabel countLabel = new JLabel("");
     private final JLabel clickHint = new JLabel("");
-    private final JLabel titleLabel = Ui.label("Lyrics & Slides", null, "semibold");
-    private final JButton previousButton = Ui.toolButton("arrow-up", "Previous slide to Preview (Up)");
-    private final JButton nextButton = Ui.toolButton("arrow-down", "Next slide to Preview (Down)");
-    private final JButton collapseButton = Ui.toolButton("chevron-up", "Collapse the slide cards");
-    private final JLabel emptyLabel = Ui.label("The lyrics and slides of the selected song, verses or presentation appear here.",
+    private final JLabel titleLabel = Ui.label("Lyrics & Slides", Palette::text, "h3");
+    private final JLabel subtitleLabel = Ui.label("Order", Palette::secondaryText, "small");
+    private final KindBadge kindBadge = new KindBadge();
+    private final JButton moveUpButton = Ui.toolButton("arrow-up", "Move the selected section up");
+    private final JButton moveDownButton = Ui.toolButton("arrow-down", "Move the selected section down");
+    private final JButton addSlideButton = Ui.primaryButton("Add Slide", "plus");
+    private final JButton previousButton = Ui.button("Previous", "chevron-left");
+    private final JButton nextButton = Ui.button("Next", "chevron-right");
+    private final JLabel footerInfo = Ui.label(" ", Palette::secondaryText, "small");
+    private final JLabel emptyLabel = Ui.label("The slides of the selected lyrics, verses, presentation or slide deck appear here.",
             Palette::mutedText, "small");
     private final CardLayout cards = new CardLayout();
     private final JPanel body = Ui.transparent(cards);
-    private final JPanel right;
+    private final JPanel headerActions;
+    private final JPanel header;
     private final Set<Slide> presented = Collections.newSetFromMap(new IdentityHashMap<>());
     private List<Group> groups = List.of();
     /** The strip list {@link #groups} was computed from (the strip replaces its list on every change). */
     private List<Slide> groupedSlides;
     private int hovered = -1;
+    /** Which part of the hovered card the mouse is on: 1 = EDIT, 2 = MORE, 0 = the card. */
+    private int hoveredPart;
     private boolean syncing;
     private boolean collapsed;
     private Consumer<Boolean> collapseListener = c -> { };
@@ -143,20 +190,43 @@ public class ActionOrderPanel extends JPanel {
         this.host = host;
         setOpaque(false);
 
-        previousButton.addActionListener(e -> strip.selectPrevious());
-        nextButton.addActionListener(e -> strip.selectNext());
-        collapseButton.addActionListener(e -> setCollapsed(!collapsed, true));
-        right = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 4, 0));
-        right.add(countLabel);
-        right.add(previousButton);
-        right.add(nextButton);
-        right.add(collapseButton);
-        JPanel title = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 10, 0));
-        title.add(titleLabel);
-        title.add(clickHint);
-        JPanel header = Ui.header(title, null, right);
-        header.setBorder(BorderFactory.createEmptyBorder(6, 12, 4, 8));
-        add(header, BorderLayout.NORTH);
+        // header: what this is, how many slides, CLEAR (added by the window)
+        countLabel.setIcon(Icons.get("layers", Icons.SMALL, Palette::secondaryText));
+        countLabel.setForeground(Palette.text());
+        countLabel.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(Palette.border(), 1, true),
+                BorderFactory.createEmptyBorder(4, 10, 4, 10)));
+        headerActions = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        headerActions.add(countLabel);
+        JPanel titles = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 0));
+        titles.add(titleLabel);
+        titles.add(subtitleLabel);
+        JPanel left = Ui.transparent(new BorderLayout(12, 0));
+        left.add(kindBadge, BorderLayout.WEST);
+        left.add(titles, BorderLayout.CENTER);
+        header = Ui.transparent(new BorderLayout(10, 0));
+        header.add(left, BorderLayout.CENTER);
+        header.add(headerActions, BorderLayout.EAST);
+        header.setBorder(BorderFactory.createCompoundBorder(Ui.line(false, false, true, false),
+                BorderFactory.createEmptyBorder(12, 14, 12, 12)));
+
+        // toolbar: what a click does, move the selected section, add a slide (decks only)
+        moveUpButton.addActionListener(e -> moveSelected(-1));
+        moveDownButton.addActionListener(e -> moveSelected(1));
+        addSlideButton.setToolTipText("Add a new slide after the selected one");
+        addSlideButton.addActionListener(e -> host.addSlide(Math.max(-1, strip.getSelectedIndex())));
+        JPanel tools = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 6, 0));
+        tools.add(moveUpButton);
+        tools.add(moveDownButton);
+        tools.add(addSlideButton);
+        JPanel toolbar = Ui.transparent(new BorderLayout(8, 0));
+        toolbar.setBorder(BorderFactory.createEmptyBorder(8, 14, 4, 12));
+        toolbar.add(clickHint, BorderLayout.CENTER);
+        toolbar.add(tools, BorderLayout.EAST);
+
+        JPanel top = Ui.transparent(new BorderLayout());
+        top.add(header, BorderLayout.NORTH);
+        top.add(toolbar, BorderLayout.SOUTH);
+        add(top, BorderLayout.NORTH);
 
         list.setCellRenderer(new CardRenderer());
         list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
@@ -169,7 +239,7 @@ public class ActionOrderPanel extends JPanel {
         list.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !syncing && list.getSelectedIndex() >= 0) {
                 lastSelectionMillis = System.currentTimeMillis();
-                host.select(list.getSelectedIndex()); // Preview only; Program waits for TAKE
+                host.select(list.getSelectedIndex()); // as in the strip: Preview, or live when lyrics go live on click
             }
         });
         MouseAdapter mouse = new MouseAdapter() {
@@ -190,31 +260,49 @@ public class ActionOrderPanel extends JPanel {
             @Override
             public void mouseClicked(MouseEvent e) {
                 int i = rowAt(e.getPoint());
+                if (i < 0 || !SwingUtilities.isLeftMouseButton(e)) {
+                    return;
+                }
+                int part = partAt(i, e.getPoint());
+                if (part == 1 && host.canEditSlide(i)) {
+                    host.editSlide(i);
+                    return;
+                }
+                if (part == 2) {
+                    Rectangle b = list.getCellBounds(i, i);
+                    showMenu(i, list, b.x + b.width - GAP - ACTION_W, b.y + b.height / 2);
+                    return;
+                }
                 boolean selectedByThisClick = lastSelectionMillis >= pressedAt;
-                if (i >= 0 && SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 1 && !selectedByThisClick
-                        && i == list.getSelectedIndex()) {
+                if (e.getClickCount() == 1 && !selectedByThisClick && i == list.getSelectedIndex()) {
                     host.select(i); // clicking the selected card again still counts (lyrics go live on click)
                 }
-                if (i >= 0 && SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2 && host.doubleClickTakes()) {
+                if (e.getClickCount() == 2 && host.doubleClickTakes()) {
                     host.take(i);
                 }
             }
 
             @Override
             public void mouseMoved(MouseEvent e) {
-                setHovered(rowAt(e.getPoint()));
+                int i = rowAt(e.getPoint());
+                int part = i < 0 ? 0 : partAt(i, e.getPoint());
+                setHovered(i, part);
+                list.setCursor(Cursor.getPredefinedCursor(i >= 0 && onHandle(i, e.getPoint()) && host.canEditOrder()
+                        ? Cursor.MOVE_CURSOR : Cursor.HAND_CURSOR));
+                list.setToolTipText(part == 1 && host.canEditSlide(i) ? "Edit" : part == 2 ? "More actions"
+                        : i >= 0 && host.canEditOrder() && onHandle(i, e.getPoint()) ? "Drag to move this section" : null);
             }
 
             @Override
             public void mouseExited(MouseEvent e) {
-                setHovered(-1);
+                setHovered(-1, 0);
             }
 
             private void popup(MouseEvent e) {
                 int i = rowAt(e.getPoint());
                 if (e.isPopupTrigger() && i >= 0) {
                     list.setSelectedIndex(i);
-                    showMenu(i, e);
+                    showMenu(i, e.getComponent(), e.getX(), e.getY());
                 }
             }
         };
@@ -231,14 +319,32 @@ public class ActionOrderPanel extends JPanel {
         });
 
         JScrollPane scroll = new JScrollPane(list);
-        scroll.setBorder(null);
+        scroll.setBorder(BorderFactory.createEmptyBorder(0, 8, 0, 4));
         scroll.setOpaque(false);
         scroll.getViewport().setOpaque(false);
+        scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
         scroll.getVerticalScrollBar().setUnitIncrement(24);
         emptyLabel.setHorizontalAlignment(SwingConstants.CENTER);
         body.add(scroll, "list");
         body.add(emptyLabel, "empty");
         add(body, BorderLayout.CENTER);
+
+        // footer: where we are, PREVIOUS / NEXT (the same as the arrow keys)
+        previousButton.setToolTipText("Previous slide (Up / Page Up)");
+        nextButton.setToolTipText("Next slide (Down / Page Down)");
+        nextButton.setHorizontalTextPosition(SwingConstants.LEFT);
+        previousButton.addActionListener(e -> strip.selectPrevious());
+        nextButton.addActionListener(e -> strip.selectNext());
+        JPanel nav = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        nav.add(previousButton);
+        nav.add(nextButton);
+        JPanel footer = Ui.transparent(new BorderLayout(8, 0));
+        footer.setBorder(BorderFactory.createCompoundBorder(Ui.line(true, false, false, false),
+                BorderFactory.createEmptyBorder(8, 14, 8, 12)));
+        footerInfo.setIcon(Icons.get("tag", Icons.SMALL, Palette::secondaryText));
+        footer.add(footerInfo, BorderLayout.CENTER);
+        footer.add(nav, BorderLayout.EAST);
+        add(footer, BorderLayout.SOUTH);
 
         strip.addSlidesChangedListener(this::rebuild);
         strip.addSelectionListener(i -> sync(false));
@@ -252,9 +358,17 @@ public class ActionOrderPanel extends JPanel {
         rebuild();
     }
 
-    /** Heading for the current workspace: "Lyrics & Slides", "Verse Slides", "Presentation Slides"… */
+    /**
+     * Heading for the current content: "Lyrics – Amazing Grace" shows "Amazing Grace" big, with "Order · Lyrics"
+     * under it (the part before the dash says what kind of content it is).
+     */
     public void setTitle(String text) {
-        titleLabel.setText(text);
+        String t = text == null ? "" : text;
+        int dash = t.indexOf(" – ");
+        String kind = dash > 0 ? t.substring(0, dash) : t;
+        titleLabel.setText(dash > 0 ? t.substring(dash + 3) : t);
+        subtitleLabel.setText("Order  ·  " + (kind.isBlank() ? "Slides" : kind));
+        kindBadge.setKind(kind);
     }
 
     /** Measures and repaints every card again (after the letter case or typography changed). */
@@ -282,28 +396,25 @@ public class ActionOrderPanel extends JPanel {
     public void setCollapsed(boolean collapse, boolean notify) {
         collapsed = collapse;
         body.setVisible(!collapse);
-        countLabel.setVisible(!collapse);
-        collapseButton.setIcon(Icons.get(collapse ? "chevron-down" : "chevron-up", Icons.MEDIUM));
-        collapseButton.setToolTipText(collapse ? "Show the slide cards" : "Collapse the slide cards");
         revalidate();
         if (notify) {
             collapseListener.accept(collapse);
         }
     }
 
-    /** Adds a control to the left of the header's count and buttons (e.g. CLEAR). */
+    /** Adds a control to the header, left of the slide count (e.g. CLEAR). */
     public void addHeaderAction(JComponent action) {
-        right.add(action, 0);
+        headerActions.add(action);
     }
 
     /** Height of the header alone, for the collapsed divider position. */
     public int headerHeight() {
-        return getComponent(0).getPreferredSize().height + 2;
+        return header.getPreferredSize().height + 2;
     }
 
     @Override
     public Dimension getMinimumSize() {
-        return new Dimension(0, headerHeight());
+        return new Dimension(320, headerHeight());
     }
 
     // ------------------------------------------------------------------ model
@@ -358,7 +469,9 @@ public class ActionOrderPanel extends JPanel {
         } finally {
             syncing = false;
         }
-        countLabel.setText(slides.isEmpty() ? "" : slides.size() + (slides.size() == 1 ? " slide" : " slides"));
+        countLabel.setText(slides.size() + (slides.size() == 1 ? " Slide" : " Slides"));
+        countLabel.setVisible(!slides.isEmpty());
+        addSlideButton.setVisible(host.canAddSlide());
         cards.show(body, slides.isEmpty() ? "empty" : "list");
         sync(false);
     }
@@ -390,7 +503,34 @@ public class ActionOrderPanel extends JPanel {
         boolean any = !model.isEmpty();
         previousButton.setEnabled(any && selected > 0);
         nextButton.setEnabled(any && selected < model.size() - 1);
+        int g = groupIndexOf(selected);
+        boolean edit = host.canEditOrder();
+        moveUpButton.setVisible(edit);
+        moveDownButton.setVisible(edit);
+        moveUpButton.setEnabled(edit && g > 0);
+        moveDownButton.setEnabled(edit && g >= 0 && g < groups.size() - 1);
+        updateFooter();
         list.repaint();
+    }
+
+    /** "Current: VERSE 3 (Slide 5) · Live: Slide 4 · Total: 6 slides". */
+    private void updateFooter() {
+        int n = model.size();
+        if (n == 0) {
+            footerInfo.setText(" ");
+            return;
+        }
+        int sel = strip.getSelectedIndex();
+        int live = strip.getLiveIndex();
+        StringBuilder s = new StringBuilder();
+        if (sel >= 0 && sel < n) {
+            s.append("Current: ").append(sectionLabel(sel)).append(" (Slide ").append(sel + 1).append(")");
+        }
+        if (live >= 0 && live < n && live != sel) {
+            s.append(s.isEmpty() ? "" : "  ·  ").append("Live: Slide ").append(live + 1);
+        }
+        s.append(s.isEmpty() ? "" : "  ·  ").append("Total: ").append(n).append(n == 1 ? " slide" : " slides");
+        footerInfo.setText(s.toString());
     }
 
     private Group groupOf(int index) {
@@ -416,9 +556,28 @@ public class ActionOrderPanel extends JPanel {
         return i >= 0 && list.getCellBounds(i, i).contains(p) ? i : -1;
     }
 
-    private void setHovered(int i) {
-        if (i != hovered) {
+    /** 1 = the EDIT button, 2 = MORE (⋮), 0 = anywhere else on card {@code i}. */
+    private int partAt(int i, Point p) {
+        Rectangle b = list.getCellBounds(i, i);
+        int right = b.x + b.width - GAP;
+        if (p.x >= right - ACTION_W && p.x < right) {
+            return 2;
+        }
+        if (host.canEditSlide(i) && p.x >= right - ACTION_W * 2 && p.x < right - ACTION_W) {
+            return 1;
+        }
+        return 0;
+    }
+
+    private boolean onHandle(int i, Point p) {
+        Rectangle b = list.getCellBounds(i, i);
+        return p.x < b.x + GAP + 26;
+    }
+
+    private void setHovered(int i, int part) {
+        if (i != hovered || part != hoveredPart) {
             hovered = i;
+            hoveredPart = part;
             list.repaint();
         }
     }
@@ -445,14 +604,25 @@ public class ActionOrderPanel extends JPanel {
         return out;
     }
 
+    private void moveSelected(int delta) {
+        int g = groupIndexOf(strip.getSelectedIndex());
+        if (g >= 0) {
+            moveEntry(g, g + delta);
+        }
+    }
+
     private void moveEntry(int from, int to) {
-        if (!host.canEditOrder() || from == to || from < 0 || from >= groups.size()) {
+        if (!host.canEditOrder() || from == to || from < 0 || from >= groups.size() || to < 0 || to >= groups.size()) {
             return;
         }
         List<List<Slide>> e = entries();
         List<Slide> moved = e.remove(from);
         e.add(Math.clamp(to, 0, e.size()), moved);
-        host.applyOrder(e);
+        int toSlide = 0;
+        for (int i = 0; i < to; i++) {
+            toSlide += e.get(i).size();
+        }
+        host.moveEntry(groups.get(from).start, toSlide, e);
     }
 
     private void duplicateEntry(int group) {
@@ -462,7 +632,7 @@ public class ActionOrderPanel extends JPanel {
             copy.add(s.copy());
         }
         e.add(group + 1, copy);
-        host.applyOrder(e);
+        host.duplicateEntry(groups.get(group).start, e);
     }
 
     private void removeEntry(int group) {
@@ -471,10 +641,10 @@ public class ActionOrderPanel extends JPanel {
         }
         List<List<Slide>> e = entries();
         e.remove(group);
-        host.applyOrder(e);
+        host.removeEntry(groups.get(group).start, e);
     }
 
-    private void showMenu(int slide, MouseEvent e) {
+    private void showMenu(int slide, Component at, int x, int y) {
         int g = groupIndexOf(slide);
         if (g < 0) {
             return;
@@ -484,22 +654,22 @@ public class ActionOrderPanel extends JPanel {
         JPopupMenu menu = new JPopupMenu();
         menu.add(item("Send to Preview", "monitor", true, () -> host.select(slide)));
         menu.add(item("Send to Live", "play", true, () -> host.take(slide)));
+        if (host.canEditSlide(slide)) {
+            menu.add(item("Edit…", "edit", true, () -> host.editSlide(slide)));
+        }
         menu.addSeparator();
         menu.add(item("Move Up" + what, "arrow-up", edit && g > 0, () -> moveEntry(g, g - 1)));
         menu.add(item("Move Down" + what, "arrow-down", edit && g < groups.size() - 1, () -> moveEntry(g, g + 1)));
         menu.add(item("Duplicate" + what, "copy", edit, () -> duplicateEntry(g)));
         menu.add(item("Remove from Order" + what, "trash", edit && groups.size() > 1, () -> removeEntry(g)));
+        if (host.canAddSlide()) {
+            menu.add(item("Add Slide After", "plus", true, () -> host.addSlide(slide)));
+        }
         if (host.canResetOrder()) {
             menu.addSeparator();
             menu.add(item("Reset to Written Order", "refresh", true, host::resetOrder));
         }
-        if (!edit) {
-            menu.addSeparator();
-            JMenuItem note = new JMenuItem("Reorder custom slides in the slide strip");
-            note.setEnabled(false);
-            menu.add(note);
-        }
-        menu.show(e.getComponent(), e.getX(), e.getY());
+        menu.show(at, x, y);
     }
 
     private static JMenuItem item(String text, String icon, boolean enabled, Runnable action) {
@@ -509,7 +679,7 @@ public class ActionOrderPanel extends JPanel {
         return i;
     }
 
-    /** Drag a card to move its whole section (or single slide) to a new position. */
+    /** Drag a card to move its whole section (or single slide) to a new position; a blue line shows where. */
     private final class Reorder extends TransferHandler {
         @Override
         public int getSourceActions(JComponent c) {
@@ -524,7 +694,9 @@ public class ActionOrderPanel extends JPanel {
 
         @Override
         public boolean canImport(TransferSupport support) {
-            return support.isDrop() && host.canEditOrder() && support.isDataFlavorSupported(DataFlavor.stringFlavor);
+            boolean ok = support.isDrop() && host.canEditOrder() && support.isDataFlavorSupported(DataFlavor.stringFlavor);
+            list.repaint(); // the drop line follows the mouse
+            return ok;
         }
 
         @Override
@@ -546,18 +718,55 @@ public class ActionOrderPanel extends JPanel {
                 if (to > from) {
                     to--; // the entry leaves its old place first
                 }
-                int finalTo = to;
+                int finalTo = Math.min(to, groups.size() - 1);
                 SwingUtilities.invokeLater(() -> moveEntry(from, finalTo));
                 return true;
             } catch (Exception e) {
                 return false;
             }
         }
+
+        @Override
+        protected void exportDone(JComponent source, Transferable data, int action) {
+            list.repaint();
+        }
     }
 
     // ------------------------------------------------------------------ painting
 
-    /** A rounded card: small label row, then the slide's words (or a PowerPoint thumbnail and title). */
+    /** The content kind's picture in the header: a rounded square with its icon (lyrics, Bible, slides...). */
+    private static final class KindBadge extends JComponent {
+        private String icon = "music";
+
+        KindBadge() {
+            setPreferredSize(new Dimension(52, 52));
+        }
+
+        void setKind(String kind) {
+            String k = kind == null ? "" : kind.toLowerCase(Locale.ROOT);
+            icon = k.contains("lyric") || k.contains("song") ? "music" : k.contains("verse") || k.contains("bible") ? "book"
+                    : k.contains("presentation") || k.contains("powerpoint") ? "presentation" : "slides";
+            repaint();
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setColor(Palette.withAlpha(Palette.accent(), 60));
+            g.fillRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 14, 14);
+            g.setColor(Palette.withAlpha(Palette.accent(), 140));
+            g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 14, 14);
+            int s = 26;
+            Icons.get(icon, s, Palette::text).paintIcon(this, g, (getWidth() - s) / 2, (getHeight() - s) / 2);
+            g.dispose();
+        }
+    }
+
+    /**
+     * A rounded card: drag handle and number on the left, the section pill and the words (or a page picture) in the
+     * middle, the state and "Slide n" on the right, then EDIT (when the content has an editor) and ⋮.
+     */
     private final class CardRenderer extends JComponent implements ListCellRenderer<Slide> {
         private Slide slide;
         private int index;
@@ -568,12 +777,21 @@ public class ActionOrderPanel extends JPanel {
             this.slide = value;
             this.index = i;
             setFont(l.getFont());
-            FontMetrics fm = getFontMetrics(getFont().deriveFont(Font.PLAIN, 12.5f));
-            int textWidth = Math.max(120, (l.getWidth() > 0 ? l.getWidth() : 420) - 16 - 24);
+            FontMetrics fm = getFontMetrics(textFont());
+            int textWidth = Math.max(120, textWidth(l.getWidth() > 0 ? l.getWidth() : 520));
             int body = value.getThumbnail() != null ? THUMB_H
                     : Math.max(1, cardLines(value, fm, textWidth).size()) * (fm.getHeight() - 1);
-            setPreferredSize(new Dimension(100, 6 + 18 + body + 12 + 6));
+            setPreferredSize(new Dimension(100, GAP + 12 + 22 + body + 14 + GAP));
             return this;
+        }
+
+        private Font textFont() {
+            return getFont().deriveFont(Font.PLAIN, 14f);
+        }
+
+        /** Width left for the words in a card of a list {@code listWidth} wide. */
+        private int textWidth(int listWidth) {
+            return listWidth - GAP * 2 - GUTTER - 22 - STATE_W - ACTION_W * 2 - 12;
         }
 
         @Override
@@ -586,51 +804,68 @@ public class ActionOrderPanel extends JPanel {
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             State st = state(index);
-            int x = 8;
-            int y = 3;
-            int w = getWidth() - 16;
-            int h = getHeight() - 6;
+            boolean live = st == State.LIVE;
+            boolean preview = st == State.PREVIEW;
+            int x = GAP;
+            int y = GAP;
+            int w = getWidth() - GAP * 2;
+            int h = getHeight() - GAP * 2;
 
-            Color fill = st == State.LIVE ? Palette.withAlpha(Palette.danger(), 40)
-                    : st == State.PREVIEW ? Palette.withAlpha(Palette.accent(), 40)
+            // card: soft red for LIVE, soft blue for PREVIEW, a lighter navy when hovered
+            Color fill = live ? Palette.withAlpha(Palette.danger(), 34) : preview ? Palette.withAlpha(Palette.accent(), 30)
                     : index == hovered ? Palette.hoverBackground() : Palette.secondaryBackground();
             g.setColor(fill);
-            g.fillRoundRect(x, y, w, h, 12, 12);
-            Color border = st == State.LIVE ? Palette.danger() : st == State.PREVIEW ? Palette.accent() : Palette.border();
-            g.setColor(border);
-            g.setStroke(new BasicStroke(st == State.LIVE || st == State.PREVIEW ? 2f : 1f));
-            g.drawRoundRect(x, y, w - 1, h - 1, 12, 12);
-            if (st == State.LIVE) {
-                g.fillRoundRect(x, y + 4, 4, h - 8, 4, 4); // a bar along the edge, in addition to the colour
+            g.fillRoundRect(x, y, w, h, ARC, ARC);
+            g.setColor(live ? Palette.danger() : preview ? Palette.accent() : Palette.border());
+            g.setStroke(new BasicStroke(live || preview ? 2f : 1f));
+            g.drawRoundRect(x, y, w - 1, h - 1, ARC, ARC);
+
+            // drop line while a card is dragged over this one
+            JList.DropLocation drop = list.getDropLocation();
+            if (drop != null && drop.isInsert() && drop.getIndex() == index) {
+                g.setColor(Palette.accent());
+                g.fillRoundRect(x + 4, 0, w - 8, 4, 4, 4);
             }
 
-            // label row: SECTION · state pill · SLIDE n
-            int lx = x + 12;
-            int ly = y + 5;
-            Font small = getFont().deriveFont(Font.BOLD, 9.5f);
+            // left gutter: drag handle (only when the order can change) and the big number
+            if (host.canEditOrder()) {
+                g.setColor(Palette.mutedText());
+                int hx = x + 12;
+                int hy = y + h / 2 - 7;
+                for (int r = 0; r < 3; r++) {
+                    for (int c = 0; c < 2; c++) {
+                        g.fillOval(hx + c * 6, hy + r * 6, 3, 3);
+                    }
+                }
+            }
+            g.setFont(getFont().deriveFont(Font.BOLD, 19f));
+            FontMetrics nm = g.getFontMetrics();
+            String num = String.format("%02d", index + 1);
+            g.setColor(live ? Palette.danger() : st == State.DONE ? Palette.secondaryText() : Palette.text());
+            g.drawString(num, x + 30, y + h / 2 + nm.getAscent() / 2 - 2);
+            // accent bar: blue, red when LIVE
+            int barX = x + GUTTER;
+            g.setColor(live ? Palette.danger() : Palette.withAlpha(Palette.accent(), preview ? 255 : 170));
+            g.fillRoundRect(barX, y + 8, 4, h - 16, 4, 4);
+
+            // middle: section pill, then the words or a page picture
+            int lx = barX + 16;
+            int right = x + w - ACTION_W * 2 - STATE_W;
+            Font small = getFont().deriveFont(Font.BOLD, 10.5f);
             g.setFont(small);
             FontMetrics sm = g.getFontMetrics();
-            int right = x + w - 10;
-            String number = "SLIDE " + (index + 1);
-            g.setColor(Palette.mutedText());
-            g.drawString(number, right - sm.stringWidth(number), ly + sm.getAscent());
-            right -= sm.stringWidth(number) + 8;
-            String pill = st == State.LIVE ? "● LIVE" : st == State.PREVIEW ? "▶ PREVIEW" : st == State.DONE ? "✓ SHOWN" : null;
-            if (pill != null) {
-                int pw = sm.stringWidth(pill) + 12;
-                g.setColor(st == State.LIVE ? Palette.danger() : st == State.PREVIEW ? Palette.accent()
-                        : Palette.withAlpha(Palette.live(), 150));
-                g.fillRoundRect(right - pw, ly - 1, pw, sm.getHeight() + 2, 10, 10);
-                g.setColor(Color.WHITE);
-                g.drawString(pill, right - pw + 6, ly + sm.getAscent());
-                right -= pw + 8;
-            }
-            g.setColor(st == State.DONE ? Palette.mutedText() : Palette.secondaryText());
-            g.drawString(fit(sectionLabel(), sm, right - lx), lx, ly + sm.getAscent());
+            String label = fit(sectionLabel(index), sm, right - lx - 16);
+            int pw = sm.stringWidth(label) + 16;
+            int py = y + 10;
+            g.setColor(Palette.withAlpha(Palette.accent(), 55));
+            g.fillRoundRect(lx, py, pw, 20, 20, 20);
+            g.setColor(Palette.withAlpha(Palette.accent(), 150));
+            g.drawRoundRect(lx, py, pw - 1, 19, 20, 20);
+            g.setColor(Palette.text());
+            g.drawString(label, lx + 8, py + 14);
 
-            // body: the words, or a thumbnail and title
-            int by = ly + 18;
-            Font text = getFont().deriveFont(Font.PLAIN, 12.5f);
+            int by = py + 26;
+            Font text = textFont();
             g.setFont(text);
             FontMetrics tm = g.getFontMetrics();
             Color words = st == State.DONE ? Palette.secondaryText() : Palette.text();
@@ -646,39 +881,91 @@ public class ActionOrderPanel extends JPanel {
                 g.drawRect(lx, by, THUMB_W - 1, THUMB_H - 1);
                 g.setColor(words);
                 String title = "Slide " + (index + 1) + (hasTitle() ? " – " + slide.getLabel() : "");
-                g.drawString(fit(title, tm, x + w - 12 - (lx + THUMB_W + 12)), lx + THUMB_W + 12, by + tm.getAscent() + 4);
+                g.drawString(fit(title, tm, right - (lx + THUMB_W + 12)), lx + THUMB_W + 12, by + tm.getAscent() + 4);
             } else {
                 g.setColor(words);
                 int line = 0;
-                for (String s : cardLines(slide, tm, x + w - 12 - lx)) {
-                    g.drawString(fit(s, tm, x + w - 12 - lx), lx, by + tm.getAscent() + line * (tm.getHeight() - 1));
+                for (String s : cardLines(slide, tm, right - lx - 8)) {
+                    g.drawString(fit(s, tm, right - lx - 8), lx, by + tm.getAscent() + line * (tm.getHeight() - 1));
                     line++;
                 }
             }
+
+            // state column: ✓ SHOWN (green) / ● LIVE (red) / ▶ PREVIEW (blue), and "Slide n"
+            int sx = right;
+            String pill = live ? "● LIVE" : preview ? "▶ PREVIEW" : st == State.DONE ? "✓ SHOWN" : null;
+            int midY = y + h / 2;
+            g.setFont(small);
+            if (pill != null) {
+                int ppw = sm.stringWidth(pill) + 18;
+                int ppx = sx + (STATE_W - ppw) / 2;
+                Color pc = live ? Palette.danger() : preview ? Palette.accent() : Palette.live();
+                g.setColor(live || preview ? pc : Palette.withAlpha(pc, 60));
+                g.fillRoundRect(ppx, midY - 22, ppw, 20, 20, 20);
+                if (!live && !preview) {
+                    g.setColor(pc);
+                    g.drawRoundRect(ppx, midY - 22, ppw - 1, 19, 20, 20);
+                }
+                g.setColor(live || preview ? Color.WHITE : pc);
+                g.drawString(pill, ppx + 9, midY - 8);
+            }
+            g.setFont(getFont().deriveFont(Font.PLAIN, 12f));
+            FontMetrics nm2 = g.getFontMetrics();
+            String n = "Slide " + (index + 1);
+            g.setColor(Palette.secondaryText());
+            g.drawString(n, sx + (STATE_W - nm2.stringWidth(n)) / 2, pill != null ? midY + 14 : midY + nm2.getAscent() / 2);
+
+            // actions: EDIT (only when supported) and ⋮, after a thin divider
+            int ax = x + w - ACTION_W * 2;
+            g.setColor(Palette.border());
+            g.drawLine(ax - 2, y + 12, ax - 2, y + h - 12);
+            int iconSize = 18;
+            if (host.canEditSlide(index)) {
+                paintAction(g, "edit", ax, midY, iconSize, hovered == index && hoveredPart == 1);
+            }
+            paintMore(g, ax + ACTION_W, midY, hovered == index && hoveredPart == 2);
             g.dispose();
+        }
+
+        private void paintAction(Graphics2D g, String icon, int ax, int midY, int size, boolean hot) {
+            if (hot) {
+                g.setColor(Palette.hoverBackground());
+                g.fillRoundRect(ax + 2, midY - 15, ACTION_W - 4, 30, 8, 8);
+            }
+            Icons.get(icon, size, hot ? Palette::text : Palette::secondaryText)
+                    .paintIcon(this, g, ax + (ACTION_W - size) / 2, midY - size / 2);
+        }
+
+        private void paintMore(Graphics2D g, int ax, int midY, boolean hot) {
+            if (hot) {
+                g.setColor(Palette.hoverBackground());
+                g.fillRoundRect(ax + 2, midY - 15, ACTION_W - 6, 30, 8, 8);
+            }
+            g.setColor(hot ? Palette.text() : Palette.secondaryText());
+            int cx = ax + ACTION_W / 2 - 2;
+            for (int k = -1; k <= 1; k++) {
+                g.fillOval(cx, midY + k * 6 - 2, 4, 4);
+            }
         }
 
         private boolean hasTitle() {
             String l = slide.getLabel();
             return l != null && !l.isBlank() && !l.matches("Slide \\d+");
         }
-
-        /** "VERSE 1", "CHORUS · 2/2", "JOHN 3:16", or the content title. */
-        private String sectionLabel() {
-            Group gr = groupOf(index);
-            String label = gr != null ? gr.label : slide.getLabel();
-            if (label == null || label.isBlank()) {
-                label = "Slide";
-            }
-            String part = gr != null && gr.count > 1 ? " · " + (index - gr.start + 1) + "/" + gr.count : "";
-            return label.toUpperCase(Locale.ROOT) + part;
-        }
     }
 
-    /**
-     * The slide's words wrapped to {@code width}, at most {@value #MAX_LINES} lines (longer slides end
-     * with "…"), then any caption such as the Bible version.
-     */
+    /** "VERSE 1", "CHORUS · 2/2", "JOHN 3:16", or the content title. */
+    private String sectionLabel(int index) {
+        List<Slide> slides = strip.getSlides();
+        Group gr = groupOf(index);
+        String label = gr != null ? gr.label : index < slides.size() ? slides.get(index).getLabel() : null;
+        if (label == null || label.isBlank()) {
+            label = "Slide";
+        }
+        String part = gr != null && gr.count > 1 ? " · " + (index - gr.start + 1) + "/" + gr.count : "";
+        return label.toUpperCase(Locale.ROOT) + part;
+    }
+
     /** Card lines, in the presentation letter case only when Settings asks for it (as typed by default). */
     private List<String> cardLines(Slide s, FontMetrics fm, int width) {
         SlideStyle base = strip.getBaseStyle();
@@ -690,7 +977,10 @@ public class ActionOrderPanel extends JPanel {
         return lines(s, fm, width, TextTransform.ORIGINAL);
     }
 
-    /** Same, with the words in {@code textCase} (the presentation letter case, when Settings asks for it). */
+    /**
+     * The slide's words wrapped to {@code width}, at most {@value #MAX_LINES} lines (longer slides end with "…"),
+     * then any caption such as the Bible version; in {@code textCase} when Settings asks for it.
+     */
     static List<String> lines(Slide s, FontMetrics fm, int width, TextTransform textCase) {
         List<String> out = new ArrayList<>();
         String text = s.getText() == null ? "" : textCase.apply(s.getText().strip());

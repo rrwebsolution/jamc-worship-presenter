@@ -72,6 +72,7 @@ public class MediaLibraryPanel extends JPanel {
     static final String VIDEOS_ALL = "All videos";
     static final String VIDEOS_LOCAL = "Local videos";
     static final String VIDEOS_YOUTUBE = "YouTube videos";
+    static final String VIDEOS_PIXABAY = "Pixabay videos";
 
     private final MediaService media;
     private final List<MediaCategory> fixedCategories;
@@ -114,6 +115,8 @@ public class MediaLibraryPanel extends JPanel {
         importButton.addActionListener(e -> {
             if (importCategory == MediaCategory.VIDEO) {
                 showVideoImportMenu(importButton);
+            } else if (importCategory == MediaCategory.BACKGROUND && config != null) {
+                showBackgroundImportMenu(importButton);
             } else {
                 importFiles();
             }
@@ -144,7 +147,7 @@ public class MediaLibraryPanel extends JPanel {
         } else if (importCategory == MediaCategory.VIDEO) {
             // local files and YouTube references live together; local ones are listed first.
             // VideoLibraryPanel's tabs choose between them, so this filter is not shown.
-            for (String k : new String[]{VIDEOS_ALL, VIDEOS_LOCAL, VIDEOS_YOUTUBE}) {
+            for (String k : new String[]{VIDEOS_ALL, VIDEOS_LOCAL, VIDEOS_YOUTUBE, VIDEOS_PIXABAY}) {
                 typeFilter.addItem(k);
             }
             typeFilter.addActionListener(e -> refresh(null));
@@ -200,6 +203,7 @@ public class MediaLibraryPanel extends JPanel {
         Rendering.renderer().images().addChangeListener(list::repaint);
         VideoThumbnails.addListener(list::repaint);
         YouTubeLibrary.addListener(list::repaint); // thumbnails and ONLINE / OFFLINE checks
+        com.jamc.worship.pixabay.PixabayThumbnails.addListener(list::repaint); // Pixabay posters as they arrive
 
         JScrollPane scroll = new JScrollPane(list);
         scroll.setBorder(null);
@@ -310,8 +314,13 @@ public class MediaLibraryPanel extends JPanel {
                 default -> false;
             });
             if (videoFilter != null) {
-                found.removeIf(m -> videoFilter.equals(VIDEOS_LOCAL) ? m.isYouTube() : videoFilter.equals(VIDEOS_YOUTUBE) && !m.isYouTube());
-                found.sort(java.util.Comparator.comparing(MediaItem::isYouTube)); // LOCAL first, then YOUTUBE (stable: by name)
+                found.removeIf(m -> switch (videoFilter) {
+                    case VIDEOS_LOCAL -> m.isYouTube() || m.isPixabay();
+                    case VIDEOS_YOUTUBE -> !m.isYouTube();
+                    case VIDEOS_PIXABAY -> !m.isPixabay();
+                    default -> false;
+                });
+                found.sort(java.util.Comparator.comparing(MediaItem::getSourceType)); // LOCAL, YOUTUBE, PIXABAY (stable: by name)
             }
             return found;
         }, items -> {
@@ -357,7 +366,50 @@ public class MediaLibraryPanel extends JPanel {
         yt.setToolTipText("Add a YouTube video to the Video Library. Nothing is downloaded; it plays from YouTube.");
         yt.setEnabled(config != null);
         menu.add(yt);
+        menu.add(pixabayItem());
         menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    /** + in Backgrounds: files on this computer, or Pixabay's worship backgrounds. */
+    private void showBackgroundImportMenu(JComponent anchor) {
+        JPopupMenu menu = new JPopupMenu();
+        menu.add(menuItem("Import Files…", "folder", this::importFiles));
+        menu.add(pixabayItem());
+        menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    private JMenuItem pixabayItem() {
+        JMenuItem px = menuItem("Pixabay Worship Backgrounds…", "image", this::browsePixabay);
+        px.setToolTipText("Browse Pixabay praise & worship videos. Nothing is downloaded; they stream from Pixabay.");
+        px.setEnabled(config != null);
+        return px;
+    }
+
+    /** Told when USE AS BACKGROUND chose a Pixabay video: the Backgrounds list opens on it (MEDIA PREVIEW). */
+    private java.util.function.Consumer<MediaItem> openBackground = m -> { };
+
+    public void setOpenBackground(java.util.function.Consumer<MediaItem> l) {
+        openBackground = l == null ? m -> { } : l;
+    }
+
+    private void browsePixabay() {
+        var r = com.jamc.worship.ui.dialogs.PixabayBrowserDialog.showDialog(
+                javax.swing.SwingUtilities.getWindowAncestor(this), media, config);
+        if (r == null) {
+            return;
+        }
+        MediaItem m = r.item();
+        if (!search.getText().isEmpty()) {
+            search.setText("");
+        }
+        if (r.background()) {
+            statusHandler.accept("\"" + m.getName() + "\" is in Library → Backgrounds and in MEDIA PREVIEW. "
+                    + "Press TAKE AS BACKGROUND to put it live (it streams from Pixabay).");
+            openBackground.accept(m);
+        } else {
+            statusHandler.accept("Pixabay video \"" + m.getName() + "\" is in Library → Videos (streams from Pixabay).");
+        }
+        refresh(m.getId());
     }
 
     private void importFromYouTube() {
@@ -615,6 +667,8 @@ public class MediaLibraryPanel extends JPanel {
             img = Rendering.renderer().images().get(item.getPath());
         } else if (item.isYouTube()) {
             img = YouTubeLibrary.thumbnail(item.getYoutubeVideoId(), item.getThumbnailUrl());
+        } else if (item.isPixabay()) {
+            img = com.jamc.worship.pixabay.PixabayThumbnails.get(item.getThumbnailUrl()); // a still poster, never a player
         } else if (item.getKind() == MediaKind.VIDEO) {
             img = VideoThumbnails.get(media.resolve(item));
         }
@@ -709,6 +763,8 @@ public class MediaLibraryPanel extends JPanel {
             List<String> tip = new ArrayList<>();
             tip.add(BackgroundPresets.isPreset(m) ? BackgroundPresets.describe(m) : m.isYouTube()
                     ? "YouTube video" + (m.getChannelName() == null || m.getChannelName().isBlank() ? "" : " · " + m.getChannelName())
+                    : m.isPixabay() ? "Pixabay video (streams; needs internet)"
+                    + (m.getChannelName() == null || m.getChannelName().isBlank() ? "" : " · by " + m.getChannelName() + " via Pixabay")
                     : m.getKind().name().toLowerCase());
             if (m.getWidth() != null) {
                 tip.add(m.getWidth() + "×" + m.getHeight());
@@ -759,6 +815,22 @@ public class MediaLibraryPanel extends JPanel {
             if (BackgroundPresets.isPreset(m)) {
                 info.setText(BackgroundPresets.describe(m) + "  ·  built in");
                 name.setText(m.getName());
+                name.setForeground(selected ? l.getSelectionForeground() : Palette.text());
+                info.setForeground(selected ? new Color(255, 255, 255, 200) : Palette.secondaryText());
+                setBackground(selected ? l.getSelectionBackground() : l.getBackground());
+                setOpaque(selected);
+                return this;
+            }
+            if (m.isPixabay()) {
+                parts.add("Pixabay");
+                if (m.getChannelName() != null && !m.getChannelName().isBlank()) {
+                    parts.add("by " + m.getChannelName());
+                }
+                if (m.getDurationMs() != null) {
+                    parts.add(TransportControls.format(m.getDurationMs()));
+                }
+                parts.add("streams");
+                info.setText(String.join("  ·  ", parts));
                 name.setForeground(selected ? l.getSelectionForeground() : Palette.text());
                 info.setForeground(selected ? new Color(255, 255, 255, 200) : Palette.secondaryText());
                 setBackground(selected ? l.getSelectionBackground() : l.getBackground());

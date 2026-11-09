@@ -88,6 +88,20 @@ public class OutputCanvas extends JComponent {
         return program;
     }
 
+    private boolean programLyricsStyle;
+    private final Runnable styleApplied = this::repaint;
+
+    /**
+     * This surface is the live Program picture that goes out (stream, recording, OBS window, Program monitor): song
+     * lyrics use the Program lyrics style (e.g. the lower third). The projector and Preview never call this, so the
+     * room keeps the full-screen lyrics.
+     */
+    public OutputCanvas useProgramLyricsStyle() {
+        programLyricsStyle = true;
+        compositor.setProgramLyrics(true);
+        return this;
+    }
+
     public static void setRecording(boolean on) {
         recording = on;
     }
@@ -120,6 +134,7 @@ public class OutputCanvas extends JComponent {
         MediaFrames.addListener(frameArrived);
         Rendering.globalBackground().addListener(repaint);
         Rendering.renderer().images().addChangeListener(imagesChanged);
+        com.jamc.worship.config.ProgramLyricsStyle.addListener(styleApplied);
         clock.start();
     }
 
@@ -130,6 +145,7 @@ public class OutputCanvas extends JComponent {
         trailingFrame.stop();
         Rendering.globalBackground().removeListener(repaint);
         Rendering.renderer().images().removeChangeListener(imagesChanged);
+        com.jamc.worship.config.ProgramLyricsStyle.removeListener(styleApplied);
         clock.stop();
         compositor.invalidate();
         fromBuffer = null;
@@ -170,7 +186,10 @@ public class OutputCanvas extends JComponent {
             FrameSpec to = program.shown();
             FrameSpec from = program.previous();
             float p = program.progress();
-            if (from == null || p >= 1f) {
+            // Program-style lyrics fade on their own clock; other surfaces never wait for it
+            float own = programLyricsStyle ? program.overlayProgress() : 1f;
+            compositor.setOverlayProgress(own);
+            if (from == null || (p >= 1f && own >= 1f)) {
                 // Steady state: compose straight onto the screen at device-pixel resolution.
                 Graphics2D d = (Graphics2D) g2.create();
                 d.translate(r.x, r.y);

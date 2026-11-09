@@ -73,6 +73,7 @@ public class ScenesHomePanel extends JPanel {
 
     {
         compositor.setStillVideos(true); // thumbnails: a still picture of each video, never a playing one
+        compositor.setProgramLyrics(true); // the scene's lyrics layout (lower third or full) shows in its picture
         com.jamc.worship.media.VideoStills.addListener(this::repaint);
         com.jamc.worship.youtube.YouTubeLibrary.addListener(() -> javax.swing.SwingUtilities.invokeLater(this::repaint));
     }

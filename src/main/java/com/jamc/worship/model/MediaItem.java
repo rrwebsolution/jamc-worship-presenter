@@ -27,6 +27,23 @@ public class MediaItem {
         return sourceType == MediaSourceType.YOUTUBE;
     }
 
+    /** A Pixabay video streamed from Pixabay ({@link #path} is its address; {@link #getYoutubeVideoId} holds the Pixabay id). */
+    public boolean isPixabay() {
+        return sourceType == MediaSourceType.PIXABAY;
+    }
+
+    /** The Pixabay id of a PIXABAY item, or 0. */
+    public long pixabayId() {
+        if (!isPixabay() || youtubeVideoId == null) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(youtubeVideoId);
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
     public MediaSourceType getSourceType() { return sourceType; }
     public void setSourceType(MediaSourceType sourceType) { this.sourceType = sourceType == null ? MediaSourceType.LOCAL : sourceType; }
     public String getYoutubeVideoId() { return youtubeVideoId; }

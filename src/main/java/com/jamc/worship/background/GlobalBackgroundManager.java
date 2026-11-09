@@ -458,6 +458,58 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         return true;
     }
 
+    /** One frozen picture per background player, for scene thumbnails (kept until that player is replaced). */
+    private final java.util.Map<Layer, BufferedImage> stills = new java.util.WeakHashMap<>();
+    private final java.util.Map<Layer, Long> stillWait = new java.util.WeakHashMap<>();
+    /** A nearly black first frame (a fade-in) is not frozen; after this long the next frame is taken anyway. */
+    private static final long STILL_BLACK_WAIT_MS = 4000;
+
+    @Override
+    public boolean paintStill(Graphics2D g, Rectangle r, boolean preview) {
+        Layer src = preview && previewPlayer != null ? previewPlayer : player;
+        if (src == null || (src == player && !isActive())) {
+            return false;
+        }
+        BufferedImage still = stills.get(src);
+        if (still == null) {
+            BufferedImage frame = src.currentFrame();
+            if (frame == null) {
+                return false; // no picture yet: the next thumbnail refresh tries again
+            }
+            long since = stillWait.computeIfAbsent(src, k -> System.currentTimeMillis());
+            if (nearlyBlack(frame) && System.currentTimeMillis() - since < STILL_BLACK_WAIT_MS) {
+                return false;
+            }
+            still = copy(frame); // a copy: the player keeps writing into its own frame buffers
+            stills.put(src, still);
+        }
+        draw(g, still, r, 1f, g.getComposite());
+        paintOverlay(g, r);
+        return true;
+    }
+
+    private static BufferedImage copy(BufferedImage src) {
+        BufferedImage out = new BufferedImage(src.getWidth(), src.getHeight(), BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
+        g.drawImage(src, 0, 0, null);
+        g.dispose();
+        return out;
+    }
+
+    /** True for an (almost) black picture, sampled on a coarse grid. */
+    public static boolean nearlyBlack(BufferedImage img) {
+        long sum = 0;
+        int n = 0;
+        for (int y = img.getHeight() / 10; y < img.getHeight(); y += Math.max(1, img.getHeight() / 10)) {
+            for (int x = img.getWidth() / 10; x < img.getWidth(); x += Math.max(1, img.getWidth() / 10)) {
+                int rgb = img.getRGB(x, y);
+                sum += ((rgb >> 16) & 0xFF) + ((rgb >> 8) & 0xFF) + (rgb & 0xFF);
+                n++;
+            }
+        }
+        return n == 0 || sum / (n * 3.0) < 12;
+    }
+
     private void paintOverlay(Graphics2D g, Rectangle r) {
         if (overlay > 0) {
             g.setColor(new Color(0f, 0f, 0f, (float) overlay));
@@ -496,6 +548,13 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
     private Layer start(String mediaPath, boolean startMuted) {
         if (isSolid(mediaPath)) {
             return new ImageLayer(solidImage(mediaPath));
+        }
+        if (com.jamc.worship.media.OnlineMedia.isUrl(mediaPath)) {
+            // an online (Pixabay) background video: streamed by VLC, nothing downloaded
+            VideoPlayer p = new VideoPlayer();
+            p.play(mediaPath, loop, startMuted, ":network-caching=3000");
+            p.setVolume(volume);
+            return new VideoLayer(p);
         }
         Path file = resolver.apply(mediaPath);
         if (!Files.isRegularFile(file)) {

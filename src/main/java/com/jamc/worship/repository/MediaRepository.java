@@ -129,6 +129,23 @@ public class MediaRepository {
         update("UPDATE media SET category = ?, updated_at = ? WHERE id = ?", category.name(), Instant.now().toString(), id);
     }
 
+    public void setPath(long id, String path) {
+        update("UPDATE media SET file_path = ?, updated_at = ? WHERE id = ?", path, Instant.now().toString(), id);
+    }
+
+    /** The library item of an online video (YouTube or Pixabay) with this provider id, if it was added. */
+    public Optional<MediaItem> findBySource(MediaSourceType source, String providerId) {
+        return db.query(conn -> {
+            try (PreparedStatement ps = conn.prepareStatement(SELECT + " WHERE m.youtube_id = ? AND m.source_type = ? LIMIT 1")) {
+                ps.setString(1, providerId);
+                ps.setString(2, source.name());
+                try (ResultSet rs = ps.executeQuery()) {
+                    return rs.next() ? Optional.of(map(rs)) : Optional.empty();
+                }
+            }
+        });
+    }
+
     public void setDuration(long id, long durationMs) {
         update("UPDATE media SET duration_ms = ? WHERE id = ?", durationMs, id);
     }

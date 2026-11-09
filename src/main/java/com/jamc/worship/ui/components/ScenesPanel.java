@@ -182,6 +182,11 @@ public class ScenesPanel extends JPanel {
     private com.jamc.worship.camera.CameraNames cameraNames;
     private final JSlider opacity = new JSlider(0, 100, 100);
     private final JComboBox<String> textPlace = new JComboBox<>(new String[]{"As the theme", "Top", "Middle", "Bottom"});
+    /** LYRICS: this scene's lyrics layout (null = Settings default, else a ProgramLyricsStyle.Mode). */
+    private final JComboBox<String> lyricsLayout = new JComboBox<>(new String[]{"Full lyrics (normal)",
+            "Lower third (bar per line)", "Centered bars", "Full screen (dimmed)"});
+    /** null = Full lyrics, the default of every Lyrics layer. */
+    private static final String[] LAYOUTS = {null, "LOWER_THIRD", "CENTERED", "FULL_SCREEN"};
     private final JSlider textScale = new JSlider(30, 150, 100);
     private final JPanel props = Ui.transparent(new GridBagLayout());
     private boolean loadingProps;
@@ -1392,6 +1397,9 @@ public class ScenesPanel extends JPanel {
         if (com.jamc.worship.youtube.YouTubeRef.is(path)) {
             return "YouTube video (" + com.jamc.worship.youtube.YouTubeRef.id(path) + ")";
         }
+        if (com.jamc.worship.media.OnlineMedia.isUrl(path)) {
+            return "Pixabay video (" + path.substring(path.lastIndexOf('/') + 1) + ")";
+        }
         return java.nio.file.Path.of(path).getFileName().toString();
     }
 
@@ -1489,6 +1497,9 @@ public class ScenesPanel extends JPanel {
         if (m.isYouTube()) {
             return com.jamc.worship.youtube.YouTubeLibrary.thumbnail(m.getYoutubeVideoId(), m.getThumbnailUrl());
         }
+        if (m.isPixabay()) {
+            return com.jamc.worship.pixabay.PixabayThumbnails.get(m.getThumbnailUrl());
+        }
         return m.getKind() == MediaKind.VIDEO ? com.jamc.worship.media.VideoStills.get(media.resolve(m)) : null;
     }
 
@@ -1503,6 +1514,9 @@ public class ScenesPanel extends JPanel {
         if (t == SourceType.VIDEO) {
             if (com.jamc.worship.youtube.YouTubeRef.is(c.path)) {
                 return com.jamc.worship.youtube.YouTubeLibrary.thumbnail(com.jamc.worship.youtube.YouTubeRef.id(c.path), null);
+            }
+            if (com.jamc.worship.media.OnlineMedia.isUrl(c.path)) {
+                return com.jamc.worship.pixabay.PixabayThumbnails.forVideo(c.path);
             }
             return com.jamc.worship.media.VideoStills.get(media.resolve(c.path));
         }
@@ -1603,6 +1617,7 @@ public class ScenesPanel extends JPanel {
         italicBox.addActionListener(e -> apply.run());
         opacity.addChangeListener(e -> apply.run());
         textPlace.addActionListener(e -> apply.run());
+        lyricsLayout.addActionListener(e -> apply.run());
         textScale.addChangeListener(e -> apply.run());
         fileButton.addActionListener(e -> chooseFile());
         visibleBox.addActionListener(e -> apply.run());
@@ -1955,6 +1970,14 @@ public class ScenesPanel extends JPanel {
                 textScale.setToolTipText("Text size compared with the theme (smaller over a camera)");
                 row(g, "Text size %", textScale);
             }
+            if (t == SourceType.LYRICS) {
+                lyricsLayout.setSelectedIndex(Math.max(0, java.util.Arrays.asList(LAYOUTS).indexOf(c.lyricsLayout))); // unknown / "OFF" = Full lyrics
+                lyricsLayout.setToolTipText("<html>How song lyrics look in THIS scene, on Preview and Program (and the stream).<br>"
+                        + "Lower third: a bar per line over the camera. Full lyrics: the normal big words.<br>"
+                        + "Full lyrics is the default. The bars' font and colors are set in Settings → Lyrics Appearance.<br>"
+                        + "The church projector always shows the full lyrics.</html>");
+                row(g, "Lyrics layout", lyricsLayout);
+            }
             if (t == SourceType.OVERLAY) {
                 JPanel o = Ui.transparent(new BorderLayout());
                 o.add(opacity);
@@ -2195,6 +2218,11 @@ public class ScenesPanel extends JPanel {
         }
         if (com.jamc.worship.youtube.YouTubeRef.is(path)) {
             audioStatus.setText("YouTube video: sound plays on the Windows default output; needs the internet");
+            audioStatus.setForeground(Palette.secondaryText());
+            return;
+        }
+        if (com.jamc.worship.media.OnlineMedia.isUrl(path)) {
+            audioStatus.setText("Pixabay video: streams from Pixabay (needs the internet); background videos are usually silent");
             audioStatus.setForeground(Palette.secondaryText());
             return;
         }
@@ -2484,6 +2512,9 @@ public class ScenesPanel extends JPanel {
             if (t == SourceType.LYRICS && c.songId != null) {
                 c.fixedSong = songMode.getSelectedIndex() == 1 ? Boolean.TRUE : null;
             }
+            if (t == SourceType.LYRICS) {
+                c.lyricsLayout = LAYOUTS[Math.max(0, lyricsLayout.getSelectedIndex())];
+            }
         }
         if (t == SourceType.OVERLAY) {
             c.opacity = opacity.getValue() / 100.0;
@@ -2756,6 +2787,7 @@ public class ScenesPanel extends JPanel {
             setToolTipText("<html>Click a layer to select it. Drag to move; drag the small squares to resize (a picture grows as a "
                     + "whole; Shift + drag stretches one side).<br>Layers may go past the edges. Right-click for Fill Scene.</html>");
             compositor.setEditorMode(true); // empty or missing Presentation sources show a placeholder here only
+            compositor.setProgramLyrics(true); // Edit Scene shows the Lyrics layout chosen for this scene
             MouseAdapter mouse = new MouseAdapter() {
                 @Override
                 public void mousePressed(MouseEvent e) {

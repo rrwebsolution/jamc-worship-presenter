@@ -54,7 +54,7 @@ public final class ProgramFrameTap {
             width = w;
             height = h;
             fps = rate;
-            canvas = new OutputCanvas(program);
+            canvas = new OutputCanvas(program).useProgramLyricsStyle(); // stream + recording: the Program lyrics style
             canvas.setSize(w, h);
             // the same pixel type as video frames, so 1080p is copied, not converted pixel by pixel on the Swing thread
             frame = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);

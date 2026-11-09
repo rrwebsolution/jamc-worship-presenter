@@ -218,7 +218,7 @@ public class MediaOutputPanel extends JPanel {
         stopYouTube();
         boolean preset = BackgroundPresets.isPreset(m);
         Path file = preset ? null : media.resolve(m);
-        exists = preset || Files.isRegularFile(file);
+        exists = preset || media.exists(m); // an online (Pixabay) video is never a missing file
         MediaKind kind = m.getKind();
         boolean backgroundItem = m.getCategory() == MediaCategory.BACKGROUND;
         title.setText(m.getName());
@@ -264,7 +264,7 @@ public class MediaOutputPanel extends JPanel {
                     var state = states == null ? null : states.get(stateKey(m), new com.jamc.worship.media.MediaStates.State(false, 100, false));
                     previewPlayer.setVolume(100);
                     previewPlayer.setMuted(hub.routing().programOnly());
-                    previewPlayer.cue(file.toString(), state != null && state.loop());
+                    previewPlayer.cue(m.isPixabay() ? m.getPath() : file.toString(), state != null && state.loop());
                 } catch (RuntimeException e) {
                     Dialogs.showError(this, "The video could not be opened.", e);
                 }
@@ -406,6 +406,12 @@ public class MediaOutputPanel extends JPanel {
             long mb = m.getFileSize() / 1024 / 1024;
             s.append("  ·  ").append(mb > 0 ? mb + " MB" : m.getFileSize() / 1024 + " KB");
         }
+        if (m.isPixabay()) {
+            // streamed from Pixabay (nothing downloaded); the creator is credited wherever it is described
+            s.append("  ·  streams from Pixabay")
+                    .append(m.getChannelName() == null ? "" : "  ·  by " + m.getChannelName() + " via Pixabay");
+            return s.toString();
+        }
         s.append("  ·  ").append(m.isCopied() ? "stored in library" : "linked: " + file);
         return s.toString();
     }
@@ -503,7 +509,9 @@ public class MediaOutputPanel extends JPanel {
                 }
             } else if (m != null && m.getKind() == MediaKind.VIDEO) {
                 img = previewPlayer == null ? null : previewPlayer.currentFrame();
-                if (img == null && exists) {
+                if (img == null && m.isPixabay()) {
+                    img = com.jamc.worship.pixabay.PixabayThumbnails.get(m.getThumbnailUrl());
+                } else if (img == null && exists) {
                     img = VideoThumbnails.get(media.resolve(m));
                 }
             }

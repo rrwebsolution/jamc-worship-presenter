@@ -166,6 +166,7 @@ public class ScenesDock extends JPanel {
 
     {
         compositor.setStillVideos(true); // thumbnails: a still picture of each video, never a playing one
+        compositor.setProgramLyrics(true); // the scene's lyrics layout (lower third or full) shows in its picture
         com.jamc.worship.media.VideoStills.addListener(this::refreshThumbnails);
         com.jamc.worship.youtube.YouTubeLibrary.addListener(() -> javax.swing.SwingUtilities.invokeLater(this::refreshThumbnails));
         Rendering.renderer().images().addChangeListener(() -> javax.swing.SwingUtilities.invokeLater(this::refreshThumbnails));

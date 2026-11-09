@@ -102,7 +102,7 @@ public final class ObsOutput {
         f.setUndecorated(borderless());
         f.setResizable(false);
         f.setAutoRequestFocus(false);
-        OutputCanvas canvas = new OutputCanvas(program, green());
+        OutputCanvas canvas = new OutputCanvas(program, green()).useProgramLyricsStyle(); // OBS takes the Program lyrics style
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(Color.BLACK);
         root.add(canvas);

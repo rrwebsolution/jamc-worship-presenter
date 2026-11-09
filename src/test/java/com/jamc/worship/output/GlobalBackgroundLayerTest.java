@@ -33,6 +33,7 @@ class GlobalBackgroundLayerTest {
 
     private static final Color GLOBAL = new Color(0xFF00FF);
     private static final Color THEME = new Color(0x203040);
+    private static final Color STILL = new Color(0x00C0C0);
 
     @TempDir
     Path tempDir;
@@ -64,6 +65,50 @@ class GlobalBackgroundLayerTest {
 
     private Color corner(FrameSpec spec) {
         return new Color(compositor.render(spec, 160, 90, false).getRGB(2, 2));
+    }
+
+    /** Scene thumbnails (Control page) ask for the background's frozen still; Program and Preview for the moving video. */
+    @Test
+    void sceneThumbnailsShowAStillBackgroundNeverThePlayingOne() {
+        global.active = true;
+        Compositor thumbnails = new Compositor(new SlideRenderer(new ImageCache(null)));
+        thumbnails.setStillVideos(true);
+        FrameSpec song = live(new Slide("Verse 1", "Amazing grace", null), theme(BackgroundMode.USE_GLOBAL));
+        int paints = global.paints;
+        assertEquals(STILL, new Color(thumbnails.render(song, 160, 90, false).getRGB(2, 2)));
+        assertEquals(paints, global.paints, "the playing video is not drawn into a thumbnail");
+        assertEquals(1, global.stills);
+        assertEquals(GLOBAL, corner(song), "Program still draws the moving video");
+    }
+
+    /**
+     * TAKE AS BACKGROUND before any lyrics were sent: a lyrics scene whose Media layer is hidden still shows the
+     * background (its automatic background under the words), on Program and Preview alike. It used to stay black
+     * until a lyrics card was clicked.
+     */
+    @Test
+    void aLyricsSceneShowsTheBackgroundBeforeAnyLyricsAreSent() {
+        global.active = true;
+        com.jamc.worship.model.Scene scene = new com.jamc.worship.model.Scene(2L, "Lyrics and Bible");
+        scene.getSources().add(new com.jamc.worship.model.Source("Lyrics", com.jamc.worship.model.SourceType.LYRICS));
+        com.jamc.worship.model.Source media = new com.jamc.worship.model.Source("Media", com.jamc.worship.model.SourceType.BACKGROUND);
+        media.setVisible(false);
+        scene.getSources().add(media);
+        FrameSpec nothingYet = new FrameSpec(null, true, true, false, scene);
+        assertEquals(GLOBAL, corner(nothingYet));
+        Compositor preview = new Compositor(new SlideRenderer(new ImageCache(null)), true);
+        assertEquals(GLOBAL, new Color(preview.render(nothingYet, 160, 90, false).getRGB(2, 2)));
+    }
+
+    @Test
+    void aBlackFadeInIsNotFrozenAsTheStill() {
+        BufferedImage black = new BufferedImage(64, 36, BufferedImage.TYPE_INT_RGB);
+        assertTrue(GlobalBackgroundManager.nearlyBlack(black));
+        Graphics2D g = black.createGraphics();
+        g.setColor(new Color(0x3060A0));
+        g.fillRect(0, 0, 64, 36);
+        g.dispose();
+        assertFalse(GlobalBackgroundManager.nearlyBlack(black));
     }
 
     @Test
@@ -312,6 +357,16 @@ class GlobalBackgroundLayerTest {
         public boolean paint(Graphics2D g, Rectangle r) {
             paints++;
             g.setColor(GLOBAL);
+            g.fillRect(r.x, r.y, r.width, r.height);
+            return true;
+        }
+
+        int stills;
+
+        @Override
+        public boolean paintStill(Graphics2D g, Rectangle r, boolean preview) {
+            stills++;
+            g.setColor(STILL);
             g.fillRect(r.x, r.y, r.width, r.height);
             return true;
         }

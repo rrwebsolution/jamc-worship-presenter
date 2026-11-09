@@ -35,8 +35,11 @@ window.jamc = {
   },
   play: function () { call(function () { player.playVideo(); }); },
   pause: function () { call(function () { player.pauseVideo(); }); },
-  stop: function () { call(function () { player.pauseVideo(); player.seekTo(0, true); }); },
-  seek: function (sec) { call(function () { player.seekTo(sec, true); }); },
+  // STOP never starts a video: YouTube's seekTo() PLAYS a video that is only cued (selected, never played), so
+  // leaving the Videos page started it. Stop = the same video cued again at 0:00 (paused, its thumbnail shown).
+  stop: function () { call(function () { cueAt(0); }); },
+  // a seek on a video that is not playing or paused (cued / not started / ended) stays still too
+  seek: function (sec) { call(function () { if (idle()) { cueAt(sec); } else { player.seekTo(sec, true); } }); },
   volume: function (v) { wantVolume = v; call(function () { player.setVolume(v); }); },
   mute: function (m) { wantMuted = m; call(function () { m ? player.mute() : player.unMute(); }); },
   loop: function (l) { wantLoop = l; },
@@ -46,6 +49,18 @@ window.jamc = {
     call(function () { player.loadPlaylist({list: 'RD' + id, listType: 'playlist', index: 1}); });
   }
 };
+
+/** True when the video is not playing, buffering or paused: seekTo() would START it from here. */
+function idle() {
+  var s = player.getPlayerState();
+  return !(s === 1 || s === 2 || s === 3);
+}
+
+/** The current video, cued (still) at {@code sec}: it never plays until PLAY. */
+function cueAt(sec) {
+  var id = (now().vid) || videoId;
+  if (id) { player.cueVideoById({videoId: id, startSeconds: sec}); }
+}
 
 /** The video really playing now (it changes as the Mix moves on). */
 function now() {

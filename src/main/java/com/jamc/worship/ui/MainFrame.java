@@ -7,6 +7,7 @@ import com.jamc.worship.bible.BiblePassage;
 import com.jamc.worship.ui.dialogs.BibleVersionsDialog;
 import com.jamc.worship.camera.CameraManager;
 import com.jamc.worship.config.AppConfig;
+import com.jamc.worship.config.LyricsTransitionSettings;
 import com.jamc.worship.media.MediaHub;
 import com.jamc.worship.model.BackgroundType;
 import com.jamc.worship.model.MediaCategory;
@@ -24,6 +25,7 @@ import com.jamc.worship.model.StyleOverrides;
 import com.jamc.worship.model.Theme;
 import com.jamc.worship.output.DisplayManager;
 import com.jamc.worship.output.LiveContent;
+import com.jamc.worship.output.LyricsContext;
 import com.jamc.worship.output.ObsOutput;
 import com.jamc.worship.output.OutputService;
 import com.jamc.worship.output.ProgramOutput;
@@ -307,6 +309,13 @@ public class MainFrame extends JFrame {
         Rendering.installFrames(hub);
         this.globalBackground = new GlobalBackgroundManager(context.config(), path -> context.mediaService().resolve(path));
         Rendering.installGlobalBackground(globalBackground);
+        // the Program lyrics style (lower third on the stream / recording / OBS); the projector keeps full-screen lyrics
+        com.jamc.worship.config.ProgramLyricsStyle.addListener(() -> {
+            int ms = com.jamc.worship.config.ProgramLyricsStyle.applied().changeMs();
+            program.setLyricsOverlayFade(ms);
+            previewState.setLyricsOverlayFade(ms); // Preview fades bar lyrics the same way, like Program will
+        });
+        com.jamc.worship.config.ProgramLyricsStyle.install(context.config());
         // Presentation scene sources reference library presentations by id; their cached slides are looked up here
         this.libraryPresentations = new com.jamc.worship.presentation.LibraryPresentations(context.presentationService());
         Rendering.installPresentations(libraryPresentations);
@@ -351,7 +360,16 @@ public class MainFrame extends JFrame {
         audioLibrary = new MediaLibraryPanel(context.mediaService(), "Audio", List.of(MediaCategory.AUDIO), MediaCategory.AUDIO);
         backgroundLibrary = new MediaLibraryPanel(context.mediaService(), "Backgrounds", List.of(MediaCategory.BACKGROUND),
                 MediaCategory.BACKGROUND);
+        backgroundLibrary.setYouTubeSupport(context.config()); // + → Pixabay Worship Backgrounds… needs the settings
         videoTabs = new com.jamc.worship.ui.components.VideoLibraryPanel(videoLibrary, backgroundLibrary);
+        // Pixabay USE AS BACKGROUND: Library → Backgrounds opens on it in MEDIA PREVIEW (Program waits for TAKE AS BACKGROUND)
+        java.util.function.Consumer<MediaItem> openBackground = m -> {
+            showCategory(Sidebar.Category.VIDEOS);
+            videoTabs.selectBackground(m.getId());
+        };
+        videoLibrary.setOpenBackground(openBackground);
+        backgroundLibrary.setOpenBackground(openBackground);
+        com.jamc.worship.pixabay.PixabayThumbnails.install(context.paths().dataDir().resolve("pixabay").resolve("posters"));
         // the one MEDIA PREVIEW monitor for every media library; the background's controls sit under it
         mediaDetail = new MediaOutputPanel(context.mediaService(), hub, globalBackground, backgroundPanel, new MediaOutputPanel.Actions() {
             @Override
@@ -821,6 +839,7 @@ public class MainFrame extends JFrame {
 
         statusBar.setDataDirectory(context.paths().root().toString());
         statusBar.setDatabaseStatus(true, "Database OK");
+        installHealthMonitor();
 
         // the app opens on the Library, on its last category (Lyrics on the first launch); nothing goes to Program
         sidebar.selectCategory(savedLibraryCategory());
@@ -1128,7 +1147,13 @@ public class MainFrame extends JFrame {
         songLibrary.setStatusHandler(statusBar::showMessage);
         songLibrary.setAddToServiceHandler(song -> schedule.addItem(ServiceItem.ofSong(song)));
         songLibrary.addSelectionListener(this::onSongLoaded);
-        songLibrary.setRowClickHandler(this::leaveItemWorkspace);
+        songLibrary.setRowClickHandler(() -> {
+            leaveItemWorkspace();
+            Song clicked = songLibrary.selectedSong();
+            titleClickSongId = clicked == null ? null : clicked.getId();
+            titleClickNanos = System.nanoTime();
+            titleClickToLive(); // the song may already be loaded (the click comes after the selection)
+        });
 
         schedule.setStatusHandler(statusBar::showMessage);
         // one click on a service item: it shows in the workspace and becomes active in its library (Preview and
@@ -1671,6 +1696,40 @@ public class MainFrame extends JFrame {
             suppressAutoTake = false;
         }
         updateClickHint();
+        titleClickToLive(); // or the click came first and the song loaded just now
+    }
+
+    /** The song whose TITLE the operator just clicked in the Lyrics list (null when none is waiting). */
+    private Long titleClickSongId;
+    private long titleClickNanos;
+
+    /**
+     * A click on a song's TITLE in the Lyrics list puts its slide straight on Program, like a click on a lyrics card,
+     * when lyrics go live on click (Settings → Separate Lyrics off). With Separate Lyrics on it stays in Preview.
+     * Only a real click does this: reloading a song (Edit Song, startup, returning to Lyrics) never goes live.
+     * The slide is the one the strip opens on: the first slide, or the live / selected slide of the same song.
+     */
+    private void titleClickToLive() {
+        Long id = titleClickSongId;
+        if (id == null) {
+            return;
+        }
+        if (System.nanoTime() - titleClickNanos > 5_000_000_000L) {
+            titleClickSongId = null; // a slow load: too late to surprise the operator
+            return;
+        }
+        List<Slide> strip = thumbnails.getSlides();
+        if (stripSource != StripSource.SONG || restoringStrip || strip.isEmpty() || !id.equals(strip.getFirst().getSongId())) {
+            return; // not loaded yet: showSongSlides calls again
+        }
+        titleClickSongId = null;
+        if (!songClickGoesLive() || previewSlide == null || previewVideoPath != null) {
+            return;
+        }
+        boolean alreadyLive = previewSlide == takenSlide && program.content() == takenContent;
+        if (!alreadyLive) {
+            take(false); // content only: Program keeps its scene (with Separate Layouts, its own lyrics layout)
+        }
     }
 
     /** Where the strip should start when it shows the song it already showed: the live slide, else the selected one. */
@@ -2173,8 +2232,17 @@ public class MainFrame extends JFrame {
         if (orderDialog == null) {
             orderDialog = new javax.swing.JDialog(this, "Order", false);
             orderDialog.setContentPane(region(actionOrder));
-            orderDialog.setSize(460, 620);
+            // fits a small laptop screen; the cards scroll for long arrangements
+            java.awt.Rectangle screen = getGraphicsConfiguration().getBounds();
+            orderDialog.setMinimumSize(new Dimension(420, 420));
+            orderDialog.setSize(Math.min(640, screen.width - 40), Math.min(780, screen.height - 80));
+            // the title follows whatever the strip shows (lyrics, verses, a presentation, a slide deck)
+            thumbnails.addSlidesChangedListener(() -> {
+                actionOrder.setTitle(thumbnails.getTitle());
+                orderDialog.setTitle("Order – " + thumbnails.getTitle());
+            });
         }
+        actionOrder.setTitle(thumbnails.getTitle());
         orderDialog.setTitle("Order – " + thumbnails.getTitle());
         orderDialog.setLocationRelativeTo(thumbnails);
         orderDialog.setVisible(true);
@@ -2419,8 +2487,8 @@ public class MainFrame extends JFrame {
         @Override
         public java.awt.image.BufferedImage[] monitorPictures() {
             if (previewCanvas == null) {
-                previewCanvas = new com.jamc.worship.output.OutputCanvas(previewState, false, true);
-                programCanvas = new com.jamc.worship.output.OutputCanvas(program);
+                previewCanvas = new com.jamc.worship.output.OutputCanvas(previewState, false, true).useProgramLyricsStyle();
+                programCanvas = new com.jamc.worship.output.OutputCanvas(program).useProgramLyricsStyle();
                 previewCanvas.setSize(PICTURE_WIDTH, PICTURE_HEIGHT);
                 programCanvas.setSize(PICTURE_WIDTH, PICTURE_HEIGHT);
             }
@@ -3007,8 +3075,82 @@ public class MainFrame extends JFrame {
 
         @Override
         public boolean canEditOrder() {
-            return stripSource != StripSource.DECK && stripSource != StripSource.NONE && !thumbnails.getSlides().isEmpty()
+            if (stripSource == StripSource.DECK) {
+                return thumbnails.editHandler() != null && !thumbnails.getSlides().isEmpty(); // custom slides: the deck itself
+            }
+            return stripSource != StripSource.NONE && !thumbnails.getSlides().isEmpty()
                     && !(stripSource == StripSource.PRESENTATION && importInStrip);
+        }
+
+        /** Custom slide decks are reordered in the deck itself (the slide editor's own add / move / delete). */
+        private SlideThumbnailStrip.EditHandler deckHandler() {
+            return stripSource == StripSource.DECK ? thumbnails.editHandler() : null;
+        }
+
+        @Override
+        public void moveEntry(int fromSlide, int toSlide, List<List<Slide>> entries) {
+            SlideThumbnailStrip.EditHandler deck = deckHandler();
+            if (deck == null) {
+                applyOrder(entries);
+                return;
+            }
+            // reach the new order one move at a time (each move saves the deck and refills the strip)
+            List<Slide> target = new ArrayList<>();
+            entries.forEach(target::addAll);
+            for (int i = 0; i < target.size(); i++) {
+                int at = indexOf(thumbnails.getSlides(), target.get(i));
+                if (at >= 0 && at != i) {
+                    deck.move(at, i);
+                }
+            }
+        }
+
+        @Override
+        public void duplicateEntry(int slide, List<List<Slide>> entries) {
+            SlideThumbnailStrip.EditHandler deck = deckHandler();
+            if (deck != null) {
+                deck.duplicate(slide);
+            } else {
+                applyOrder(entries);
+            }
+        }
+
+        @Override
+        public void removeEntry(int slide, List<List<Slide>> entries) {
+            SlideThumbnailStrip.EditHandler deck = deckHandler();
+            if (deck != null) {
+                deck.delete(slide); // asks first when the slide has words
+            } else {
+                applyOrder(entries);
+            }
+        }
+
+        @Override
+        public boolean canEditSlide(int slideIndex) {
+            return (stripSource == StripSource.SONG && songLibrary.currentSong() != null) || deckHandler() != null;
+        }
+
+        @Override
+        public void editSlide(int slideIndex) {
+            if (stripSource == StripSource.SONG) {
+                songLibrary.editSelected(); // Edit Song: the words of every section
+            } else if (deckHandler() != null) {
+                thumbnails.setSelectedIndex(slideIndex); // the slide editor beside the strip shows this slide
+                MainFrame.this.toFront();
+            }
+        }
+
+        @Override
+        public boolean canAddSlide() {
+            return deckHandler() != null;
+        }
+
+        @Override
+        public void addSlide(int afterIndex) {
+            SlideThumbnailStrip.EditHandler deck = deckHandler();
+            if (deck != null) {
+                deck.add(afterIndex);
+            }
         }
 
         @Override
@@ -3160,11 +3302,14 @@ public class MainFrame extends JFrame {
             takenIndex = index;
             takenSlide = fresh;
         }
-        if (sameContent(fresh, live.slide()) && Objects.equals(style, live.style())) {
+        // a Spotify-style card keeps the transition it was sent with; its neighbours follow the edit too
+        LyricsContext lyrics = live.lyrics() == null ? null : lyricsContext(fresh, strip, index, live.lyrics().settings());
+        if (sameContent(fresh, live.slide()) && Objects.equals(style, live.style())
+                && (live.lyrics() == null || (lyrics != null && lyrics.cards().equals(live.lyrics().cards())))) {
             refreshLiveMarker(); // the rebuilt strip shows the LIVE border on it again
             return; // e.g. the item opened again unchanged: no update
         }
-        LiveContent content = LiveContent.snapshot(fresh, style, live.title());
+        LiveContent content = LiveContent.snapshot(fresh, style, live.title(), lyrics);
         takenContent = content;
         program.updateContent(content);
         refreshLiveMarker();
@@ -3514,7 +3659,9 @@ public class MainFrame extends JFrame {
             mediaInPreview(item);
             return;
         }
-        String path = context.mediaService().resolve(item).toString();
+        // an online (Pixabay) video streams from its address; everything else is a file on this computer
+        String path = com.jamc.worship.media.OnlineMedia.isUrl(item.getPath()) ? item.getPath()
+                : context.mediaService().resolve(item).toString();
         if (item.getKind() == MediaKind.IMAGE) {
             StyleOverrides o = new StyleOverrides();
             o.backgroundType = BackgroundType.IMAGE;
@@ -3621,12 +3768,64 @@ public class MainFrame extends JFrame {
         previewTitle = title;
         previewVideoPath = null;
         if (slide != null && style != null) {
-            previewState.take(LiveContent.snapshot(slide, style, title));
+            List<Slide> strip = thumbnails.getSlides();
+            previewState.take(LiveContent.snapshot(slide, style, title,
+                    lyricsContext(slide, strip, indexOf(strip, slide), null)));
         } else {
             previewState.clear();
         }
         liveDock.setPreviewReady(slide != null || pendingScene != null);
         updatePreviewNote();
+    }
+
+    /**
+     * Song lyrics sent to an output whose scene has no Lyrics layer turned on are not seen there (e.g. with Separate
+     * Layouts, Program keeps a camera scene). Says so at once, so the operator is never surprised by a Program
+     * without words.
+     */
+    private void warnIfLyricsHidden(LiveContent content, Scene scene, String where) {
+        if (!com.jamc.worship.output.ProgramOutput.isSongLyrics(content) || showsLyrics(scene)) {
+            return;
+        }
+        statusBar.showMessage("⚠ The lyrics are on " + where + ", but its scene \"" + scene.getName()
+                + "\" has no Lyrics layer turned on, so they are not seen. Edit Scene → turn on its Lyrics layer "
+                + "(Lyrics layout: Lower third or Full lyrics), or TAKE SCENE a scene with lyrics.");
+    }
+
+    /** True when this scene shows song lyrics (a visible Lyrics layer); no scene = the built-in one, which does. */
+    static boolean showsLyrics(Scene scene) {
+        return scene == null || scene.getSources().stream()
+                .anyMatch(s -> s.isVisible() && s.getType() == com.jamc.worship.model.SourceType.LYRICS);
+    }
+
+    private static int indexOf(List<Slide> strip, Slide slide) {
+        for (int i = 0; i < strip.size(); i++) {
+            if (strip.get(i) == slide) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Where a lyrics card sits in its song plus the lyrics transition (Settings → Lyrics Transition), sent along with
+     * it to Preview / Program; null for anything that is not a song card in the strip, or when the transition is
+     * NONE (the card then changes with the Program transition, as before). {@code settings} keeps the settings a
+     * live card was sent with (a live edit must not switch the transition); null reads the current settings.
+     */
+    private LyricsContext lyricsContext(Slide slide, List<Slide> strip, int index, LyricsTransitionSettings settings) {
+        if (slide == null || slide.getSongId() == null || index < 0 || index >= strip.size()) {
+            return null;
+        }
+        LyricsTransitionSettings s = settings != null ? settings : LyricsTransitionSettings.load(context.config());
+        if (s.mode() == LyricsTransitionSettings.Mode.NONE) {
+            return null;
+        }
+        List<String> cards = new ArrayList<>(strip.size());
+        for (Slide x : strip) {
+            cards.add(Objects.equals(x.getSongId(), slide.getSongId()) ? x.getText() : "");
+        }
+        return new LyricsContext(slide.getSongId(), cards, index, s);
     }
 
     /** Preview follows Program's scene unless the operator has another scene waiting in Preview. */
@@ -3692,15 +3891,10 @@ public class MainFrame extends JFrame {
                 return;
             }
         } else {
-            LiveContent content = LiveContent.snapshot(previewSlide, previewStyle, previewTitle);
             List<Slide> strip = thumbnails.getSlides();
-            int index = -1;
-            for (int i = 0; i < strip.size(); i++) {
-                if (strip.get(i) == previewSlide) {
-                    index = i;
-                    break;
-                }
-            }
+            int index = indexOf(strip, previewSlide);
+            LiveContent content = LiveContent.snapshot(previewSlide, previewStyle, previewTitle,
+                    lyricsContext(previewSlide, strip, index, null));
             takenContent = content;
             takenSlides = strip;
             takenKey = thumbnails.getSourceKey();
@@ -3709,6 +3903,7 @@ public class MainFrame extends JFrame {
             taken = content;
         }
         program.take(taken, scene);
+        warnIfLyricsHidden(taken, program.scene(), "Program");
         // IMAGE SLIDESHOWS follow Preview at TAKE (each in its own layer, nothing else is rebuilt)
         slideshows.take();
         if (scene != null) {
@@ -4295,6 +4490,57 @@ public class MainFrame extends JFrame {
     }
 
 
+    // ------------------------------------------------------------------ Production Health Monitor (footer)
+
+    private final com.jamc.worship.monitor.SystemSampler healthSampler = new com.jamc.worship.monitor.SystemSampler();
+    private com.jamc.worship.monitor.HealthMonitor health;
+    private com.jamc.worship.monitor.SystemSampler.Reading lastReading = com.jamc.worship.monitor.SystemSampler.Reading.UNKNOWN;
+
+    /**
+     * CPU and memory are read every 2 s on a background thread; the stream, recording, cameras and database are
+     * read on the Swing thread from what they already report (and again whenever they change). Nothing is
+     * restarted or changed to measure it.
+     */
+    private void installHealthMonitor() {
+        AppConfig cfg = context.config();
+        health = new com.jamc.worship.monitor.HealthMonitor(() -> com.jamc.worship.monitor.HealthThresholds.load(cfg));
+        health.setAlertListener(a -> statusBar.showMessage((a.level() == com.jamc.worship.monitor.HealthMonitor.Level.CRITICAL
+                ? "⛔ " : "⚠ ") + a.text() + "  (click Health in the footer for details)"));
+        var strip = statusBar.health();
+        strip.setAlerts(health::alerts);
+        strip.setOutputInfo(() -> {
+            var s = streamManager.settings();
+            return s.width() + "×" + s.height() + " at " + s.fps() + " fps"
+                    + (s.destinationName() == null || s.destinationName().isBlank() ? "" : " → " + s.destinationName());
+        });
+        strip.setOpenSettings(() -> {
+            topBar.selectPage(TopBar.Page.SETTINGS);
+            showPage(TopBar.Page.SETTINGS);
+            settingsPanel.revealHealthMonitor();
+        });
+        streamManager.addListener(this::updateHealth);
+        cameras.addListener(() -> SwingUtilities.invokeLater(this::updateHealth));
+        healthSampler.start(2000, r -> SwingUtilities.invokeLater(() -> {
+            lastReading = r;
+            updateHealth();
+        }));
+    }
+
+    private void updateHealth() {
+        if (health == null) {
+            return;
+        }
+        java.util.List<com.jamc.worship.monitor.HealthMonitor.Camera> cams = new java.util.ArrayList<>();
+        for (String name : cameras.knownCameras()) {
+            cams.add(new com.jamc.worship.monitor.HealthMonitor.Camera(name, cameras.status(name), cameras.liveSize(name),
+                    cameras.liveFps(name), cameras.problem(name)));
+        }
+        var t = com.jamc.worship.monitor.HealthThresholds.load(context.config());
+        statusBar.health().setSustainSeconds(t.sustainSeconds());
+        statusBar.health().show(health.update(new com.jamc.worship.monitor.HealthMonitor.Inputs(lastReading,
+                streamManager.live(), streamManager.recording(), cams, statusBar.databaseOk()), System.currentTimeMillis()));
+    }
+
     /** "BG: Loop.mp4" in the footer while there is a global background (Take as Background). */
     private void updateBackgroundIndicator() {
         String name = globalBackground.path() == null ? null : GlobalBackgroundPanel.displayName(globalBackground.path());
@@ -4311,7 +4557,6 @@ public class MainFrame extends JFrame {
         topBar.setRecording(!r.active() ? null : r.finishing() ? "SAVING…"
                 : "■ STOP REC " + com.jamc.worship.ui.components.StreamPanel.elapsed(r.startedMillis()), r.finishing());
         var l = streamManager.live();
-        statusBar.setLiveStatus(l);
         topBar.setStreaming(!l.active() ? null : l.finishing() ? "STOPPING…"
                 : l.state() == com.jamc.worship.stream.StreamManager.State.ACTIVE
                 ? "■ LIVE " + com.jamc.worship.ui.components.StreamPanel.elapsed(l.startedMillis()) : "CONNECTING…",
@@ -4783,6 +5028,7 @@ public class MainFrame extends JFrame {
 
     private void shutdown() {
         log.info("Shutting down");
+        healthSampler.stop();
         saveEverything();
         exitWatchdog(-1);
         releaseResources();

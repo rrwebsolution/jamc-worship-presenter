@@ -26,6 +26,14 @@ public interface GlobalBackgroundView {
     /** Paints the previewed background, or the live one if nothing else is being previewed. */
     boolean paintPreview(Graphics2D g, Rectangle r);
 
+    /**
+     * A STILL picture of the background (live, or the previewed one when {@code preview}): one frame, frozen, that
+     * changes only when the background changes. For scene thumbnails, which must never look like they are playing.
+     */
+    default boolean paintStill(Graphics2D g, Rectangle r, boolean preview) {
+        return preview ? paintPreview(g, r) : paint(g, r);
+    }
+
     void addListener(Runnable listener);
 
     void removeListener(Runnable listener);

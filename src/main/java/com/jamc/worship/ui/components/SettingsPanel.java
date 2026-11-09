@@ -337,6 +337,12 @@ public class SettingsPanel extends JPanel {
             content.add(section("Lyrics Typography", "Presentation → Lyrics: one look for every song. "
                     + "Lyrics are stored as typed; UPPERCASE is applied only on screen.", lyricsBody), c);
             c.gridy++;
+            content.add(section("Lyrics Transition", "Presentation → Lyrics: how the words change on NEXT / PREVIOUS "
+                    + "(Preview, Program, projector, OBS and the stream)", new LyricsTransitionPanel(cfg, typo)), c);
+            c.gridy++;
+            content.add(section("Lyrics Appearance", "Full lyrics or a lower third (a bar per line over the camera): "
+                    + "each scene picks its layout in Edit Scene → Lyrics layout", new LyricsAppearancePanel(cfg)), c);
+            c.gridy++;
             bibleTypography = new TypographyEditor(typo, ContentKind.BIBLE);
             bibleDesign = new BibleDesignPicker(typo, cfg, this::bibleDesignApplied);
             content.add(section("Bible Design", "Presentation → Bible: pick a ready-made look for the verses", bibleDesign), c);
@@ -425,12 +431,19 @@ public class SettingsPanel extends JPanel {
         c.gridy++;
         content.add(liveSection("Recording & Livestream", "Quality, encoder, where recordings go, FFmpeg and microphones", recordingBody), c);
         c.gridy++;
+        healthSection = section("Health Monitor", "When the footer health turns Warning or Critical. Readings are only "
+                + "measured, never changed: cameras, the livestream and recordings are not touched", buildHealthSettings(cfg));
+        content.add(healthSection, c);
+        c.gridy++;
         content.add(liveSection("Remote Control", "Let phones and tablets on this network connect, and choose what each may do", remoteBody), c);
         c.gridy++;
 
         // INTEGRATIONS → LYRICS
         content.add(section("Integrations → Lyrics", "Where SEARCH LYRICS looks. Lyrics are reviewed before saving and "
                 + "then stay on this computer (they work offline).", lyricsIntegrations(context)), c);
+        c.gridy++;
+        content.add(section("Integrations → Pixabay", "Praise & worship background videos (Library → Videos or "
+                + "Backgrounds → + → Pixabay Worship Backgrounds…)", pixabayIntegration(cfg)), c);
         c.gridy++;
 
         // DATABASE
@@ -625,6 +638,52 @@ public class SettingsPanel extends JPanel {
     }
 
     /** Settings → Camera: multiview quality and frame rate, the camera switch transition, Direct Camera Switching. */
+    private JComponent healthSection;
+
+    /** Scrolls Settings to the Health Monitor card (from the footer health details). */
+    public void revealHealthMonitor() {
+        if (healthSection != null) {
+            javax.swing.SwingUtilities.invokeLater(() -> healthSection.scrollRectToVisible(
+                    new java.awt.Rectangle(0, 0, healthSection.getWidth(), healthSection.getHeight())));
+        }
+    }
+
+    private JComponent buildHealthSettings(AppConfig cfg) {
+        com.jamc.worship.monitor.HealthThresholds t = com.jamc.worship.monitor.HealthThresholds.load(cfg);
+        javax.swing.JSpinner cpuWarn = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(t.cpuWarning(), 10, 100, 5));
+        javax.swing.JSpinner cpuCrit = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(t.cpuCritical(), 10, 100, 5));
+        javax.swing.JSpinner sustain = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(t.sustainSeconds(), 2, 600, 5));
+        javax.swing.JSpinner dropWarn = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(t.droppedWarning(), 0.1, 100.0, 0.5));
+        javax.swing.JSpinner dropCrit = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(t.droppedCritical(), 0.1, 100.0, 0.5));
+        javax.swing.JSpinner ramWarn = new javax.swing.JSpinner(new javax.swing.SpinnerNumberModel(t.ramWarning(), 10, 100, 5));
+        Runnable save = () -> new com.jamc.worship.monitor.HealthThresholds(((Number) cpuWarn.getValue()).intValue(),
+                Math.max(((Number) cpuWarn.getValue()).intValue(), ((Number) cpuCrit.getValue()).intValue()),
+                ((Number) sustain.getValue()).intValue(), ((Number) dropWarn.getValue()).doubleValue(),
+                Math.max(((Number) dropWarn.getValue()).doubleValue(), ((Number) dropCrit.getValue()).doubleValue()),
+                ((Number) ramWarn.getValue()).intValue()).save(cfg);
+        for (javax.swing.JSpinner s : new javax.swing.JSpinner[]{cpuWarn, cpuCrit, sustain, dropWarn, dropCrit, ramWarn}) {
+            s.addChangeListener(e -> save.run());
+        }
+        JButton reset = Ui.button("Reset to Defaults", null);
+        reset.addActionListener(e -> {
+            com.jamc.worship.monitor.HealthThresholds d = com.jamc.worship.monitor.HealthThresholds.DEFAULTS;
+            cpuWarn.setValue(d.cpuWarning());
+            cpuCrit.setValue(d.cpuCritical());
+            sustain.setValue(d.sustainSeconds());
+            dropWarn.setValue(d.droppedWarning());
+            dropCrit.setValue(d.droppedCritical());
+            ramWarn.setValue(d.ramWarning());
+        });
+        return rows(flow(Ui.small("CPU warning at"), cpuWarn, Ui.small("%   critical at"), cpuCrit, Ui.small("%   when it lasts"), sustain, Ui.small("s")),
+                flow(Ui.small("Dropped frames (last 30 s) warning at"), dropWarn, Ui.small("%   critical at"), dropCrit, Ui.small("%")),
+                flow(Ui.small("Memory warning at"), ramWarn, Ui.small("% in use")),
+                flow(reset),
+                Ui.label("<html>Also Critical: a livestream or recording that stopped by itself, a camera error, a database "
+                        + "problem. A disconnected camera is a Warning. Stopping the livestream yourself is never a problem. "
+                        + "Each problem is announced once in the footer; the health details keep the recent alerts.</html>",
+                        Palette::mutedText, "small"));
+    }
+
     private JComponent buildCameraSettings(AppConfig cfg) {
         com.jamc.worship.camera.CameraSettings cam = new com.jamc.worship.camera.CameraSettings(cfg);
         JComboBox<com.jamc.worship.camera.CameraSettings.Quality> quality =
@@ -1157,6 +1216,41 @@ public class SettingsPanel extends JPanel {
      * LYRICS PROVIDERS: each provider with its status and capabilities, and its setup. Secret keys are never
      * shown again once saved. Only connected providers are offered in FIND LYRICS.
      */
+    /** The Pixabay API key: set (checked with Pixabay before it is saved) or removed; the key itself is never shown. */
+    private JComponent pixabayIntegration(AppConfig cfg) {
+        JPanel body = Ui.transparent(new BorderLayout(0, 8));
+        Runnable[] fill = new Runnable[1];
+        fill[0] = () -> {
+            body.removeAll();
+            boolean hasKey = cfg.get(com.jamc.worship.pixabay.PixabayClient.KEY_API_KEY, null) != null;
+            JButton setKey = Ui.button(hasKey ? "Change Key…" : "Set Key…", null);
+            setKey.addActionListener(e -> com.jamc.worship.ui.dialogs.PixabayBrowserDialog.askForKey(this, cfg, fill[0]));
+            JButton removeKey = Ui.button("Remove", null);
+            removeKey.setVisible(hasKey);
+            removeKey.addActionListener(e -> {
+                cfg.set(com.jamc.worship.pixabay.PixabayClient.KEY_API_KEY, null);
+                cfg.save();
+                fill[0].run();
+            });
+            JPanel text = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 1));
+            text.add(flow(Ui.label("Pixabay Videos API", Palette::text, "semibold"),
+                    Ui.label(hasKey ? "● Key saved and checked (hidden)" : "○ No key yet", hasKey ? Palette::live : Palette::mutedText, "small")));
+            text.add(Ui.small("Free key: sign in at pixabay.com, open pixabay.com/api/docs and copy \"Your API key\"."));
+            JPanel row = Ui.transparent(new BorderLayout(10, 0));
+            row.add(text, BorderLayout.CENTER);
+            row.add(flow(setKey, removeKey), BorderLayout.EAST);
+            body.add(row, BorderLayout.NORTH);
+            body.add(Ui.label("<html>Videos stream from Pixabay when shown and are never downloaded (Pixabay allows videos "
+                    + "to be embedded directly), so they need the internet during the service. Searches are kept for 24 hours "
+                    + "as Pixabay asks, safe search is always on, and the creator is credited \"by name via Pixabay\".</html>",
+                    Palette::mutedText, "small"), BorderLayout.CENTER);
+            body.revalidate();
+            body.repaint();
+        };
+        fill[0].run();
+        return body;
+    }
+
     private JComponent lyricsIntegrations(AppContext context) {
         AppConfig cfg = context.config();
         JPanel list = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 8));
