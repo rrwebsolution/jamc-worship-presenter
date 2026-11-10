@@ -1,7 +1,9 @@
 // jamc-loopback: captures only what one process and its children play (Windows process loopback, Windows 10
 // version 2004 or newer) and writes it to stdout as raw PCM, so nothing else playing on the PC is recorded.
 // Silence is written while nothing plays, so the stream follows the clock.
-// Usage: jamc-loopback.exe <process id>
+// Usage: jamc-loopback.exe <process id> [exclude]
+//   <process id>          what that process and its children play (this app's sound, or another program's: App Audio)
+//   <process id> exclude  everything the PC plays EXCEPT that process and its children (Audio Output / desktop sound)
 // stderr, first line: "FORMAT f32le <rate> <channels>"; then the PCM on stdout.
 using System;
 using System.Diagnostics;
@@ -64,7 +66,7 @@ static class Loopback {
     // AUDCLNT_STREAMFLAGS: LOOPBACK | EVENTCALLBACK | AUTOCONVERTPCM
     const int STREAM_FLAGS = 0x00020000 | 0x00040000 | unchecked((int) 0x80000000);
     const string PROCESS_LOOPBACK = "VAD\\Process_Loopback";
-    const int ACTIVATION_TYPE_PROCESS_LOOPBACK = 1, INCLUDE_TARGET_PROCESS_TREE = 0;
+    const int ACTIVATION_TYPE_PROCESS_LOOPBACK = 1, INCLUDE_TARGET_PROCESS_TREE = 0, EXCLUDE_TARGET_PROCESS_TREE = 1;
 
     [DllImport("Mmdevapi.dll", ExactSpelling = true, PreserveSig = true)]
     static extern int ActivateAudioInterfaceAsync([MarshalAs(UnmanagedType.LPWStr)] string deviceInterfacePath, ref Guid riid,
@@ -75,11 +77,11 @@ static class Loopback {
     }
 
     /** AUDIOCLIENT_ACTIVATION_PARAMS (type, process id, mode) in a PROPVARIANT of type VT_BLOB. */
-    static IntPtr ActivationParams(int processId) {
+    static IntPtr ActivationParams(int processId, bool exclude) {
         IntPtr blob = Marshal.AllocHGlobal(12);
         Marshal.WriteInt32(blob, 0, ACTIVATION_TYPE_PROCESS_LOOPBACK);
         Marshal.WriteInt32(blob, 4, processId);
-        Marshal.WriteInt32(blob, 8, INCLUDE_TARGET_PROCESS_TREE);
+        Marshal.WriteInt32(blob, 8, exclude ? EXCLUDE_TARGET_PROCESS_TREE : INCLUDE_TARGET_PROCESS_TREE);
         IntPtr variant = Marshal.AllocHGlobal(24);
         for (int i = 0; i < 24; i++) Marshal.WriteByte(variant, i, 0);
         Marshal.WriteInt16(variant, 0, 65); // VT_BLOB
@@ -100,11 +102,11 @@ static class Loopback {
         return f;
     }
 
-    static IAudioClient Activate(int processId) {
+    static IAudioClient Activate(int processId, bool exclude) {
         var activated = new Activated();
         Guid audioClientId = typeof(IAudioClient).GUID;
         IActivateAudioInterfaceAsyncOperation operation;
-        Check(ActivateAudioInterfaceAsync(PROCESS_LOOPBACK, ref audioClientId, ActivationParams(processId), activated, out operation),
+        Check(ActivateAudioInterfaceAsync(PROCESS_LOOPBACK, ref audioClientId, ActivationParams(processId, exclude), activated, out operation),
             "ActivateAudioInterfaceAsync");
         if (!activated.Done.WaitOne(10000)) throw new Exception("Windows did not answer");
         Check(activated.Result, "Process audio capture");
@@ -115,9 +117,10 @@ static class Loopback {
     static int Main(string[] args) {
         try {
             int processId = int.Parse(args[0]);
+            bool exclude = args.Length > 1 && args[1] == "exclude";
             IAudioClient client;
             try {
-                client = Activate(processId);
+                client = Activate(processId, exclude);
                 Check(client.Initialize(0, STREAM_FLAGS, 2000000, 0, WaveFormat(), IntPtr.Zero), "Initialize");
             } catch (Exception e) {
                 throw new Exception(e.Message + ". Recording only this app's sound needs Windows 10 version 2004 or newer.");

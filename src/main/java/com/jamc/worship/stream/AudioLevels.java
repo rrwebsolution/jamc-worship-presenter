@@ -96,6 +96,46 @@ public final class AudioLevels {
         return new StreamSource(loopback, socket, in.sample().startsWith("f32") ? 4 : 2, in.sample().startsWith("f32"));
     }
 
+    /** An Audio Output / App Audio capture (the PC's or one program's sound), for its level wave. */
+    public static Source loopback(String inputName) throws IOException {
+        Process p = LoopbackAudio.startInput(inputName);
+        return new ProcessSource(p);
+    }
+
+    /** Levels of 32-bit float sound a capture helper writes on its output. */
+    private static final class ProcessSource extends Source {
+        private final Process process;
+
+        ProcessSource(Process process) {
+            this.process = process;
+            Thread.ofPlatform().daemon().name("level-loopback").start(() -> {
+                byte[] buf = new byte[1920 * 8]; // 40 ms
+                try (InputStream in = process.getInputStream()) {
+                    int n;
+                    while (!closed && (n = in.readNBytes(buf, 0, buf.length)) > 0) {
+                        ByteBuffer b = ByteBuffer.wrap(buf, 0, n - n % 4).order(ByteOrder.LITTLE_ENDIAN);
+                        float max = 0;
+                        while (b.remaining() >= 4) {
+                            float v = Math.abs(b.getFloat());
+                            if (Float.isFinite(v)) {
+                                max = Math.max(max, v);
+                            }
+                        }
+                        offer(Math.min(1f, max));
+                    }
+                } catch (IOException e) {
+                    // closed
+                }
+            });
+        }
+
+        @Override
+        public void close() {
+            super.close();
+            process.destroy();
+        }
+    }
+
     /** The Java Sound input whose name matches FFmpeg's (Java Sound may garble "®" or cut long names). */
     static Mixer.Info find(String name) {
         String want = key(name);

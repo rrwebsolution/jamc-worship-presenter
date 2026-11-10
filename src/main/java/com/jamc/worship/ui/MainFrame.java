@@ -162,6 +162,9 @@ public class MainFrame extends JFrame {
 
     private final AppContext context;
     private final Shortcuts shortcuts;
+    /** Next / previous slide while another program has the keyboard (Settings → Keyboard Shortcuts). */
+    private final SystemHotkey systemHotkey = new SystemHotkey(() -> stepSlide(true));
+    private final SystemHotkey systemHotkeyPrevious = new SystemHotkey(() -> stepSlide(false));
     private final BrandingManager branding;
     private final TopBar topBar;
     private final Sidebar sidebar = new Sidebar();
@@ -295,6 +298,16 @@ public class MainFrame extends JFrame {
         this.branding = BrandingManager.install(new BrandingManager(context.config(), context.paths()));
         setTitle(branding.applicationName());
         this.shortcuts = new Shortcuts(context.config());
+        // SCENE sources (a scene inside a scene) find the saved scenes here, always the latest list
+        com.jamc.worship.model.SceneLookup.install(id -> {
+            List<Scene> all = scenes;
+            for (Scene sc : all == null ? List.<Scene>of() : all) {
+                if (java.util.Objects.equals(sc.getId(), id)) {
+                    return sc;
+                }
+            }
+            return null;
+        });
         this.topBar = new TopBar(this::showPage);
         // where Program and Preview media sound goes (speakers, monitor headphones) and the media mixer
         this.audioRouting = new com.jamc.worship.media.AudioRouting(context.config());
@@ -2545,7 +2558,13 @@ public class MainFrame extends JFrame {
                 return "no_presentation";
             }
             int before = thumbnails.getSelectedIndex();
-            thumbnails.setSelectedIndex(Math.clamp(index, 0, thumbnails.getSlides().size() - 1));
+            // as the desktop's Next / Previous: with Auto-take on, the strip's own click rule would take it a second time
+            suppressAutoTake = true;
+            try {
+                thumbnails.setSelectedIndex(Math.clamp(index, 0, thumbnails.getSlides().size() - 1));
+            } finally {
+                suppressAutoTake = false;
+            }
             previewSelectedPresentationSlide();
             boolean notLive = thumbnails.getLiveIndex() >= 0 && thumbnails.getSelectedIndex() != thumbnails.getLiveIndex();
             if ((thumbnails.getSelectedIndex() != before || notLive) && !separatePresentation()) {
@@ -4843,8 +4862,8 @@ public class MainFrame extends JFrame {
         };
         new GlobalShortcuts(this::isActive, shortcuts, enterTakes, action -> {
             switch (action) {
-                case NEXT_SLIDE -> stepSlide(true);
-                case PREVIOUS_SLIDE -> stepSlide(false);
+                case NEXT_SLIDE, NEXT_SLIDE_ANYWHERE -> stepSlide(true);
+                case PREVIOUS_SLIDE, PREVIOUS_SLIDE_ANYWHERE -> stepSlide(false);
                 case SLIDESHOW_NEXT -> slideshows.controlPreview(com.jamc.worship.output.Slideshows.Control.NEXT);
                 case SLIDESHOW_PREVIOUS -> slideshows.controlPreview(com.jamc.worship.output.Slideshows.Control.PREVIOUS);
                 case TAKE -> take();
@@ -4869,6 +4888,25 @@ public class MainFrame extends JFrame {
             return true;
         }).install();
         ClickAwayFocus.install(this, getRootPane()); // a click outside a text box gives the shortcuts back
+        // Next slide also from WPS, PowerPoint or any other app: a Windows hot key (→ by default). Only while another
+        // program is in front: with a LiveCat window in front the key is LiveCat's own (and moves the cursor in its
+        // text boxes), so the hot key is given back to Windows then.
+        Runnable applyHotkey = () -> {
+            boolean liveCatInFront = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow() != null;
+            boolean on = shortcuts.anywhereEnabled() && !liveCatInFront;
+            if (!systemHotkey.set(on ? shortcuts.get(Shortcuts.Action.NEXT_SLIDE_ANYWHERE) : null)) {
+                statusBar.showMessage("Next slide from any app: " + systemHotkey.problem());
+            }
+            if (!systemHotkeyPrevious.set(on ? shortcuts.get(Shortcuts.Action.PREVIOUS_SLIDE_ANYWHERE) : null)) {
+                statusBar.showMessage("Previous slide from any app: " + systemHotkeyPrevious.problem());
+            }
+        };
+        // switching between LiveCat's own windows passes through "no window" for a moment: wait until it settles
+        javax.swing.Timer settle = new javax.swing.Timer(150, e -> applyHotkey.run());
+        settle.setRepeats(false);
+        KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", e -> settle.restart());
+        shortcuts.addListener(applyHotkey);
+        applyHotkey.run();
     }
 
     private void newSong() {
@@ -5049,6 +5087,8 @@ public class MainFrame extends JFrame {
         output.shutdown();
         streamManager.shutdown();
         remoteManager.shutdown();
+        systemHotkey.stop(); // the keys go back to Windows
+        systemHotkeyPrevious.stop();
         globalBackground.shutdown();
         obs.close();
         try {

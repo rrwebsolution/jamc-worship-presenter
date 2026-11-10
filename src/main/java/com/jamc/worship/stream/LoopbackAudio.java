@@ -14,6 +14,7 @@ import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -104,6 +105,101 @@ public final class LoopbackAudio implements AutoCloseable {
         });
         log.info("Capturing only this app's sound ({} {} Hz, {} ch)", input.sample(), input.rate(), input.channels());
         return a;
+    }
+
+    // ------------------------------------------------------------------ Audio Output / App Audio scene sources
+
+    /** The live input name of an AUDIO OUTPUT source: everything the PC plays except this app (which is recorded anyway). */
+    public static final String DESKTOP = "loopback:desktop";
+    /** The live input name of an APP AUDIO source is this + the program, e.g. "loopback:app:chrome.exe". */
+    public static final String APP_PREFIX = "loopback:app:";
+
+    private static volatile Path tools;
+
+    /** Where the helper is built; set by the stream manager at startup. */
+    public static void setToolsDir(Path dir) {
+        tools = dir;
+    }
+
+    public static boolean isLoopback(String inputName) {
+        return inputName != null && inputName.startsWith("loopback:");
+    }
+
+    /** The helper's arguments for a loopback input name. */
+    static List<String> argsFor(String inputName) throws IOException {
+        long own = ProcessHandle.current().pid();
+        if (DESKTOP.equals(inputName)) {
+            return List.of(String.valueOf(own), "exclude");
+        }
+        String exe = inputName.substring(APP_PREFIX.length());
+        return List.of(String.valueOf(rootProcess(exe).orElseThrow(() -> new IOException(exe + " is not running"))));
+    }
+
+    /**
+     * The program's first process whose parent is not the same program (a browser's main process: its tabs, which
+     * play the sound, are its children and are included).
+     */
+    static java.util.Optional<Long> rootProcess(String exe) {
+        String want = exe.toLowerCase(java.util.Locale.ROOT);
+        java.util.Map<Long, String> names = new java.util.HashMap<>();
+        List<ProcessHandle> all = ProcessHandle.allProcesses().toList();
+        for (ProcessHandle p : all) {
+            p.info().command().ifPresent(c -> names.put(p.pid(), fileName(c)));
+        }
+        return all.stream()
+                .filter(p -> want.equals(names.get(p.pid())))
+                .filter(p -> p.parent().map(parent -> !want.equals(names.get(parent.pid()))).orElse(true))
+                .sorted(java.util.Comparator.comparing(p -> p.info().startInstant().orElse(java.time.Instant.MAX)))
+                .map(ProcessHandle::pid).findFirst();
+    }
+
+    private static String fileName(String path) {
+        int slash = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'));
+        return path.substring(slash + 1).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * The helper capturing a loopback input: its sound comes on stdout as 48 kHz stereo 32-bit float once this returns.
+     * Blocks a moment: call off the Swing thread.
+     */
+    static Process startInput(String inputName) throws IOException {
+        Path dir = tools;
+        if (dir == null) {
+            throw new IOException("The sound capture is not ready yet.");
+        }
+        List<String> cmd = new java.util.ArrayList<>();
+        cmd.add(helper(dir).toString());
+        cmd.addAll(argsFor(inputName));
+        Process p = new ProcessBuilder(cmd).start();
+        BufferedReader err = new BufferedReader(new InputStreamReader(p.getErrorStream(), StandardCharsets.UTF_8));
+        String line;
+        try {
+            line = CompletableFuture.supplyAsync(() -> {
+                try {
+                    return err.readLine();
+                } catch (IOException e) {
+                    return null;
+                }
+            }).get(10, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            p.destroyForcibly();
+            throw new IOException("The sound capture did not start.");
+        }
+        if (line == null || !line.startsWith("FORMAT f32le 48000 2")) {
+            p.destroyForcibly();
+            throw new IOException(line == null ? "no answer" : line.startsWith("ERROR ") ? line.substring(6) : line);
+        }
+        Thread.ofPlatform().daemon().name("loopback-input-log").start(() -> {
+            try {
+                String l;
+                while ((l = err.readLine()) != null) {
+                    log.warn("Sound capture {}: {}", inputName, l);
+                }
+            } catch (IOException ignored) {
+                // ended
+            }
+        });
+        return p;
     }
 
     void mixWith(LiveInputs.Mixer mixer) {
@@ -212,6 +308,24 @@ public final class LoopbackAudio implements AutoCloseable {
         }
     }
 
+    /** Earlier versions of the helper; one still running stays until next time (Windows keeps it locked). */
+    private static void removeOldHelpers(Path toolsDir, Path keep) {
+        try (var files = Files.list(toolsDir)) {
+            for (Path p : files.toList()) {
+                String n = p.getFileName().toString();
+                if (!p.equals(keep) && (n.startsWith("jamc-loopback") && (n.endsWith(".exe") || n.endsWith(".version")))) {
+                    try {
+                        Files.deleteIfExists(p);
+                    } catch (IOException ignored) {
+                        // in use: removed another time
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            // the folder could not be read: nothing to tidy
+        }
+    }
+
     /** The helper exe in {@code toolsDir}, compiled from the bundled source when missing or outdated. */
     static synchronized Path helper(Path toolsDir) throws IOException {
         byte[] source;
@@ -222,10 +336,11 @@ public final class LoopbackAudio implements AutoCloseable {
             source = in.readAllBytes();
         }
         Files.createDirectories(toolsDir);
-        Path exe = toolsDir.resolve("jamc-loopback.exe");
-        Path stamp = toolsDir.resolve("jamc-loopback.version");
         String version = Integer.toHexString(java.util.Arrays.hashCode(source));
-        if (Files.isRegularFile(exe) && Files.isRegularFile(stamp) && Files.readString(stamp).strip().equals(version)) {
+        // each version has its own file: an older copy still running (a level meter, a recording, another LiveCat)
+        // locks its .exe, and building over it failed with "being used by another process"
+        Path exe = toolsDir.resolve("jamc-loopback-" + version + ".exe");
+        if (Files.isRegularFile(exe)) {
             return exe;
         }
         Path cs = toolsDir.resolve("LoopbackCapture.cs");
@@ -249,8 +364,8 @@ public final class LoopbackAudio implements AutoCloseable {
             Thread.currentThread().interrupt();
             throw new IOException("Interrupted", e);
         }
-        Files.writeString(stamp, version);
         log.info("Built the app sound capture: {}", exe);
+        removeOldHelpers(toolsDir, exe);
         return exe;
     }
 }

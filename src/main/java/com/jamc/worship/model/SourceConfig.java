@@ -121,6 +121,23 @@ public class SourceConfig {
     public Boolean shuffle;
     /** SLIDESHOW: "black" fills the box behind the image; otherwise transparent. */
     public String slideBackground;
+    /** DISPLAY_CAPTURE: the monitor captured, by its Windows device name (e.g. "\\.\DISPLAY1"). */
+    public String display;
+    /** DISPLAY_CAPTURE: draw the mouse pointer [on]. */
+    public Boolean captureCursor;
+    /**
+     * VIDEO as a playlist (VLC Video, like OBS): the video library items in play order (by id) and their stored files.
+     * {@link #path} is the first one; {@link #loop} repeats the whole list, {@link #shuffle} plays it in random order.
+     */
+    public java.util.List<Long> videoIds;
+    public java.util.List<String> videoPaths;
+    /** SCENE: the scene shown inside this one (referenced by id). */
+    public Long sceneId;
+    /** A layer inside a GROUP: that group's {@link #uid}. The group moves, shows and hides its layers together. */
+    public String groupId;
+    /** AUDIO_OUTPUT: the speakers / output whose sound is captured (null = the Windows default). APP_AUDIO: the program (exe). */
+    public String audioOutput;
+    public String appExe;
 
     /** How a scene's Presentation source chooses what it shows. */
     public enum PresentationMode {
@@ -133,6 +150,12 @@ public class SourceConfig {
         public String toString() {
             return this == DYNAMIC ? "Dynamic (any presentation sent)" : "Specific file only";
         }
+    }
+
+    /** A VIDEO source that plays several videos one after another. */
+    @JsonIgnore
+    public boolean isPlaylist() {
+        return videoPaths != null && videoPaths.size() > 1;
     }
 
     @JsonIgnore
@@ -203,6 +226,14 @@ public class SourceConfig {
         c.slideTransitionMs = slideTransitionMs;
         c.shuffle = shuffle;
         c.slideBackground = slideBackground;
+        c.display = display;
+        c.captureCursor = captureCursor;
+        c.videoIds = videoIds == null ? null : new java.util.ArrayList<>(videoIds);
+        c.videoPaths = videoPaths == null ? null : new java.util.ArrayList<>(videoPaths);
+        c.sceneId = sceneId;
+        c.groupId = groupId;
+        c.audioOutput = audioOutput;
+        c.appExe = appExe;
         return c;
     }
 }

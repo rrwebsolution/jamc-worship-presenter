@@ -27,7 +27,17 @@ public enum SourceType {
     /** A live picture of one open window on this computer (e.g. a browser, a Zoom call), found by its title. */
     WINDOW_CAPTURE("Window Capture", "monitor"),
     /** A web page (URL) drawn by an off-screen browser, live (e.g. a countdown, an online overlay). */
-    BROWSER("Browser", "monitor");
+    BROWSER("Browser", "monitor"),
+    /** A live picture of a whole monitor of this computer, like OBS Display Capture. */
+    DISPLAY_CAPTURE("Display Capture", "monitor"),
+    /** Another saved scene shown inside this one, in its box (like OBS's Scene source). */
+    SCENE("Scene", "layers-stack"),
+    /** Layers kept together: they move, show and hide as one (like OBS's Group). Draws nothing itself. */
+    GROUP("Group", "folder"),
+    /** Everything the PC plays (other programs, system sounds), except this app, into the recording and stream. */
+    AUDIO_OUTPUT("Audio Output Capture", "audio"),
+    /** What one program plays (e.g. a browser), into the recording and stream, like OBS Application Audio Capture. */
+    APP_AUDIO("Application Audio", "audio");
 
     private final String label;
     private final String icon;

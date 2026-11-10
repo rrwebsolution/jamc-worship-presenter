@@ -470,6 +470,7 @@ public final class OutputService {
         r.window = new PresentationWindow(state, r.source == Source.PREVIEW, display, r.mode == Mode.FULLSCREEN, icons,
                 () -> closeRoute(target),
                 () -> PresentationWindow.CursorMode.parse(config.get(AppConfig.KEY_PROJECTOR_CURSOR, null)));
+        r.window.setFillScreen(() -> config.getBoolean(AppConfig.KEY_OUTPUT_FILL_SCREEN, true));
         r.window.setBlackedOut(projectorBlack);
         r.window.setVisible(true);
         log.info("{} output opened: {} on {}", r.source, r.mode, display.label());

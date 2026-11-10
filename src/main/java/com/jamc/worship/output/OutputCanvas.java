@@ -153,8 +153,19 @@ public class OutputCanvas extends JComponent {
         super.removeNotify();
     }
 
-    /** The 16:9 area, centered and letterboxed inside the component. */
+    /** Output windows only: stretch the 16:9 picture over a screen of another shape instead of black bars. */
+    private java.util.function.BooleanSupplier fillScreen = () -> false;
+
+    /** Read on every paint, so a Settings change applies at once. Operator monitors never call this. */
+    public void setFillScreen(java.util.function.BooleanSupplier fill) {
+        fillScreen = fill == null ? () -> false : fill;
+    }
+
+    /** The picture's area: the whole component when filling, else the 16:9 area, centered and letterboxed. */
     public Rectangle screenBounds() {
+        if (fillScreen.getAsBoolean()) {
+            return new Rectangle(0, 0, getWidth(), getHeight());
+        }
         int w = getWidth();
         int h = (int) Math.round(w * 9 / 16.0);
         if (h > getHeight()) {
@@ -181,7 +192,9 @@ public class OutputCanvas extends JComponent {
             }
             double scale = g2.getTransform().getScaleX();
             int pw = Math.max(1, (int) Math.ceil(r.width * scale));
-            int ph = Math.max(1, (int) Math.ceil(r.height * scale));
+            // always composed as a 16:9 frame, so scenes and lyrics keep their layout; filling a screen of another
+            // shape only stretches that frame over it
+            int ph = Math.max(1, (int) Math.round(pw * 9 / 16.0));
 
             FrameSpec to = program.shown();
             FrameSpec from = program.previous();

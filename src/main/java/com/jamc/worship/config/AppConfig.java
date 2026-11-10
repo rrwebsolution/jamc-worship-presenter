@@ -32,6 +32,11 @@ public final class AppConfig {
     public static final String KEY_AUTO_TAKE = "live.autoTake";
     /** Mouse pointer over the projector picture: ALWAYS_HIDDEN, AUTO_HIDE (default, 3 s) or ALWAYS_VISIBLE. */
     public static final String KEY_PROJECTOR_CURSOR = "output.projectorCursor";
+    /**
+     * Output windows on a screen that is not 16:9 (16:10 projector, 4:3 TV, another PC's monitor): "true" (default)
+     * stretches the 16:9 picture over the whole screen, "false" fits it with black bars.
+     */
+    public static final String KEY_OUTPUT_FILL_SCREEN = "output.fillScreen";
 
     public static final String THEME_DARK = "dark";
     public static final String THEME_LIGHT = "light";

@@ -130,11 +130,21 @@ final class LiveInputs {
 
     private static final class Feed {
         final float[] ring = new float[RING_FRAMES * CHANNELS];
-        final Process process;
+        final String device;
+        volatile Process process;
         volatile long written;
         volatile float gain;
+        private volatile boolean closed;
+        /** Frames read so far, across restarts of a loopback capture. */
+        private long frames;
 
         Feed(Path ffmpeg, String device) throws IOException {
+            this.device = device;
+            if (LoopbackAudio.isLoopback(device)) {
+                // Audio Output / App Audio: the Windows sound capture helper, started off this (Swing) thread
+                Thread.ofPlatform().daemon().name("loopback-input").start(this::loopback);
+                return;
+            }
             List<String> cmd = new java.util.ArrayList<>(List.of(ffmpeg.toString(), "-hide_banner", "-loglevel", "error",
                     "-f", "dshow", "-audio_buffer_size", "20", "-i", "audio=" + device));
             String chain = MixerChannels.get().chain(MixerChannels.input(device)); // its Audio Mixer filters
@@ -159,10 +169,68 @@ final class LiveInputs {
             });
         }
 
+        /**
+         * Captures a loopback input for as long as it is wanted. When the program is not running (yet) or closes, it
+         * tries again every few seconds, so an App Audio source starts by itself when the program is opened.
+         */
+        private void loopback() {
+            boolean warned = false;
+            while (!closed) {
+                try {
+                    Process p = LoopbackAudio.startInput(device);
+                    process = p;
+                    if (closed) {
+                        p.destroy();
+                        return;
+                    }
+                    log.info("Sound capture on: {}", device);
+                    warned = false;
+                    readFloats(p.getInputStream());
+                } catch (IOException e) {
+                    if (!warned) {
+                        log.warn("Sound capture \"{}\" not available: {} (trying again)", device, e.getMessage());
+                        warned = true;
+                    }
+                }
+                Process p = process;
+                if (p != null) {
+                    p.destroy();
+                }
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    return;
+                }
+            }
+        }
+
+        /** 48 kHz stereo 32-bit float, as the capture helper writes it. */
+        private void readFloats(InputStream stream) {
+            byte[] buf = new byte[9600];
+            int kept = 0;
+            try (InputStream in = stream) {
+                int n;
+                while (!closed && (n = in.read(buf, kept, buf.length - kept)) > 0) {
+                    int total = kept + n;
+                    int whole = total - total % (CHANNELS * 4);
+                    ByteBuffer b = ByteBuffer.wrap(buf, 0, whole).order(ByteOrder.LITTLE_ENDIAN);
+                    for (int i = 0; i < whole / 4; i++) {
+                        float v = b.getFloat(i * 4);
+                        ring[(int) ((frames * CHANNELS + i) % ring.length)] = Float.isFinite(v) ? v : 0f;
+                    }
+                    frames += whole / (CHANNELS * 4);
+                    written = frames;
+                    kept = total - whole;
+                    System.arraycopy(buf, whole, buf, 0, kept);
+                }
+            } catch (IOException e) {
+                // closed
+            }
+        }
+
         private void read() {
             byte[] buf = new byte[4800];
             int kept = 0;
-            long frames = 0;
             try (InputStream in = process.getInputStream()) {
                 int n;
                 while ((n = in.read(buf, kept, buf.length - kept)) > 0) {
@@ -183,7 +251,11 @@ final class LiveInputs {
         }
 
         void close() {
-            process.destroy();
+            closed = true;
+            Process p = process;
+            if (p != null) {
+                p.destroy();
+            }
         }
     }
 }

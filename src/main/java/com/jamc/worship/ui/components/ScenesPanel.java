@@ -668,6 +668,7 @@ public class ScenesPanel extends JPanel {
             resetHistory(); // another scene, the saved version again, or a reload
         }
         sourceModel.clear();
+        groupRects.clear(); // groups take their box from their layers again (another scene, undo, revert)
         if (editing != null) {
             sourceModel.addAll(editing.getSources());
             previewTitle.setText(editing.getName());
@@ -687,6 +688,7 @@ public class ScenesPanel extends JPanel {
         if (editing == null) {
             return;
         }
+        syncGroups();
         List<Source> list = new ArrayList<>();
         for (int i = 0; i < sourceModel.size(); i++) {
             list.add(sourceModel.get(i));
@@ -921,10 +923,23 @@ public class ScenesPanel extends JPanel {
         menu.add(menuItem("Presentations…", "presentation", this::addPresentationFromLibrary));
         menu.add(menuItem("Images…", "image", this::addImages));
         menu.add(menuItem("Videos…", "video", this::addVideos));
+        JMenuItem playlist = menuItem("VLC Video (Playlist)…", "video", () -> pickPlaylist(null));
+        playlist.setToolTipText("Several videos as one source, played one after another (loop, shuffle), as in OBS");
+        menu.add(playlist);
         menu.add(menuItem("Audio…", "audio", () -> addMediaFromLibrary(MediaKind.AUDIO)));
         menu.add(menuItem("Media", "layers", () -> addSource(SourceType.BACKGROUND)));
         menu.add(menuItem("Camera…", "video", this::addCameraSource));
         menu.add(menuItem("Audio Input…", "audio", this::addAudioInput));
+        JMenuItem pcSound = menuItem("Audio Output Capture", "audio", this::addAudioOutput);
+        pcSound.setToolTipText("The PC's sound (other programs) into the recording and the stream, as in OBS");
+        JMenuItem appSound = menuItem("Application Audio Capture…", "audio", () -> pickApp(null));
+        appSound.setToolTipText("One program's sound (a browser, Zoom…) into the recording and the stream, as in OBS");
+        if (!com.jamc.worship.capture.WindowCapture.supported()) {
+            pcSound.setEnabled(false);
+            appSound.setEnabled(false);
+        }
+        menu.add(pcSound);
+        menu.add(appSound);
         section(menu, "FROM SERVICE");
         JMenuItem service = menuItem("Service Item…", "list", this::addFromService);
         List<com.jamc.worship.model.ServiceItem> items = serviceItems.get();
@@ -947,7 +962,19 @@ public class ScenesPanel extends JPanel {
             window.setToolTipText("Window Capture works on Windows only");
         }
         menu.add(window);
+        JMenuItem display = menuItem("Display Capture…", "monitor", () -> pickDisplay(null));
+        if (!com.jamc.worship.capture.DisplayCapture.supported()) {
+            display.setEnabled(false);
+            display.setToolTipText("Display Capture works on Windows only");
+        }
+        menu.add(display);
         menu.add(menuItem("Browser…", "monitor", () -> askUrl(null)));
+        JMenuItem scene = menuItem("Scene…", "layers-stack", () -> pickScene(null));
+        scene.setToolTipText("Another saved scene shown inside this one (e.g. a picture-in-picture), as in OBS");
+        menu.add(scene);
+        JMenuItem group = menuItem("Group…", "folder", this::addGroup);
+        group.setToolTipText("Keep several layers together: they move, show and hide as one, as in OBS");
+        menu.add(group);
         JMenuItem ndi = menuItem("NDI…", "video", this::addNdiSource);
         ndi.setToolTipText(com.jamc.worship.camera.Ndi.isInstalled()
                 ? "A video sent over the network with NDI (another computer, a phone app, a PTZ camera, OBS)"
@@ -1017,6 +1044,298 @@ public class ScenesPanel extends JPanel {
         }
     }
 
+
+    /**
+     * ADD SOURCE → VLC Video (Playlist), like OBS: several library videos as ONE source, played one after another
+     * (Loop repeats the whole list, Shuffle plays it in random order). {@code existing} null adds a new source;
+     * otherwise its list is chosen again. YouTube videos are not offered: they play in another player.
+     */
+    private void pickPlaylist(Source existing) {
+        if (editing == null) {
+            return;
+        }
+        List<MediaCategory> cats = List.of(MediaCategory.VIDEO, MediaCategory.BACKGROUND);
+        LibraryPickerDialog.Spec<MediaItem> spec = new LibraryPickerDialog.Spec<MediaItem>(
+                existing == null ? "VLC Video: choose the videos" : "Playlist videos", "Search videos…", "video",
+                "No videos in the library yet.<br>Click UPLOAD FILES… to add some from this computer.",
+                text -> media.find(cats, text, false).stream()
+                        .filter(m -> m.getKind() == MediaKind.VIDEO && !m.isYouTube()).toList(),
+                MediaItem::getName,
+                m -> (m.isPixabay() ? "Pixabay video" : "video")
+                        + (m.getDurationMs() == null ? "" : "  ·  " + TransportControls.format(m.getDurationMs())),
+                this::thumbnailOf).withUpload(com.jamc.worship.ui.dialogs.LibraryUploads.media(media, MediaKind.VIDEO));
+        List<MediaItem> picked = LibraryPickerDialog.pickMany(this, spec, "videos");
+        if (picked == null || picked.isEmpty()) {
+            return;
+        }
+        Source s = existing != null ? existing : new Source("VLC Video (playlist)", SourceType.VIDEO);
+        SourceConfig c = s.getConfig();
+        c.videoIds = new ArrayList<>(picked.stream().map(MediaItem::getId).toList());
+        c.videoPaths = new ArrayList<>(picked.stream().map(MediaItem::getPath).toList());
+        c.path = c.videoPaths.getFirst();
+        c.mediaId = c.videoIds.getFirst();
+        if (existing == null) {
+            c.fit = FitMode.FIT;
+            c.loop = true; // a playlist usually goes round, as in OBS
+            insertSource(s);
+        } else {
+            loadProps();
+            sceneEdited();
+        }
+        statusHandler.accept(picked.size() == 1 ? "One video chosen: it plays as a normal video source."
+                : "Playlist of " + picked.size() + " videos: they play one after another.");
+    }
+
+    /** The playlist's videos, in order, with Change… and Shuffle (Loop, volume and the rest are the video rows). */
+    private void loadPlaylistProps(GridBagConstraints g, Source s) {
+        SourceConfig c = s.getConfig();
+        List<String> names = c.videoPaths.stream().map(ScenesPanel::fileName).toList();
+        JLabel what = Ui.small(names.size() + " videos: " + String.join(", ", names));
+        what.setToolTipText("<html>" + String.join("<br>", names) + "</html>");
+        JButton change = Ui.button("Change…", "video");
+        change.setToolTipText("Choose the videos of this playlist again");
+        change.addActionListener(e -> pickPlaylist(s));
+        JPanel row = Ui.transparent(new BorderLayout(6, 0));
+        row.add(change, BorderLayout.WEST);
+        row.add(what, BorderLayout.CENTER);
+        row(g, "Playlist", row);
+        JCheckBox shuffle = new JCheckBox("Shuffle (random order)", Boolean.TRUE.equals(c.shuffle));
+        shuffle.setOpaque(false);
+        shuffle.addActionListener(e -> {
+            c.shuffle = shuffle.isSelected() ? Boolean.TRUE : null;
+            sceneEdited();
+        });
+        row(g, "Order", shuffle);
+        row(g, "", Ui.label("<html>The videos play one after another. Loop (below) starts the list over after the "
+                + "last one; without it the last picture stays.</html>", Palette::mutedText, "small"));
+    }
+
+    // ------------------------------------------------------------------ Scene and Group sources (as in OBS)
+
+    /** ADD SOURCE → Scene: another saved scene inside this one. {@code existing} null adds a new source. */
+    private void pickScene(Source existing) {
+        if (editing == null) {
+            return;
+        }
+        List<Scene> others = new ArrayList<>();
+        for (int i = 0; i < sceneModel.size(); i++) {
+            Scene sc = sceneModel.get(i);
+            if (sc.getId() != null && !java.util.Objects.equals(sc.getId(), editing.getId())) {
+                others.add(sc);
+            }
+        }
+        Scene picked = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<Scene>(
+                "Select Scene", "Search scenes…", "layers-stack",
+                "No other saved scene yet.<br>Make and save another scene first.",
+                text -> others.stream().filter(x -> x.getName().toLowerCase().contains(text.strip().toLowerCase())).toList(),
+                Scene::getName, x -> x.getSources().size() + " layers", x -> null));
+        if (picked == null) {
+            return;
+        }
+        Source s = existing != null ? existing : new Source("Scene: " + picked.getName(), SourceType.SCENE);
+        s.getConfig().sceneId = picked.getId();
+        if (existing == null) {
+            insertSource(s); // full screen by default; drag it smaller for a picture-in-picture
+        } else {
+            s.setName("Scene: " + picked.getName());
+            loadProps();
+            sceneEdited();
+        }
+        statusHandler.accept("\"" + picked.getName() + "\" shows inside this scene. Changes saved to that scene show here too.");
+    }
+
+    private void loadSceneProps(GridBagConstraints g, Source s) {
+        Scene inner = com.jamc.worship.model.SceneLookup.find(s.getConfig().sceneId);
+        JLabel what = Ui.small(inner != null ? inner.getName() : s.getConfig().sceneId == null ? "No scene chosen" : "Scene not found");
+        JButton change = Ui.button("Change…", "layers-stack");
+        change.addActionListener(e -> pickScene(s));
+        JPanel row = Ui.transparent(new BorderLayout(6, 0));
+        row.add(change, BorderLayout.WEST);
+        row.add(what, BorderLayout.CENTER);
+        row(g, "Scene", row);
+        JPanel o = Ui.transparent(new BorderLayout());
+        o.add(opacity);
+        row(g, "Opacity", o);
+        opacity.setValue(s.getConfig().opacity == null ? 100 : (int) Math.round(s.getConfig().opacity * 100));
+        row(g, "", Ui.label("<html>The whole scene, live, in this box (its lyrics, Bible and slides follow what is sent). "
+                + "Edit that scene to change what shows here.</html>", Palette::mutedText, "small"));
+    }
+
+    /** ADD SOURCE → Group: tick the layers to keep together; they then move, show and hide as one. */
+    private void addGroup() {
+        if (editing == null) {
+            return;
+        }
+        Source group = new Source("Group", SourceType.GROUP);
+        group.getConfig().uid = java.util.UUID.randomUUID().toString();
+        if (!chooseGroupMembers(group)) {
+            return;
+        }
+        int top = sourceModel.size();
+        for (int i = 0; i < sourceModel.size(); i++) {
+            if (group.getConfig().uid.equals(sourceModel.get(i).getConfig().groupId)) {
+                top = Math.min(top, i);
+            }
+        }
+        sourceModel.add(Math.min(top, sourceModel.size()), group); // above its layers
+        sourceList.setSelectedValue(group, true);
+        sceneEdited();
+        statusHandler.accept("Group made: drag it to move its layers together; hide it to hide them all.");
+    }
+
+    /** The layers of a group, chosen with ticks. False when cancelled or nothing was ticked. */
+    private boolean chooseGroupMembers(Source group) {
+        String uid = group.getConfig().uid;
+        List<JCheckBox> boxes = new ArrayList<>();
+        List<Source> candidates = new ArrayList<>();
+        JPanel list = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 2));
+        for (int i = 0; i < sourceModel.size(); i++) {
+            Source s = sourceModel.get(i);
+            if (s.getType() == SourceType.GROUP || (s.getConfig().groupId != null && !uid.equals(s.getConfig().groupId))) {
+                continue; // a layer belongs to one group; groups are not nested
+            }
+            JCheckBox b = new JCheckBox(s.getName(), uid.equals(s.getConfig().groupId));
+            boxes.add(b);
+            candidates.add(s);
+            list.add(b);
+        }
+        if (candidates.isEmpty()) {
+            Dialogs.showInfo(this, "Group", "There are no layers to group yet. Add some sources first.");
+            return false;
+        }
+        JTextField name = new JTextField(group.getName(), 20);
+        JPanel ask = Ui.transparent(new BorderLayout(0, 8));
+        JPanel head = Ui.transparent(new BorderLayout(6, 0));
+        head.add(Ui.small("Name"), BorderLayout.WEST);
+        head.add(name, BorderLayout.CENTER);
+        ask.add(head, BorderLayout.NORTH);
+        ask.add(Ui.label("Layers in this group:", Palette::text, "semibold"), BorderLayout.CENTER);
+        JScrollPane scroll = new JScrollPane(list);
+        scroll.setPreferredSize(new Dimension(320, Math.min(260, 28 * candidates.size() + 8)));
+        ask.add(scroll, BorderLayout.SOUTH);
+        if (javax.swing.JOptionPane.showConfirmDialog(this, ask, "Group", javax.swing.JOptionPane.OK_CANCEL_OPTION,
+                javax.swing.JOptionPane.PLAIN_MESSAGE) != javax.swing.JOptionPane.OK_OPTION) {
+            return false;
+        }
+        if (boxes.stream().noneMatch(JCheckBox::isSelected)) {
+            Dialogs.showInfo(this, "Group", "Tick at least one layer.");
+            return false;
+        }
+        if (!name.getText().isBlank()) {
+            group.setName(name.getText().strip());
+        }
+        for (int i = 0; i < candidates.size(); i++) {
+            candidates.get(i).getConfig().groupId = boxes.get(i).isSelected() ? uid : null;
+        }
+        groupRects.remove(uid); // the group's box is made again from its layers
+        return true;
+    }
+
+    private void loadGroupProps(GridBagConstraints g, Source s) {
+        String uid = s.getConfig().uid;
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < sourceModel.size(); i++) {
+            if (uid != null && uid.equals(sourceModel.get(i).getConfig().groupId)) {
+                names.add(sourceModel.get(i).getName());
+            }
+        }
+        JLabel what = Ui.small(names.isEmpty() ? "No layers" : String.join(", ", names));
+        what.setToolTipText(what.getText());
+        JButton change = Ui.button("Layers…", "folder");
+        change.addActionListener(e -> {
+            if (chooseGroupMembers(s)) {
+                sourceList.repaint();
+                loadProps();
+                sceneEdited();
+            }
+        });
+        JButton ungroup = Ui.button("Ungroup", null);
+        ungroup.setToolTipText("Keep the layers where they are and remove only the group");
+        ungroup.addActionListener(e -> ungroup(s));
+        JPanel row = Ui.transparent(new BorderLayout(6, 0));
+        JPanel buttons = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        buttons.add(change);
+        buttons.add(ungroup);
+        row.add(buttons, BorderLayout.WEST);
+        row.add(what, BorderLayout.CENTER);
+        row(g, "Group", row);
+        row(g, "", Ui.label("<html>Drag or resize the group to move all its layers. Hide it to hide them all. "
+                + "Select a layer in the list to change it alone.</html>", Palette::mutedText, "small"));
+    }
+
+    /** Removes the group only: its layers stay, on their own. */
+    private void ungroup(Source group) {
+        String uid = group.getConfig().uid;
+        for (int i = 0; i < sourceModel.size(); i++) {
+            if (uid != null && uid.equals(sourceModel.get(i).getConfig().groupId)) {
+                sourceModel.get(i).getConfig().groupId = null;
+            }
+        }
+        sourceModel.removeElement(group);
+        groupRects.remove(uid);
+        sourceList.repaint();
+        sceneEdited();
+    }
+
+    /** Each group's box and visibility as last seen: {x, y, w, h, visible}. */
+    private final java.util.Map<String, double[]> groupRects = new java.util.HashMap<>();
+
+    /**
+     * Keeps groups and their layers together after any edit: the group moved or resized → its layers follow (scaled
+     * in the same proportion); the group shown / hidden → its layers too; a layer moved on its own → the group's box
+     * becomes the box around its layers again.
+     */
+    private void syncGroups() {
+        java.util.Set<String> live = new java.util.HashSet<>();
+        for (int gi = 0; gi < sourceModel.size(); gi++) {
+            Source group = sourceModel.get(gi);
+            String uid = group.getConfig().uid;
+            if (group.getType() != SourceType.GROUP || uid == null) {
+                continue;
+            }
+            live.add(uid);
+            List<Source> members = new ArrayList<>();
+            for (int i = 0; i < sourceModel.size(); i++) {
+                if (uid.equals(sourceModel.get(i).getConfig().groupId)) {
+                    members.add(sourceModel.get(i));
+                }
+            }
+            if (members.isEmpty()) {
+                continue;
+            }
+            SourceConfig gc = group.getConfig();
+            double[] last = groupRects.get(uid);
+            if (last != null && last[2] > 0 && last[3] > 0
+                    && (gc.x != last[0] || gc.y != last[1] || gc.w != last[2] || gc.h != last[3])) {
+                double sx = gc.w / last[2];
+                double sy = gc.h / last[3];
+                for (Source m : members) {
+                    SourceConfig mc = m.getConfig();
+                    mc.x = gc.x + (mc.x - last[0]) * sx;
+                    mc.y = gc.y + (mc.y - last[1]) * sy;
+                    mc.w *= sx;
+                    mc.h *= sy;
+                }
+            }
+            if (last != null && (last[4] == 1) != group.isVisible()) {
+                members.forEach(m -> m.setVisible(group.isVisible()));
+            }
+            double x0 = Double.MAX_VALUE, y0 = Double.MAX_VALUE, x1 = -Double.MAX_VALUE, y1 = -Double.MAX_VALUE;
+            for (Source m : members) {
+                SourceConfig mc = m.getConfig();
+                x0 = Math.min(x0, mc.x);
+                y0 = Math.min(y0, mc.y);
+                x1 = Math.max(x1, mc.x + mc.w);
+                y1 = Math.max(y1, mc.y + mc.h);
+            }
+            gc.x = x0;
+            gc.y = y0;
+            gc.w = x1 - x0;
+            gc.h = y1 - y0;
+            groupRects.put(uid, new double[]{gc.x, gc.y, gc.w, gc.h, group.isVisible() ? 1 : 0});
+        }
+        groupRects.keySet().retainAll(live);
+    }
 
     /** IMAGE SLIDESHOW: pick several library images, order them, set how they play; one source. */
     private void addSlideshow() {
@@ -1165,6 +1484,90 @@ public class ScenesPanel extends JPanel {
         }, e -> statusHandler.accept("Could not look for audio inputs: " + e.getMessage()));
     }
 
+    /** A sound-only source: a small label in the editor, nothing on the outputs. */
+    private static void placeSoundLabel(Source s) {
+        s.getConfig().x = 0.02;
+        s.getConfig().y = 0.02;
+        s.getConfig().w = 0.3;
+        s.getConfig().h = 0.08;
+    }
+
+    /** ADD SOURCE → Audio Output Capture: everything the PC plays except this app, into the recording and stream. */
+    private void addAudioOutput() {
+        if (editing == null) {
+            return;
+        }
+        Source s = new Source("PC Sound (Audio Output)", SourceType.AUDIO_OUTPUT);
+        placeSoundLabel(s);
+        insertSource(s);
+        statusHandler.accept("The PC's sound (other programs) goes into the recording and the stream while this scene is on Program.");
+    }
+
+    /**
+     * ADD SOURCE → Application Audio Capture: what one program plays (a browser, Zoom…), into the recording and stream.
+     * {@code existing} null adds a new source; otherwise that source changes program.
+     */
+    private void pickApp(Source existing) {
+        if (editing == null) {
+            return;
+        }
+        java.util.TreeMap<String, String> programs = new java.util.TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+        for (var w : com.jamc.worship.capture.WindowCapture.windows()) {
+            if (w.exe() != null) {
+                programs.putIfAbsent(w.exe(), w.title()); // a program with an open window, with one of its titles
+            }
+        }
+        List<String> exes = new ArrayList<>(programs.keySet());
+        String exe = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<String>(
+                "Select Application", "Search programs…", "audio",
+                "No other program with a window is open.<br>Open the program (a browser, Zoom…), then try again.",
+                text -> exes.stream().filter(x -> (x + " " + programs.get(x)).toLowerCase().contains(text.strip().toLowerCase())).toList(),
+                x -> x, x -> programs.get(x), x -> null));
+        if (exe == null) {
+            return;
+        }
+        Source s = existing != null ? existing : new Source("App Sound: " + exe, SourceType.APP_AUDIO);
+        s.getConfig().appExe = exe;
+        if (existing == null) {
+            placeSoundLabel(s);
+            insertSource(s);
+        } else {
+            s.setName("App Sound: " + exe);
+            loadProps();
+            sceneEdited();
+        }
+        statusHandler.accept("The sound of " + exe + " goes into the recording and the stream while this scene is on Program.");
+    }
+
+    /** Audio Output / Application Audio: what is captured, volume and mute. */
+    private void loadCaptureAudioProps(GridBagConstraints g, Source s) {
+        SourceConfig c = s.getConfig();
+        if (s.getType() == SourceType.APP_AUDIO) {
+            JButton change = Ui.button("Change…", "audio");
+            change.addActionListener(e -> pickApp(s));
+            JPanel row = Ui.transparent(new BorderLayout(6, 0));
+            row.add(change, BorderLayout.WEST);
+            row.add(Ui.small(c.appExe == null ? "No program chosen" : c.appExe), BorderLayout.CENTER);
+            row(g, "Program", row);
+        }
+        srcVolume.setValue(c.volume == null ? 100 : c.volume);
+        srcVolumeLabel.setText(srcVolume.getValue() + "%");
+        srcMute.setSelected(Boolean.TRUE.equals(c.muted));
+        srcVolume.setEnabled(true);
+        srcMute.setEnabled(true);
+        JPanel vol = Ui.transparent(new BorderLayout(4, 0));
+        vol.add(srcMute, BorderLayout.WEST);
+        vol.add(srcVolume, BorderLayout.CENTER);
+        vol.add(srcVolumeLabel, BorderLayout.EAST);
+        row(g, "Volume", vol);
+        row(g, "", Ui.label("<html><body style='width:190px'>" + (s.getType() == SourceType.AUDIO_OUTPUT
+                ? "Everything the PC plays (other programs, a browser, Zoom…) except LiveCat, whose own sound is "
+                + "recorded already, so nothing is heard twice."
+                : "Only what this program plays. If it is closed, its sound comes in by itself once it is opened.")
+                + " It goes into the recording and the stream while this scene is on Program; it is not played "
+                + "again on the speakers. Needs Windows 10 (2004) or newer.</html>", Palette::mutedText, "small"));
+    }
+
     /** Camera: pick one of the connected devices (detected again first, so a camera just started is listed). */
     /**
      * Window Capture: pick an open window. {@code existing} null adds a new source; otherwise that source
@@ -1196,6 +1599,64 @@ public class ScenesPanel extends JPanel {
             sceneEdited();
         }
         statusHandler.accept("Capturing \"" + w.title() + "\". Keep the window open (it may be behind others, not minimized).");
+    }
+
+    /**
+     * Display Capture: pick a monitor. {@code existing} null adds a new source; otherwise that source switches to the
+     * chosen monitor. With one monitor it is taken at once.
+     */
+    private void pickDisplay(Source existing) {
+        if (editing == null) {
+            return;
+        }
+        List<com.jamc.worship.capture.DisplayCapture.Display> displays = com.jamc.worship.capture.DisplayCapture.displays();
+        if (displays.isEmpty()) {
+            Dialogs.showInfo(this, "Display Capture", "No display was found.");
+            return;
+        }
+        com.jamc.worship.capture.DisplayCapture.Display d = displays.size() == 1 && existing == null ? displays.getFirst()
+                : LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<com.jamc.worship.capture.DisplayCapture.Display>(
+                        "Select Display", "Search displays…", "monitor", "No display was found.",
+                        text -> displays.stream().filter(x -> x.label().toLowerCase().contains(text.strip().toLowerCase())).toList(),
+                        com.jamc.worship.capture.DisplayCapture.Display::label, x -> x.device(), x -> null));
+        if (d == null) {
+            return;
+        }
+        Source s = existing != null ? existing : new Source("Display " + d.number(), SourceType.DISPLAY_CAPTURE);
+        s.getConfig().display = d.device();
+        if (existing == null) {
+            s.getConfig().fit = FitMode.FIT;
+            insertSource(s);
+        } else {
+            s.setName("Display " + d.number());
+            loadProps();
+            sceneEdited();
+        }
+        statusHandler.accept("Capturing " + d.label() + ".");
+    }
+
+    /** The captured monitor with Change…, and whether the mouse pointer shows. */
+    private void loadDisplayProps(GridBagConstraints g, Source s) {
+        SourceConfig c = s.getConfig();
+        var shown = com.jamc.worship.capture.DisplayCapture.displays().stream()
+                .filter(d -> d.device().equals(c.display)).findFirst();
+        JLabel what = Ui.small(shown.map(com.jamc.worship.capture.DisplayCapture.Display::label)
+                .orElse(c.display == null ? "No display chosen" : c.display + " (not connected)"));
+        JButton change = Ui.button("Change…", "monitor");
+        change.addActionListener(e -> pickDisplay(s));
+        JPanel row = Ui.transparent(new BorderLayout(6, 0));
+        row.add(change, BorderLayout.WEST);
+        row.add(what, BorderLayout.CENTER);
+        row(g, "Display", row);
+        JCheckBox cursor = new JCheckBox("Show the mouse pointer", !Boolean.FALSE.equals(c.captureCursor));
+        cursor.setOpaque(false);
+        cursor.addActionListener(e -> {
+            c.captureCursor = cursor.isSelected() ? null : Boolean.FALSE;
+            sceneEdited();
+        });
+        row(g, "Pointer", cursor);
+        row(g, "", Ui.label("<html>The whole monitor, live. Capturing the monitor the projector is on shows the "
+                + "picture inside itself, as in OBS.</html>", Palette::mutedText, "small"));
     }
 
     private static String windowName(String title) {
@@ -1574,7 +2035,15 @@ public class ScenesPanel extends JPanel {
         if (i < 0) {
             return;
         }
-        sourceModel.remove(i);
+        Source removed = sourceModel.remove(i);
+        if (removed.getType() == SourceType.GROUP && removed.getConfig().uid != null) {
+            // removing a group removes the group only: its layers stay, on their own
+            for (int k = 0; k < sourceModel.size(); k++) {
+                if (removed.getConfig().uid.equals(sourceModel.get(k).getConfig().groupId)) {
+                    sourceModel.get(k).getConfig().groupId = null;
+                }
+            }
+        }
         if (!sourceModel.isEmpty()) {
             sourceList.setSelectedIndex(Math.min(i, sourceModel.size() - 1));
         }
@@ -1777,6 +2246,8 @@ public class ScenesPanel extends JPanel {
             }
             c.mediaId = m.getId();
             c.path = m.getPath();
+            c.videoIds = null; // one chosen file: no longer a playlist
+            c.videoPaths = null;
         }
         sourceList.repaint();
         loadProps();
@@ -2011,6 +2482,15 @@ public class ScenesPanel extends JPanel {
             if (isCapture(t)) {
                 loadCaptureProps(g, s);
             }
+            if (t == SourceType.VIDEO && c.isPlaylist()) {
+                loadPlaylistProps(g, s);
+            }
+            if (t == SourceType.SCENE) {
+                loadSceneProps(g, s);
+            }
+            if (t == SourceType.GROUP) {
+                loadGroupProps(g, s);
+            }
             if (t == SourceType.VIDEO || t == SourceType.AUDIO) {
                 loadVideoProps(g, s);
             }
@@ -2019,6 +2499,9 @@ public class ScenesPanel extends JPanel {
             }
             if (t == SourceType.AUDIO_INPUT) {
                 loadAudioInputProps(g, c);
+            }
+            if (t == SourceType.AUDIO_OUTPUT || t == SourceType.APP_AUDIO) {
+                loadCaptureAudioProps(g, s);
             }
             if (t == SourceType.TEXT || t == SourceType.CLOCK) {
                 textField.setText(c.text == null ? "" : c.text);
@@ -2239,7 +2722,7 @@ public class ScenesPanel extends JPanel {
     /** Sources whose box usually keeps the 16:9 shape of what they show. */
     private static boolean keepsAspect(SourceType t) {
         return t == SourceType.PRESENTATION || t == SourceType.CAMERA || t == SourceType.VIDEO || t == SourceType.IMAGE
-                || t == SourceType.SLIDESHOW || isCapture(t);
+                || t == SourceType.SLIDESHOW || t == SourceType.SCENE || isCapture(t);
     }
 
     /**
@@ -2250,14 +2733,18 @@ public class ScenesPanel extends JPanel {
         return keepsAspect(t) || t == SourceType.LYRICS || t == SourceType.BIBLE;
     }
 
-    /** Window Capture and Browser: live pictures from outside the app. */
+    /** Window / Display Capture and Browser: live pictures from outside the app. */
     private static boolean isCapture(SourceType t) {
-        return t == SourceType.WINDOW_CAPTURE || t == SourceType.BROWSER;
+        return t == SourceType.WINDOW_CAPTURE || t == SourceType.BROWSER || t == SourceType.DISPLAY_CAPTURE;
     }
 
     /** The window or web address of a Window Capture / Browser source, with Change… (and Reload for pages). */
     private void loadCaptureProps(GridBagConstraints g, Source s) {
         SourceConfig c = s.getConfig();
+        if (s.getType() == SourceType.DISPLAY_CAPTURE) {
+            loadDisplayProps(g, s);
+            return;
+        }
         boolean window = s.getType() == SourceType.WINDOW_CAPTURE;
         JLabel what = Ui.small(window
                 ? (c.windowTitle == null ? "No window chosen" : c.windowTitle + (c.windowExe == null ? "" : "  ·  " + c.windowExe))
@@ -2485,6 +2972,9 @@ public class ScenesPanel extends JPanel {
             c.color = colorButton.getHex();
             c.opacity = opacity.getValue() >= 100 ? null : opacity.getValue() / 100.0;
         }
+        if (t == SourceType.SCENE) {
+            c.opacity = opacity.getValue() >= 100 ? null : opacity.getValue() / 100.0;
+        }
         if (t == SourceType.CAMERA || t == SourceType.IMAGE || t == SourceType.CHURCH_LOGO || t == SourceType.VIDEO || isCapture(t)
                 || t == SourceType.SLIDESHOW) {
             c.fit = (FitMode) fitCombo.getSelectedItem();
@@ -2544,6 +3034,10 @@ public class ScenesPanel extends JPanel {
                 c.audioInput = input;
             }
             c.monitorOnly = audioListen.isSelected() ? Boolean.TRUE : null;
+            c.volume = srcVolume.getValue() == 100 ? null : srcVolume.getValue();
+            c.muted = srcMute.isSelected() ? Boolean.TRUE : null;
+        }
+        if (t == SourceType.AUDIO_OUTPUT || t == SourceType.APP_AUDIO) {
             c.volume = srcVolume.getValue() == 100 ? null : srcVolume.getValue();
             c.muted = srcMute.isSelected() ? Boolean.TRUE : null;
         }
@@ -3193,7 +3687,9 @@ public class ScenesPanel extends JPanel {
         @Override
         public Component getListCellRendererComponent(JList<? extends Source> l, Source s, int i, boolean sel, boolean f) {
             visible.setSelected(s.isVisible());
-            name.setText(s.getName() + (Boolean.TRUE.equals(s.getConfig().locked) ? "   (locked)" : ""));
+            // a layer in a group shows under it, like OBS
+            name.setText((s.getConfig().groupId != null ? "↳  " : "") + s.getName()
+                    + (Boolean.TRUE.equals(s.getConfig().locked) ? "   (locked)" : ""));
             name.setIcon(Icons.get(s.getType().icon(), Icons.SMALL, () -> sel ? Color.WHITE : Palette.secondaryText()));
             name.setIconTextGap(8);
             name.setForeground(sel ? l.getSelectionForeground() : (s.isVisible() ? Palette.text() : Palette.mutedText()));            setBackground(sel ? l.getSelectionBackground() : l.getBackground());

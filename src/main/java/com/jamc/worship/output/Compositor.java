@@ -437,6 +437,22 @@ public final class Compositor {
                     }
                 }
             }
+            case GROUP -> {
+                // a group draws nothing itself: its layers are drawn where they are (the editor moves them together)
+            }
+            case SCENE -> paintNestedScene(g, pw, ph, s, rect, spec, lt, keyMode, contentOnly);
+            case DISPLAY_CAPTURE -> {
+                if (!keyMode) {
+                    boolean cursor = !Boolean.FALSE.equals(c.captureCursor);
+                    BufferedImage frame = com.jamc.worship.capture.DisplayCapture.frame(c.display, cursor);
+                    if (frame != null) {
+                        drawFit(g, frame, rect, c.fit == null ? FitMode.FIT : c.fit, opacity(c));
+                    } else if (editorMode || preview) {
+                        String why = com.jamc.worship.capture.DisplayCapture.status(c.display, cursor);
+                        paintSourceNote(g, rect, "▢ " + (why != null ? why : "Display Capture"), ph);
+                    }
+                }
+            }
             case BROWSER -> {
                 if (!keyMode) {
                     BufferedImage frame = com.jamc.worship.capture.BrowserSources.frame(c.url, c.pageWidth, c.pageHeight);
@@ -457,7 +473,7 @@ public final class Compositor {
                     g.fillRect(rect.x, rect.y, rect.width, rect.height);
                 }
             }
-            case AUDIO, AUDIO_INPUT -> {
+            case AUDIO, AUDIO_INPUT, AUDIO_OUTPUT, APP_AUDIO -> {
                 // sound only: nothing on the outputs; a small label in the scene editor
                 if (editorMode) {
                     SourceConfig label = new SourceConfig();
@@ -476,6 +492,60 @@ public final class Compositor {
                     g2.dispose();
                 }
             }
+        }
+    }
+
+    /** The scenes being drawn inside one another right now (a scene never draws itself, however deep). */
+    private final java.util.ArrayDeque<Long> nested = new java.util.ArrayDeque<>();
+
+    /**
+     * SCENE source: another saved scene, drawn whole inside this box (scaled), with the same live content (its
+     * lyrics, Bible, presentation follow what is sent). Like OBS's Scene source.
+     */
+    private void paintNestedScene(Graphics2D g, int pw, int ph, Source s, Rectangle rect, FrameSpec spec,
+                                  ProgramOutput lt, boolean keyMode, boolean contentOnly) {
+        SourceConfig c = s.getConfig();
+        com.jamc.worship.model.Scene inner = com.jamc.worship.model.SceneLookup.find(c.sceneId);
+        Long outer = spec.scene() == null ? null : spec.scene().getId();
+        String problem = inner == null ? (c.sceneId == null ? "Scene: none chosen" : "Scene not found")
+                : java.util.Objects.equals(inner.getId(), outer) || nested.contains(inner.getId()) ? "A scene cannot show itself"
+                : nested.size() >= com.jamc.worship.model.SceneLookup.MAX_DEPTH ? "Too many scenes inside scenes" : null;
+        if (problem != null) {
+            if (editorMode || preview) {
+                paintSourceNote(g, rect, "▣ " + problem, ph);
+            }
+            return;
+        }
+        if (rect.width <= 0 || rect.height <= 0) {
+            return;
+        }
+        Graphics2D sub = (Graphics2D) g.create();
+        try {
+            sub.clipRect(rect.x, rect.y, rect.width, rect.height);
+            sub.translate(rect.x, rect.y);
+            sub.scale(rect.width / (double) pw, rect.height / (double) ph);
+            float a = opacity(c);
+            if (a < 1f) {
+                sub.setComposite(java.awt.AlphaComposite.getInstance(java.awt.AlphaComposite.SRC_OVER, a));
+            }
+            if (outer != null) {
+                nested.push(outer);
+            }
+            nested.push(inner.getId());
+            FrameSpec innerSpec = new FrameSpec(spec.content(), spec.text(), spec.background(), false, inner);
+            Source innerSlot = presentationSlot(inner, spec.content());
+            List<Source> sources = inner.getSources();
+            for (int i = sources.size() - 1; i >= 0; i--) {
+                if (sources.get(i).isVisible()) {
+                    paintSource(sub, pw, ph, sources.get(i), innerSpec, lt, keyMode, contentOnly, innerSlot);
+                }
+            }
+        } finally {
+            nested.pop();
+            if (outer != null) {
+                nested.pop();
+            }
+            sub.dispose();
         }
     }
 
@@ -1085,6 +1155,8 @@ public final class Compositor {
                 yield config + "|" + (bg != null ? bg : "c" + System.identityHashCode(content)) + "|" + spec.background();
             }
             case PRESENTATION -> config + "|" + (s == slot ? System.identityHashCode(content) : "own");
+            // a scene inside may show the live words: it changes with them
+            case SCENE -> config + "|" + System.identityHashCode(content) + "|" + spec.text() + "|" + spec.background();
             default -> config;
         };
     }

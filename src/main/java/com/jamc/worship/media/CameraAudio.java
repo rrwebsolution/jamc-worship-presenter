@@ -59,12 +59,20 @@ public final class CameraAudio {
 
     /** True when this camera source plays its camera's sound on Program. */
     public static boolean wantsAudio(Source s) {
-        return s.isVisible() && (s.getType() == SourceType.AUDIO_INPUT
+        return s.isVisible() && (s.getType() == SourceType.AUDIO_INPUT || s.getType() == SourceType.AUDIO_OUTPUT
+                || (s.getType() == SourceType.APP_AUDIO && s.getConfig().appExe != null)
                 || s.getType() == SourceType.CAMERA && Boolean.TRUE.equals(s.getConfig().audioEnabled));
     }
 
     private String deviceOf(Source s) {
-        return s.getType() == SourceType.AUDIO_INPUT ? s.getConfig().audioInput : cameras.audioDevice(s.getConfig().camera);
+        return switch (s.getType()) {
+            case AUDIO_INPUT -> s.getConfig().audioInput;
+            // the PC's / one program's sound: captured from Windows, into the recording and stream (it already
+            // plays on the speakers, so it is never played again)
+            case AUDIO_OUTPUT -> com.jamc.worship.stream.LoopbackAudio.DESKTOP;
+            case APP_AUDIO -> com.jamc.worship.stream.LoopbackAudio.APP_PREFIX + s.getConfig().appExe;
+            default -> cameras.audioDevice(s.getConfig().camera);
+        };
     }
 
     /** The live sound inputs of a scene, for the mixer. */

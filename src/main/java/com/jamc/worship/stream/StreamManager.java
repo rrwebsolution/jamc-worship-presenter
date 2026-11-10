@@ -86,6 +86,7 @@ public final class StreamManager {
         this.config = config;
         this.defaultRecordingsDir = dataRoot.resolve("recordings");
         this.toolsDir = dataRoot.resolve("tools");
+        LoopbackAudio.setToolsDir(toolsDir); // Audio Output / App Audio scene sources use the same capture helper
         this.secrets = secrets;
         this.cameras = cameras;
         this.tap = new ProgramFrameTap(program);
@@ -210,6 +211,7 @@ public final class StreamManager {
      */
     public AudioLevels.Source openLevel(String device) throws IOException {
         return StreamSettings.APP_AUDIO.equals(device) ? AudioLevels.appSound(toolsDir)
+                : LoopbackAudio.isLoopback(device) ? AudioLevels.loopback(device) // Audio Output / App Audio sources
                 : AudioLevels.device(device);
     }
 

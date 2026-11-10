@@ -143,6 +143,86 @@ public final class SceneVideos {
         return c.loop == null || c.loop; // older "Video (looping)" sources keep looping
     }
 
+    /** What the player itself repeats: one video's loop; a playlist never (the list moves on, and loops as a whole). */
+    static boolean playerLoops(SourceConfig c) {
+        return !c.isPlaylist() && loops(c);
+    }
+
+    // ------------------------------------------------------------------ playlists (VLC Video)
+
+    /** Where each playlist player is in its list. */
+    private final Map<VideoPlayback, Integer> playlistAt = new java.util.IdentityHashMap<>();
+    private final java.util.Random shuffle = new java.util.Random();
+
+    /** A new player of a playlist source: when one video ends, the next one starts on the same player. */
+    private void watchPlaylist(VideoPlayback player, SourceConfig c) {
+        if (!c.isPlaylist()) {
+            return;
+        }
+        playlistAt.put(player, 0);
+        player.addFinishedListener(() -> javax.swing.SwingUtilities.invokeLater(() -> nextInPlaylist(player)));
+    }
+
+    /** The slot this player belongs to now (it moves from Preview to Program on TAKE), or null when released. */
+    private Slot slotOf(VideoPlayback player) {
+        for (Map<String, Slot> m : List.of(program, preview, editor)) {
+            for (Slot s : m.values()) {
+                if (s.player == player) {
+                    return s;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The next video of the list (random with Shuffle); after the last one, the first again only with Loop. */
+    void nextInPlaylist(VideoPlayback player) {
+        Slot slot = slotOf(player);
+        if (slot == null || !slot.config.isPlaylist()) {
+            playlistAt.remove(player);
+            return;
+        }
+        List<String> paths = slot.config.videoPaths;
+        int at = playlistAt.getOrDefault(player, 0);
+        for (int tries = 0; tries < paths.size(); tries++) {
+            int next;
+            if (Boolean.TRUE.equals(slot.config.shuffle)) {
+                next = paths.size() == 1 ? 0 : (at + 1 + shuffle.nextInt(paths.size() - 1)) % paths.size();
+            } else {
+                next = at + 1;
+                if (next >= paths.size()) {
+                    if (!effectiveLoop(slot)) {
+                        return; // the list played once: it stays on its last picture
+                    }
+                    next = 0;
+                }
+            }
+            at = next;
+            String mrl = mrl(paths.get(next));
+            if (mrl == null) {
+                continue; // a missing file is skipped
+            }
+            playlistAt.put(player, next);
+            boolean onProgram = program.containsValue(slot);
+            boolean muted = onProgram ? programMuted(slot) : editor.containsValue(slot) || !hearPreview(slot);
+            player.play(mrl, false, muted);
+            if (onProgram) {
+                applyProgramAudio(slot);
+            }
+            log.info("Playlist \"{}\": video {} of {}", slot.name, next + 1, paths.size());
+            return;
+        }
+    }
+
+    /** Back to the first video of a playlist (the scene starts over on Program). */
+    private void restartPlaylist(Slot slot, boolean muted) {
+        String mrl = mrl(slot.config.videoPaths.getFirst());
+        if (mrl != null) {
+            playlistAt.put(slot.player, 0);
+            slot.player.play(mrl, false, muted);
+        }
+    }
+
     /**
      * Current picture of a scene's video source: the Program player when this source is on Program,
      * else a silent Preview player (started on first request).
@@ -171,7 +251,8 @@ public final class SceneVideos {
                 VideoPlayback player = VideoPlayback.create(c.path);
                 v = new Slot(k, c.path, player, c, s.getName());
                 applyPreviewAudio(v); // muted unless the operator monitors this Preview scene
-                player.play(mrl, loops(c), !hearPreview(v));
+                watchPlaylist(player, c);
+                player.play(mrl, playerLoops(c), !hearPreview(v));
                 preview.put(k, v);
             } catch (RuntimeException e) {
                 log.warn("Could not start scene video {}", c.path, e);
@@ -251,7 +332,8 @@ public final class SceneVideos {
             try {
                 VideoPlayback player = VideoPlayback.create(c.path);
                 player.setMuted(true);
-                player.cue(mrl, loops(c)); // paused: nothing moves until PLAY
+                watchPlaylist(player, c);
+                player.cue(mrl, playerLoops(c)); // paused: nothing moves until PLAY
                 v = new Slot(k, c.path, player, c, s.getName());
                 editor.put(k, v);
             } catch (RuntimeException e) {
@@ -338,7 +420,7 @@ public final class SceneVideos {
             }
             slot.config = c;
             slot.name = s.getName();
-            slot.player.setLoop(effectiveLoop(slot));
+            slot.player.setLoop(!c.isPlaylist() && effectiveLoop(slot));
             applyProgramAudio(slot);
         }
         if (changed) {
@@ -357,9 +439,11 @@ public final class SceneVideos {
                 // hand the running Preview player over: no reload, no black frame, no second decoder
                 Slot slot = new Slot(key, c.path, from.player, c, s.getName());
                 restore(slot);
-                slot.player.setLoop(effectiveLoop(slot));
+                slot.player.setLoop(!c.isPlaylist() && effectiveLoop(slot));
                 applyProgramAudio(slot);
-                if (restart) {
+                if (restart && c.isPlaylist() && playlistAt.getOrDefault(slot.player, 0) != 0) {
+                    restartPlaylist(slot, programMuted(slot)); // the whole list starts over
+                } else if (restart) {
                     slot.player.seekTime(0);
                 }
                 if (autoplay) {
@@ -393,14 +477,16 @@ public final class SceneVideos {
             Slot slot = new Slot(key, c.path, player, c, s.getName());
             restore(slot);
             applyProgramAudio(slot);
+            watchPlaylist(player, c);
+            boolean repeat = !c.isPlaylist() && effectiveLoop(slot);
             if (autoplay) {
                 if (s.getType() == SourceType.AUDIO) {
-                    player.play(mrl, effectiveLoop(slot), programMuted(slot), ":no-video"); // sound only
+                    player.play(mrl, repeat, programMuted(slot), ":no-video"); // sound only
                 } else {
-                    player.play(mrl, effectiveLoop(slot), programMuted(slot));
+                    player.play(mrl, repeat, programMuted(slot));
                 }
             } else {
-                player.cue(mrl, effectiveLoop(slot));
+                player.cue(mrl, repeat);
             }
             log.info("Scene video on Program: {}", s.getName());
             return slot;
@@ -477,10 +563,10 @@ public final class SceneVideos {
             @Override public boolean isMuted() { return effectiveMuted(slot); }
             @Override public void setLoop(boolean loop) {
                 slot.liveLoop = loop;
-                p.setLoop(loop);
+                p.setLoop(!slot.config.isPlaylist() && loop); // a playlist loops as a whole, not its current video
                 remember(slot);
             }
-            @Override public boolean isLoop() { return p.isLoop(); }
+            @Override public boolean isLoop() { return slot.config.isPlaylist() ? effectiveLoop(slot) : p.isLoop(); }
             @Override public boolean isPlaying() { return p.isPlaying(); }
             @Override public long time() { return p.time(); }
             @Override public long length() { return p.length(); }
@@ -584,16 +670,31 @@ public final class SceneVideos {
         if (scene == null) {
             return out;
         }
-        Set<String> seen = new HashSet<>();
+        collectVideos(scene, out, new HashSet<>(), new HashSet<>());
+        return out;
+    }
+
+    /** The scene's videos, and those of the scenes shown inside it (SCENE sources), each once. */
+    private static void collectVideos(Scene scene, Map<String, Source> out, Set<String> seen, Set<Long> scenes) {
+        if (scene.getId() != null && !scenes.add(scene.getId()) || scenes.size() > com.jamc.worship.model.SceneLookup.MAX_DEPTH + 1) {
+            return; // a scene inside itself, or too deep
+        }
         for (Source s : scene.getSources()) {
-            if (s.isVisible() && (s.getType() == SourceType.VIDEO || s.getType() == SourceType.AUDIO) && s.getConfig().path != null) {
+            if (!s.isVisible()) {
+                continue;
+            }
+            if ((s.getType() == SourceType.VIDEO || s.getType() == SourceType.AUDIO) && s.getConfig().path != null) {
                 String k = key(s);
                 if (seen.add(k)) {
                     out.put(k, s);
                 }
+            } else if (s.getType() == SourceType.SCENE) {
+                Scene inner = com.jamc.worship.model.SceneLookup.find(s.getConfig().sceneId);
+                if (inner != null) {
+                    collectVideos(inner, out, seen, scenes);
+                }
             }
         }
-        return out;
     }
 
     private void sweep() {

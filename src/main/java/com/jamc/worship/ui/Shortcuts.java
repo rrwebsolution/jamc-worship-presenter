@@ -16,7 +16,13 @@ public final class Shortcuts {
 
     public enum Action {
         NEXT_SLIDE("Next slide", KeyEvent.VK_RIGHT, 0),
+        /**
+         * While another program (WPS, PowerPoint…) is in front: a Windows hot key, → by default as the user chose. That
+         * program then does not get the key; while LiveCat is in front the key is LiveCat's own as usual.
+         */
+        NEXT_SLIDE_ANYWHERE("Next slide, from any app", KeyEvent.VK_RIGHT, 0),
         PREVIOUS_SLIDE("Previous slide", KeyEvent.VK_LEFT, 0),
+        PREVIOUS_SLIDE_ANYWHERE("Previous slide, from any app", KeyEvent.VK_LEFT, 0),
         SLIDESHOW_NEXT("Next slideshow image (Preview)", KeyEvent.VK_RIGHT, KeyEvent.SHIFT_DOWN_MASK),
         SLIDESHOW_PREVIOUS("Previous slideshow image (Preview)", KeyEvent.VK_LEFT, KeyEvent.SHIFT_DOWN_MASK),
         TAKE("TAKE (Preview → Program)", KeyEvent.VK_SPACE, 0),
@@ -54,8 +60,27 @@ public final class Shortcuts {
         }
     }
 
+    /** Whether {@link Action#NEXT_SLIDE_ANYWHERE} works outside the app (Settings → Keyboard Shortcuts). */
+    public static final String KEY_ANYWHERE_ENABLED = "shortcut.anywhere.enabled";
+
     private final AppConfig config;
     private final Map<Action, KeyStroke> keys = new EnumMap<>(Action.class);
+    private final java.util.List<Runnable> listeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Told when a key changes (the system hot key follows). */
+    public void addListener(Runnable l) {
+        listeners.add(l);
+    }
+
+    public boolean anywhereEnabled() {
+        return config.getBoolean(KEY_ANYWHERE_ENABLED, true);
+    }
+
+    public void setAnywhereEnabled(boolean on) {
+        config.set(KEY_ANYWHERE_ENABLED, String.valueOf(on));
+        config.save();
+        listeners.forEach(Runnable::run);
+    }
 
     /** Stored for an action whose key was given to another action (it then has no key). */
     private static final String NONE = "none";
@@ -78,14 +103,25 @@ public final class Shortcuts {
         keys.put(a, key);
         config.set("shortcut." + a.name(), key == null ? NONE : key.equals(a.defaultKey()) ? null : toConfig(key));
         config.save();
+        listeners.forEach(Runnable::run);
     }
 
     /** Another action that already uses this key, if any (keys must not be shared). */
     public Optional<Action> conflict(Action a, KeyStroke key) {
         return keys.entrySet().stream()
                 .filter(en -> en.getKey() != a && key.equals(en.getValue()))
+                // "next slide" in LiveCat and from another app (or "previous"): sharing a key is the point
+                .filter(en -> !(nextSlide(a) && nextSlide(en.getKey())) && !(previousSlide(a) && previousSlide(en.getKey())))
                 .map(Map.Entry::getKey)
                 .findFirst();
+    }
+
+    private static boolean nextSlide(Action a) {
+        return a == Action.NEXT_SLIDE || a == Action.NEXT_SLIDE_ANYWHERE;
+    }
+
+    private static boolean previousSlide(Action a) {
+        return a == Action.PREVIOUS_SLIDE || a == Action.PREVIOUS_SLIDE_ANYWHERE;
     }
 
     public void resetAll() {
@@ -94,6 +130,7 @@ public final class Shortcuts {
             config.set("shortcut." + a.name(), null);
         }
         config.save();
+        listeners.forEach(Runnable::run);
     }
 
     /** The live action bound to this key press, if any. */

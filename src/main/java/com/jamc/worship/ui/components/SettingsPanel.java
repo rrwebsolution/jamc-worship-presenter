@@ -273,8 +273,23 @@ public class SettingsPanel extends JPanel {
             cfg.set(AppConfig.KEY_PROJECTOR_CURSOR, ((com.jamc.worship.output.PresentationWindow.CursorMode) cursor.getSelectedItem()).name());
             cfg.save();
         });
+        JComboBox<String> fit = new JComboBox<>(new String[]{"Fill the whole screen", "Fit (black bars)"});
+        fit.setSelectedIndex(cfg.getBoolean(AppConfig.KEY_OUTPUT_FILL_SCREEN, true) ? 0 : 1);
+        fit.setToolTipText("<html>For a projector, TV or extended PC screen that is not 16:9 (e.g. 16:10 or 4:3).<br>"
+                + "Fill stretches the picture to the edges; Fit keeps its exact shape with black bars.<br>"
+                + "A 16:9 screen is filled either way. Open output windows change at once.</html>");
+        fit.addActionListener(e -> {
+            cfg.set(AppConfig.KEY_OUTPUT_FILL_SCREEN, String.valueOf(fit.getSelectedIndex() == 0));
+            cfg.save();
+            for (java.awt.Window w : java.awt.Window.getWindows()) {
+                if (w instanceof com.jamc.worship.output.PresentationWindow) {
+                    w.repaint();
+                }
+            }
+        });
         JPanel output = rows(
                 flow(Ui.small("Projector cursor:"), cursor),
+                flow(Ui.small("Screen that is not 16:9:"), fit),
                 flow(Ui.small("OBS window size:"), res, obsButton), borderless, green,
                 Ui.label("<html>In OBS add a <b>Window Capture</b> source and pick \"" + ObsOutput.WINDOW_TITLE
                         + "\". With the green option, add a Chroma Key filter. OBS handles streaming, recording and audio.</html>",
@@ -470,7 +485,14 @@ public class SettingsPanel extends JPanel {
             shortcuts.resetAll();
             buildShortcutRows();
         });
+        JCheckBox anywhere = new JCheckBox("Next / previous slide also work while any other app is in front",
+                shortcuts.anywhereEnabled());
+        anywhere.setToolTipText("<html>While any other app is in front, Windows gives those keys (default → and ←) to LiveCat:<br>"
+                + "that app does not get them then (→ ← do not move its cursor). Untick to give them back.<br>"
+                + "While LiveCat is in front, the key works in LiveCat as usual (also in its text boxes).</html>");
+        anywhere.addActionListener(e -> shortcuts.setAnywhereEnabled(anywhere.isSelected()));
         JPanel keys = Ui.transparent(new BorderLayout(0, 8));
+        keys.add(anywhere, BorderLayout.NORTH);
         keys.add(shortcutRows, BorderLayout.CENTER);
         keys.add(flow(reset), BorderLayout.SOUTH);
         buildShortcutRows();

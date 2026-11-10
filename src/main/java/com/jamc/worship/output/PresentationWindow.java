@@ -152,6 +152,15 @@ public class PresentationWindow extends JFrame {
         super.dispose();
     }
 
+    /**
+     * Fullscreen on a screen that is not 16:9: stretch the picture over all of it instead of black bars. A window
+     * (rehearsal) always keeps the true shape, however it is resized.
+     */
+    public void setFillScreen(java.util.function.BooleanSupplier fill) {
+        canvas.setFillScreen(() -> fullscreen && fill.getAsBoolean());
+        canvas.repaint();
+    }
+
     public boolean isFullscreen() {
         return fullscreen;
     }
