@@ -78,7 +78,8 @@ public final class RemoteManager {
     private static final long TICK_SECONDS = 5;
     /** How often the desktop's state is compared with what remotes last heard. */
     private static final long STATE_TICK_MS = 300;
-    private static final int PICTURE_EVERY_TICKS = 2;
+    /** Pictures every tick (about 3 a second): a slow phone only skips pictures, it never falls behind (RemoteServer). */
+    private static final int PICTURE_EVERY_TICKS = 1;
 
     /** The answer to "may this device do this now?". */
     public enum Access { ALLOWED, UNKNOWN_DEVICE, NOT_CONNECTED, LOCKED, NO_PERMISSION }

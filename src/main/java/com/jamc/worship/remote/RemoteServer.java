@@ -495,12 +495,46 @@ public final class RemoteServer {
             if (device == null || (PICTURES.equals(name) && !watchingPictures)) {
                 return;
             }
+            boolean pictures = PICTURES.equals(name);
+            if (pictures && picturesInFlight) {
+                // the phone has not taken the last pictures yet (slow Wi-Fi, power saving): never queue up older ones,
+                // which made the monitors run seconds behind; the newest goes as soon as the last one arrived
+                picturesPending = true;
+                return;
+            }
             RemotePermission needed = SLICES.get(name);
             Map<String, Object> message = new LinkedHashMap<>();
             message.put("type", "state");
             message.put("slice", name);
             message.put("value", needed == null || device.permissions().contains(needed) ? manager.slice(name) : null);
-            send(message);
+            if (pictures) {
+                picturesInFlight = true;
+                send(message, new org.eclipse.jetty.websocket.api.Callback() {
+                    @Override
+                    public void succeed() {
+                        picturesSent();
+                    }
+
+                    @Override
+                    public void fail(Throwable x) {
+                        picturesSent();
+                    }
+                });
+            } else {
+                send(message);
+            }
+        }
+
+        /** True while pictures are on their way to the phone; then at most the newest waits. */
+        private boolean picturesInFlight;
+        private boolean picturesPending;
+
+        private synchronized void picturesSent() {
+            picturesInFlight = false;
+            if (picturesPending) {
+                picturesPending = false;
+                sendSlice(PICTURES); // the latest pictures, not the ones skipped meanwhile
+            }
         }
 
         synchronized void closeIfDevice(String id, String reason) {
@@ -538,10 +572,15 @@ public final class RemoteServer {
         }
 
         private void send(Map<String, ?> message) {
+            send(message, org.eclipse.jetty.websocket.api.Callback.NOOP);
+        }
+
+        private void send(Map<String, ?> message, org.eclipse.jetty.websocket.api.Callback done) {
             try {
-                session.sendText(JSON.writeValueAsString(message), org.eclipse.jetty.websocket.api.Callback.NOOP);
+                session.sendText(JSON.writeValueAsString(message), done);
             } catch (JsonProcessingException | RuntimeException e) {
                 log.debug("Remote message not sent", e);
+                done.fail(e);
             }
         }
     }
