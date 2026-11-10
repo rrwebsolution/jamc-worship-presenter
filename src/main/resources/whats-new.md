@@ -15,8 +15,9 @@
 - **Application Audio Capture:** puts the sound of one program (a browser, Zoom…) into the recording and the livestream.
 
 ## Next / previous slide from any app
-- **→ and ←** now move LiveCat's slides even while another app (WPS, PowerPoint, a browser…) is in front.
-- Change the keys, or turn it off, in **Settings → Keyboard Shortcuts** ("Next / previous slide also work while any other app is in front").
+- **→ and ←** now move LiveCat's slides even while **WPS or PowerPoint** is in front.
+- In every other program (a browser, Messenger…) the keys **type as usual**: a key like **-** or → is never taken away there.
+- Change the keys, the programs (**Only in these programs**), or turn it off, in **Settings → Keyboard Shortcuts**.
 
 ## Projector screens that are not 16:9
 - On a 16:10 projector, 4:3 TV or another screen, the picture now **fills the whole screen** by default.

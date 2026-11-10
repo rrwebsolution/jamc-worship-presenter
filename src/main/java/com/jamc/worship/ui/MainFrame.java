@@ -4891,9 +4891,12 @@ public class MainFrame extends JFrame {
         // Next slide also from WPS, PowerPoint or any other app: a Windows hot key (→ by default). Only while another
         // program is in front: with a LiveCat window in front the key is LiveCat's own (and moves the cursor in its
         // text boxes), so the hot key is given back to Windows then.
+        // Only in the programs listed in Settings (WPS, PowerPoint by default): in a browser or chat the key is never
+        // taken, so a plain key like "-" still types there.
         Runnable applyHotkey = () -> {
             boolean liveCatInFront = KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow() != null;
-            boolean on = shortcuts.anywhereEnabled() && !liveCatInFront;
+            boolean on = shortcuts.anywhereEnabled() && !liveCatInFront
+                    && shortcuts.anywhereApp(SystemHotkey.foregroundExe());
             if (!systemHotkey.set(on ? shortcuts.get(Shortcuts.Action.NEXT_SLIDE_ANYWHERE) : null)) {
                 statusBar.showMessage("Next slide from any app: " + systemHotkey.problem());
             }
@@ -4907,6 +4910,14 @@ public class MainFrame extends JFrame {
         KeyboardFocusManager.getCurrentKeyboardFocusManager().addPropertyChangeListener("activeWindow", e -> settle.restart());
         shortcuts.addListener(applyHotkey);
         applyHotkey.run();
+        // Windows does not tell Java when the user switches between two other programs: look which one is in front
+        // (cheap; the hot key is only re-registered when the answer changes)
+        javax.swing.Timer foreground = new javax.swing.Timer(200, e -> {
+            if (shortcuts.anywhereEnabled() && KeyboardFocusManager.getCurrentKeyboardFocusManager().getActiveWindow() == null) {
+                applyHotkey.run();
+            }
+        });
+        foreground.start();
     }
 
     private void newSong() {

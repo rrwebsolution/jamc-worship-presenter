@@ -128,6 +128,39 @@ public final class SystemHotkey {
         }
     }
 
+    /** The exe name of the program whose window is in front (e.g. "wps.exe"), or null. */
+    public static String foregroundExe() {
+        if (!supported()) {
+            return null;
+        }
+        try {
+            WinDef.HWND hwnd = User32.INSTANCE.GetForegroundWindow();
+            if (hwnd == null) {
+                return null;
+            }
+            com.sun.jna.ptr.IntByReference pid = new com.sun.jna.ptr.IntByReference();
+            User32.INSTANCE.GetWindowThreadProcessId(hwnd, pid);
+            com.sun.jna.platform.win32.WinNT.HANDLE p = Kernel32.INSTANCE.OpenProcess(0x1000 /* QUERY_LIMITED_INFORMATION */,
+                    false, pid.getValue());
+            if (p == null) {
+                return null;
+            }
+            try {
+                char[] buf = new char[1024];
+                com.sun.jna.ptr.IntByReference size = new com.sun.jna.ptr.IntByReference(buf.length);
+                if (!Kernel32.INSTANCE.QueryFullProcessImageName(p, 0, buf, size)) {
+                    return null;
+                }
+                String path = new String(buf, 0, size.getValue());
+                return path.substring(Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/')) + 1);
+            } finally {
+                Kernel32.INSTANCE.CloseHandle(p);
+            }
+        } catch (RuntimeException | Error e) {
+            return null;
+        }
+    }
+
     /** Java and Windows number most keys the same (letters, digits, arrows, F-keys, Page Up / Down); not these. */
     static int windowsKey(int javaKey) {
         return switch (javaKey) {

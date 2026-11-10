@@ -485,14 +485,29 @@ public class SettingsPanel extends JPanel {
             shortcuts.resetAll();
             buildShortcutRows();
         });
-        JCheckBox anywhere = new JCheckBox("Next / previous slide also work while any other app is in front",
+        JCheckBox anywhere = new JCheckBox("Next / previous slide also work while WPS / PowerPoint is in front",
                 shortcuts.anywhereEnabled());
-        anywhere.setToolTipText("<html>While any other app is in front, Windows gives those keys (default → and ←) to LiveCat:<br>"
-                + "that app does not get them then (→ ← do not move its cursor). Untick to give them back.<br>"
+        anywhere.setToolTipText("<html>While one of the programs below is in front, Windows gives those keys (default → and ←) to LiveCat:<br>"
+                + "that program does not get them then. In every other program (a browser, a chat…) the keys type as usual.<br>"
                 + "While LiveCat is in front, the key works in LiveCat as usual (also in its text boxes).</html>");
         anywhere.addActionListener(e -> shortcuts.setAnywhereEnabled(anywhere.isSelected()));
+        javax.swing.JTextField anywhereApps = new javax.swing.JTextField(shortcuts.anywhereAppsText(), 28);
+        anywhereApps.setToolTipText("<html>Program file names, separated by commas. Default: " + Shortcuts.DEFAULT_ANYWHERE_APPS
+                + "<br>Leave out a browser here so the keys still type in it.</html>");
+        Runnable saveApps = () -> {
+            shortcuts.setAnywhereAppsText(anywhereApps.getText());
+            anywhereApps.setText(shortcuts.anywhereAppsText());
+        };
+        anywhereApps.addActionListener(e -> saveApps.run());
+        anywhereApps.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                saveApps.run();
+            }
+        });
+        JPanel anywhereBox = rows(anywhere, flow(Ui.small("Only in these programs:"), anywhereApps));
         JPanel keys = Ui.transparent(new BorderLayout(0, 8));
-        keys.add(anywhere, BorderLayout.NORTH);
+        keys.add(anywhereBox, BorderLayout.NORTH);
         keys.add(shortcutRows, BorderLayout.CENTER);
         keys.add(flow(reset), BorderLayout.SOUTH);
         buildShortcutRows();

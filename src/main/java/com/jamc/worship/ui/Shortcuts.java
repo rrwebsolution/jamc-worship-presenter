@@ -82,6 +82,54 @@ public final class Shortcuts {
         listeners.forEach(Runnable::run);
     }
 
+    /**
+     * The programs (exe names) in which the "from any app" keys work. In every other program (a browser, a chat) the
+     * key is never taken, so it types as usual: a plain key such as "-" or → is not lost there.
+     */
+    public static final String KEY_ANYWHERE_APPS = "shortcut.anywhere.apps";
+    /** WPS Office (one window for everything, and the older presentation exe) and PowerPoint. */
+    public static final String DEFAULT_ANYWHERE_APPS = "wps.exe, wpp.exe, POWERPNT.EXE";
+
+    /** The programs as typed in Settings, e.g. "wps.exe, POWERPNT.EXE". */
+    public String anywhereAppsText() {
+        String v = config.get(KEY_ANYWHERE_APPS, DEFAULT_ANYWHERE_APPS);
+        return v == null ? DEFAULT_ANYWHERE_APPS : v;
+    }
+
+    public void setAnywhereAppsText(String text) {
+        String clean = String.join(", ", parseApps(text));
+        config.set(KEY_ANYWHERE_APPS, clean.equalsIgnoreCase(DEFAULT_ANYWHERE_APPS) ? null : clean);
+        config.save();
+        listeners.forEach(Runnable::run);
+    }
+
+    /** True when the keys may be taken while this program is in front (exe name, any case; null = unknown → no). */
+    public boolean anywhereApp(String exe) {
+        if (exe == null) {
+            return false;
+        }
+        return parseApps(anywhereAppsText()).stream().anyMatch(a -> a.equalsIgnoreCase(exe));
+    }
+
+    static java.util.List<String> parseApps(String text) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String part : (text == null ? "" : text).split("[,;\\n]")) {
+            String p = part.trim();
+            if (p.isEmpty()) {
+                continue;
+            }
+            int slash = Math.max(p.lastIndexOf('\\'), p.lastIndexOf('/'));
+            p = p.substring(slash + 1); // a full path pasted: its file name
+            if (!p.toLowerCase(java.util.Locale.ROOT).endsWith(".exe")) {
+                p = p + ".exe";
+            }
+            if (out.stream().noneMatch(p::equalsIgnoreCase)) {
+                out.add(p);
+            }
+        }
+        return out;
+    }
+
     /** Stored for an action whose key was given to another action (it then has no key). */
     private static final String NONE = "none";
 
