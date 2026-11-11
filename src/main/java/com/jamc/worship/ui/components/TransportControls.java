@@ -41,6 +41,16 @@ public class TransportControls extends JPanel {
     private long knownLength;
     /** The bound video played to its end (not looping): the bar sits at the end until it plays again. */
     private boolean ended;
+
+    /** Fade, mute, loop and volume (hidden where there is no sound, e.g. the silent scene editor). */
+    private JPanel right;
+
+    /** Shows or hides the sound controls (fade, mute, loop, volume). */
+    public void setSoundControlsVisible(boolean visible) {
+        if (right != null) {
+            right.setVisible(visible);
+        }
+    }
     /** Players already telling us when they finish (each is told once). */
     private final java.util.Set<Object> finishWatched = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
 
@@ -112,7 +122,7 @@ public class TransportControls extends JPanel {
         buttons.add(forward10);
         buttons.add(stopButton);
         buttons.add(time);
-        JPanel right = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 3, 0));
+        right = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 3, 0));
         right.add(fadeIn);
         right.add(fadeOut);
         right.add(mute);

@@ -36,7 +36,32 @@ public final class Shortcuts {
         CLOSE_OUTPUT("Close fullscreen projector", KeyEvent.VK_ESCAPE, 0),
         SEARCH("Search songs", KeyEvent.VK_F, KeyEvent.CTRL_DOWN_MASK),
         SAVE("Save", KeyEvent.VK_S, KeyEvent.CTRL_DOWN_MASK),
-        NEW_SONG("New song", KeyEvent.VK_N, KeyEvent.CTRL_DOWN_MASK);
+        NEW_SONG("New song", KeyEvent.VK_N, KeyEvent.CTRL_DOWN_MASK),
+        // ---- AI Smart Auto Director (virtual camera shots). They only act while the Auto Director is on, never
+        // while typing, and give the key back otherwise (so 1–5, + and − keep working elsewhere).
+        DIRECTOR_SHOT_1("Auto Director: shot 1 to Preview", KeyEvent.VK_1, 0),
+        DIRECTOR_SHOT_2("Auto Director: shot 2 to Preview", KeyEvent.VK_2, 0),
+        DIRECTOR_SHOT_3("Auto Director: shot 3 to Preview", KeyEvent.VK_3, 0),
+        DIRECTOR_SHOT_4("Auto Director: shot 4 to Preview", KeyEvent.VK_4, 0),
+        DIRECTOR_SHOT_5("Auto Director: shot 5 to Preview", KeyEvent.VK_5, 0),
+        DIRECTOR_TAKE_1("Auto Director: TAKE shot 1 directly", KeyEvent.VK_1, KeyEvent.CTRL_DOWN_MASK),
+        DIRECTOR_TAKE_2("Auto Director: TAKE shot 2 directly", KeyEvent.VK_2, KeyEvent.CTRL_DOWN_MASK),
+        DIRECTOR_TAKE_3("Auto Director: TAKE shot 3 directly", KeyEvent.VK_3, KeyEvent.CTRL_DOWN_MASK),
+        DIRECTOR_TAKE_4("Auto Director: TAKE shot 4 directly", KeyEvent.VK_4, KeyEvent.CTRL_DOWN_MASK),
+        DIRECTOR_TAKE_5("Auto Director: TAKE shot 5 directly", KeyEvent.VK_5, KeyEvent.CTRL_DOWN_MASK),
+        DIRECTOR_ASSISTED("Auto Director: AI Assisted on/off", KeyEvent.VK_A, KeyEvent.CTRL_DOWN_MASK | KeyEvent.SHIFT_DOWN_MASK),
+        DIRECTOR_AUTO("Auto Director: Full Auto on/off", KeyEvent.VK_F, KeyEvent.CTRL_DOWN_MASK | KeyEvent.SHIFT_DOWN_MASK),
+        /** Shares Esc with "Close fullscreen projector": while the AI is active, Esc pauses the AI first. */
+        DIRECTOR_PAUSE("Auto Director: Pause AI (manual control)", KeyEvent.VK_ESCAPE, 0),
+        DIRECTOR_RESUME("Auto Director: Resume AI", KeyEvent.VK_R, KeyEvent.CTRL_DOWN_MASK | KeyEvent.SHIFT_DOWN_MASK),
+        DIRECTOR_ZOOM_IN("Auto Director: zoom in (Preview)", KeyEvent.VK_EQUALS, 0),
+        DIRECTOR_ZOOM_OUT("Auto Director: zoom out (Preview)", KeyEvent.VK_MINUS, 0),
+        // arrows alone are next / previous slide, so the digital pan uses Alt + arrows
+        DIRECTOR_PAN_LEFT("Auto Director: pan left (Preview)", KeyEvent.VK_LEFT, KeyEvent.ALT_DOWN_MASK),
+        DIRECTOR_PAN_RIGHT("Auto Director: pan right (Preview)", KeyEvent.VK_RIGHT, KeyEvent.ALT_DOWN_MASK),
+        DIRECTOR_PAN_UP("Auto Director: pan up (Preview)", KeyEvent.VK_UP, KeyEvent.ALT_DOWN_MASK),
+        DIRECTOR_PAN_DOWN("Auto Director: pan down (Preview)", KeyEvent.VK_DOWN, KeyEvent.ALT_DOWN_MASK),
+        DIRECTOR_RESET_WIDE("Auto Director: reset Preview to the wide shot", KeyEvent.VK_HOME, 0);
 
         private final String label;
         private final KeyStroke defaultKey;
@@ -57,6 +82,17 @@ public final class Shortcuts {
         /** Live actions fire from anywhere except text fields; the rest are menu accelerators. */
         public boolean live() {
             return this != SEARCH && this != SAVE && this != NEW_SONG;
+        }
+
+        /** An Auto Director key (camera shots, AI modes, digital pan / zoom). */
+        public boolean director() {
+            return name().startsWith("DIRECTOR_");
+        }
+
+        /** 0..4 for the shot keys (DIRECTOR_SHOT_n / DIRECTOR_TAKE_n), else -1. */
+        public int shotIndex() {
+            String n = name();
+            return n.startsWith("DIRECTOR_SHOT_") || n.startsWith("DIRECTOR_TAKE_") ? n.charAt(n.length() - 1) - '1' : -1;
         }
     }
 
@@ -160,8 +196,14 @@ public final class Shortcuts {
                 .filter(en -> en.getKey() != a && key.equals(en.getValue()))
                 // "next slide" in LiveCat and from another app (or "previous"): sharing a key is the point
                 .filter(en -> !(nextSlide(a) && nextSlide(en.getKey())) && !(previousSlide(a) && previousSlide(en.getKey())))
+                .filter(en -> !escapePair(a, en.getKey()))
                 .map(Map.Entry::getKey)
                 .findFirst();
+    }
+
+    /** Pause AI and Close projector share Esc on purpose: Pause AI acts only while the AI is active. */
+    private static boolean escapePair(Action a, Action b) {
+        return a == Action.DIRECTOR_PAUSE && b == Action.CLOSE_OUTPUT || a == Action.CLOSE_OUTPUT && b == Action.DIRECTOR_PAUSE;
     }
 
     private static boolean nextSlide(Action a) {
@@ -183,14 +225,32 @@ public final class Shortcuts {
 
     /** The live action bound to this key press, if any. */
     public Optional<Action> match(KeyEvent e) {
-        KeyStroke pressed = KeyStroke.getKeyStroke(e.getKeyCode(), e.getModifiersEx());
+        java.util.List<Action> all = matchAll(e);
+        return all.isEmpty() ? Optional.empty() : Optional.of(all.get(0));
+    }
+
+    /**
+     * Every live action on this key press, in the order they are offered: the first one that acts takes the key
+     * (e.g. Esc: Pause AI while the AI is active, else Close projector). Auto Director keys come first; they give
+     * the key back when the director is off. The numeric keypad's + and − count as the + and − keys.
+     */
+    public java.util.List<Action> matchAll(KeyEvent e) {
+        int code = e.getKeyCode() == KeyEvent.VK_ADD ? KeyEvent.VK_EQUALS
+                : e.getKeyCode() == KeyEvent.VK_SUBTRACT ? KeyEvent.VK_MINUS : e.getKeyCode();
+        boolean keypad = code != e.getKeyCode();
+        KeyStroke pressed = KeyStroke.getKeyStroke(code, e.getModifiersEx());
+        java.util.List<Action> director = new java.util.ArrayList<>();
+        java.util.List<Action> other = new java.util.ArrayList<>();
         for (Map.Entry<Action, KeyStroke> en : keys.entrySet()) {
             KeyStroke k = en.getValue();
-            if (k != null && en.getKey().live() && k.getKeyCode() == pressed.getKeyCode() && k.getModifiers() == pressed.getModifiers()) {
-                return Optional.of(en.getKey());
+            if (k == null || !en.getKey().live() || k.getKeyCode() != pressed.getKeyCode()
+                    || k.getModifiers() != pressed.getModifiers() || keypad && !en.getKey().director()) {
+                continue;
             }
+            (en.getKey().director() ? director : other).add(en.getKey());
         }
-        return Optional.empty();
+        director.addAll(other);
+        return director;
     }
 
     /** Human-readable key, e.g. "Ctrl+F" or "Space". */

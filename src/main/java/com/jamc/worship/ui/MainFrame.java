@@ -221,6 +221,9 @@ public class MainFrame extends JFrame {
     private final com.jamc.worship.ui.components.VideoLibraryPanel videoTabs;
     private final MediaOutputPanel mediaDetail;
     private final com.jamc.worship.ui.components.CameraWorkspacePanel cameraWorkspace;
+    /** AI Smart Auto Director: virtual shots (digital cut-outs) of one camera on Preview / Program. */
+    private final com.jamc.worship.director.AutoDirector director;
+    private final com.jamc.worship.ui.components.DirectorPanel directorPanel;
     /** Which whole workspace (slides, media, camera…) is under the library list and the monitors. */
     private final LibraryWorkspaceController workspaces = new LibraryWorkspaceController();
     private final LowerThirdsPanel lowerThirds;
@@ -439,6 +442,45 @@ public class MainFrame extends JFrame {
                         return previewState.scene();
                     }
                 });
+        // AI SMART AUTO DIRECTOR: the compositor asks it for each surface's cut-out of the director's camera. The camera
+        // session (and its Iriun audio player) is the scene's own; switching shots never opens or restarts anything.
+        director = com.jamc.worship.director.AutoDirector.create(
+                new com.jamc.worship.director.DirectorSettings(context.config()), cameras::cameras);
+        com.jamc.worship.director.VirtualCameras.install(director);
+        directorPanel = new com.jamc.worship.ui.components.DirectorPanel(director, cameras,
+                new com.jamc.worship.ui.components.DirectorPanel.Host() {
+                    @Override
+                    public void take() {
+                        MainFrame.this.take();
+                    }
+
+                    @Override
+                    public String takeKeyName() {
+                        return MainFrame.this.takeKeyName();
+                    }
+
+                    @Override
+                    public boolean programShowsCamera(String camera) {
+                        return sceneShowsCamera(program.scene(), camera);
+                    }
+
+                    @Override
+                    public void status(String message) {
+                        statusBar.showMessage(message);
+                    }
+
+                    @Override
+                    public com.jamc.worship.stream.StreamManager streams() {
+                        return streamManager; // RECORD THIS SHOT: a shot into its own file beside the Program recording
+                    }
+
+                    @Override
+                    public void shotStateChanged() {
+                        if (liveDock != null) {
+                            liveDock.refreshTakeReady();
+                        }
+                    }
+                });
         lowerThirds = new LowerThirdsPanel(context.sceneService());
         lowerThirdEditor = new LowerThirdEditorPanel(context.sceneService(), program, importer);
         presentationLibrary = new PresentationLibraryPanel(context.presentationService());
@@ -586,6 +628,8 @@ public class MainFrame extends JFrame {
                 applyStudioMode(); // Settings → Live & Scenes shows the same switch when it opens
             }
         });
+        // a virtual camera shot waiting in Preview enables TAKE too
+        liveDock.setShotReady(() -> director.status().previewPending());
         loadLiveSettings();
         liveDock.setOutputRouter(output, displays, () -> this);
         settingsPanel.installLiveSettings(new SettingsPanel.LiveHooks() {
@@ -728,7 +772,9 @@ public class MainFrame extends JFrame {
         libraryHolder.add(presentationLibrary, Sidebar.Category.PRESENTATIONS.name());
         libraryHolder.add(themeLibrary, Sidebar.Category.THEMES.name());
         libraryHolder.add(lowerThirds, Sidebar.Category.LOWER_THIRDS.name());
-        libraryHolder.add(cameraWorkspace.libraryPanel(), Sidebar.Category.CAMERA.name());
+        // Camera: the cameras and the AI Auto Director under one item, as two tabs
+        JPanel cameraView = buildCameraArea();
+        libraryHolder.add(cameraSide, Sidebar.Category.CAMERA.name());
 
         // ---- details beside the slide cards (Songs, Bible, Presentations, Custom Slides, service items)
         centerHolder.add(songDetail, CENTER_SONG);
@@ -799,7 +845,7 @@ public class MainFrame extends JFrame {
         // DYNAMIC LIBRARY WORKSPACE: one whole view per Library category, switched as a unit (CardLayout)
         workspaces.add(LibraryWorkspaceController.Workspace.SLIDES, bottomSplit);
         workspaces.add(LibraryWorkspaceController.Workspace.MEDIA, region(mediaDetail));
-        workspaces.add(LibraryWorkspaceController.Workspace.CAMERA, region(cameraWorkspace));
+        workspaces.add(LibraryWorkspaceController.Workspace.CAMERA, cameraView);
         workspaces.add(LibraryWorkspaceController.Workspace.THEME, region(themeDetail));
         workspaces.add(LibraryWorkspaceController.Workspace.LOWER_THIRD, region(lowerThirdEditor));
         workspaces.container().setMinimumSize(new Dimension(0, 150));
@@ -1482,11 +1528,19 @@ public class MainFrame extends JFrame {
         slideshows.addListener(() -> liveDock.setPreviewReady(previewSlide != null || previewVideoPath != null
                 || pendingScene != null || slideshows.takePending()));
         // PREV / NEXT under the monitors when the scene there has an image slideshow
-        slideshows.addListener(() -> {
-            liveDock.showImageNav(false, slideshows.summary(false));
-            liveDock.showImageNav(true, slideshows.summary(true));
-        });
+        // …or a video playlist ("VIDEO 2 / 3"; with Autoplay off it waits there for NEXT)
+        Runnable mediaNav = () -> SwingUtilities.invokeLater(this::refreshMediaNav);
+        slideshows.addListener(mediaNav);
+        hub.sceneVideos().addPlaylistListener(mediaNav);
+        hub.sceneVideos().addListener(mediaNav);
+        // a playing playlist's time moves: "VIDEO 2 / 3 · 0:07 / 0:15" and the bar under it, on Preview and Program
+        javax.swing.Timer navTimer = new javax.swing.Timer(300, e -> refreshMediaNav());
+        navTimer.setCoalesce(true);
+        navTimer.start();
         liveDock.setImageStep((onProgram, delta) -> {
+            if (slideshows.summary(onProgram) == null && hub.sceneVideos().stepPlaylist(onProgram, delta)) {
+                return; // a video playlist: NEXT / PREVIOUS play that video now
+            }
             var step = delta < 0 ? com.jamc.worship.output.Slideshows.Control.PREVIOUS : com.jamc.worship.output.Slideshows.Control.NEXT;
             if (onProgram) {
                 slideshows.controlProgram(step); // the operator chose to step the live image directly
@@ -1553,7 +1607,7 @@ public class MainFrame extends JFrame {
             }
             case CAMERA -> {
                 libraryCards.show(libraryHolder, Sidebar.Category.CAMERA.name());
-                cameraWorkspace.activate();
+                showCameraTab(context.config().getBoolean(KEY_CAMERA_DIRECTOR_TAB, false));
             }
             case THEMES -> {
                 libraryCards.show(libraryHolder, Sidebar.Category.THEMES.name());
@@ -3913,6 +3967,19 @@ public class MainFrame extends JFrame {
      * (CONTENT TAKE): the camera keeps running and only the lyrics layer changes.
      */
     private void take(boolean withScene) {
+        // AUTO DIRECTOR: a virtual camera shot waiting in Preview goes live with this TAKE (a content-only take such as
+        // a lyrics click never cuts the camera). When nothing else in Preview differs from Program, only the camera
+        // changes: the live lyrics / slide are not taken again (no text fade on a camera cut).
+        if (withScene && director.take()) {
+            boolean contentWaiting = selectedScene != null || pendingScene != null || previewVideoPath != null
+                    || previewSlide != null && previewSlide != takenSlide || slideshows.takePending();
+            var live = director.status().programShot();
+            liveDock.refreshTakeReady();
+            if (!contentWaiting) {
+                statusBar.showMessage("Camera shot \"" + (live == null ? "" : live.name) + "\" is live.");
+                return;
+            }
+        }
         if (withScene && selectedScene != null) {
             // a scene card was selected since the last TAKE: it goes live now, with what Preview holds.
             // With separate layouts it becomes the PREVIEW layout only; Program keeps its scene (TAKE SCENE
@@ -4490,6 +4557,33 @@ public class MainFrame extends JFrame {
      * PROGRAM MEDIA controls follow the video playing on Program: the fullscreen video, else the first
      * video source of the Program scene. Hidden when Program has no video.
      */
+    /**
+     * The PREV / NEXT bars under Preview and Program: an image slideshow ("IMAGE 2 / 5"), or a video playlist with
+     * the time of all its videos together and a bar that moves ("VIDEO 2 / 3 · 0:07 / 0:15").
+     */
+    private void refreshMediaNav() {
+        for (boolean onProgram : new boolean[]{false, true}) {
+            String text = slideshows.summary(onProgram);
+            double fraction = -1;
+            if (text == null) {
+                text = hub.sceneVideos().playlistSummary(onProgram);
+                long[] p = text == null ? null : hub.sceneVideos().playlistProgress(onProgram);
+                if (p != null && p[1] > 0) {
+                    text = text + " · " + clock(p[0]) + " / " + clock(p[1]);
+                    fraction = (double) p[0] / p[1];
+                }
+            }
+            liveDock.showImageNav(onProgram, text);
+            liveDock.setNavProgress(onProgram, fraction);
+        }
+    }
+
+    /** 75 000 ms → "1:15" (hours when needed). */
+    private static String clock(long ms) {
+        long s = Math.max(0, ms) / 1000;
+        return s >= 3600 ? String.format("%d:%02d:%02d", s / 3600, s / 60 % 60, s % 60) : String.format("%d:%02d", s / 60, s % 60);
+    }
+
     private void updateProgramMedia() {
         String key = null;
         String title = null;
@@ -4685,6 +4779,28 @@ public class MainFrame extends JFrame {
     }
 
     /** The key that does TAKE ("Space" unless changed in Settings → Shortcuts). */
+    /** Whether a scene shows this camera (a visible camera source); a blank camera means the first camera. */
+    private boolean sceneShowsCamera(Scene scene, String camera) {
+        if (scene == null || camera == null) {
+            return false;
+        }
+        List<String> all = cameras.cameras();
+        String first = all.isEmpty() ? null : all.get(0);
+        for (com.jamc.worship.model.Source s : scene.getSources()) {
+            if (s.isVisible() && s.getType() == com.jamc.worship.model.SourceType.CAMERA) {
+                String c = s.getConfig().camera;
+                Boolean director = s.getConfig().autoDirector;
+                if (Boolean.TRUE.equals(director)) {
+                    return true; // an "Auto Director" source
+                }
+                if (!Boolean.FALSE.equals(director) && (camera.equals(c) || (c == null || c.isBlank()) && camera.equals(first))) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     private String takeKeyName() {
         javax.swing.KeyStroke k = shortcuts.get(Shortcuts.Action.TAKE);
         return k == null ? "the TAKE key" : Shortcuts.describe(k);
@@ -4748,10 +4864,72 @@ public class MainFrame extends JFrame {
 
     private static final String KEY_LIBRARY_CATEGORY = "ui.library.category";
 
+    /** Camera page: true = the AUTO DIRECTOR tab was open last, false = CAMERAS. */
+    private static final String KEY_CAMERA_DIRECTOR_TAB = "ui.camera.directorTab";
+    private final java.awt.CardLayout cameraSideCards = new java.awt.CardLayout();
+    private final JPanel cameraSide = Ui.transparent(cameraSideCards);
+    private final java.awt.CardLayout cameraViewCards = new java.awt.CardLayout();
+    private final JPanel cameraViews = Ui.transparent(cameraViewCards);
+    private final javax.swing.JToggleButton camerasTab = cameraTabButton("CAMERAS", "video");
+    private final javax.swing.JToggleButton directorTab = cameraTabButton("AUTO DIRECTOR", "cpu");
+
+    private static javax.swing.JToggleButton cameraTabButton(String text, String icon) {
+        javax.swing.JToggleButton b = new javax.swing.JToggleButton(text, com.jamc.worship.ui.theme.Icons.get(icon, com.jamc.worship.ui.theme.Icons.SMALL));
+        b.setFocusable(false); // the live shortcuts keep working
+        b.putClientProperty(com.formdev.flatlaf.FlatClientProperties.STYLE,
+                "font: bold; selectedBackground: #1677FF; selectedForeground: #FFFFFF");
+        return b;
+    }
+
+    /**
+     * Library → Camera: the cameras and the AI Auto Director as two tabs of one item. Both the library column (camera
+     * list / director settings) and the workspace switch together.
+     */
+    private JPanel buildCameraArea() {
+        cameraSide.add(cameraWorkspace.libraryPanel(), "cams");
+        cameraSide.add(directorPanel.libraryPanel(), "director");
+        cameraViews.add(region(cameraWorkspace), "cams");
+        cameraViews.add(region(directorPanel.scrollPane()), "director"); // scrolls when the workspace is low
+        javax.swing.ButtonGroup g = new javax.swing.ButtonGroup();
+        g.add(camerasTab);
+        g.add(directorTab);
+        camerasTab.addActionListener(e -> showCameraTab(false));
+        directorTab.addActionListener(e -> showCameraTab(true));
+        JPanel tabs = Ui.panel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 6, 6), Palette::panelBackground);
+        tabs.setBorder(Ui.line(false, false, true, false));
+        tabs.add(camerasTab);
+        tabs.add(directorTab);
+        JPanel area = Ui.panel(new BorderLayout(), Palette::panelBackground);
+        area.add(tabs, BorderLayout.NORTH);
+        area.add(cameraViews, BorderLayout.CENTER);
+        return area;
+    }
+
+    private void showCameraTab(boolean director) {
+        String card = director ? "director" : "cams";
+        cameraSideCards.show(cameraSide, card);
+        cameraViewCards.show(cameraViews, card);
+        (director ? directorTab : camerasTab).setSelected(true);
+        if (context.config().getBoolean(KEY_CAMERA_DIRECTOR_TAB, false) != director) {
+            context.config().set(KEY_CAMERA_DIRECTOR_TAB, String.valueOf(director));
+            context.config().save();
+        }
+        if (director) {
+            directorPanel.activate();
+        } else {
+            cameraWorkspace.activate();
+        }
+    }
+
     private Sidebar.Category savedLibraryCategory() {
         String saved = context.config().get(KEY_LIBRARY_CATEGORY, Sidebar.Category.SONGS.name());
         try {
             // Backgrounds used to be its own category; it is now a tab under Videos
+            if ("DIRECTOR".equals(saved)) {
+                // Auto Director used to be its own item; it is now a tab under Camera
+                context.config().set(KEY_CAMERA_DIRECTOR_TAB, "true");
+                return Sidebar.Category.CAMERA;
+            }
             return "BACKGROUNDS".equals(saved) ? Sidebar.Category.VIDEOS : Sidebar.Category.valueOf(saved);
         } catch (IllegalArgumentException e) {
             return Sidebar.Category.SONGS;
@@ -4861,6 +5039,9 @@ public class MainFrame extends JFrame {
             return false;
         };
         new GlobalShortcuts(this::isActive, shortcuts, enterTakes, action -> {
+            if (action.director()) {
+                return directorPanel.handle(action); // false: the key goes on to its other action (Esc, + / −…)
+            }
             switch (action) {
                 case NEXT_SLIDE, NEXT_SLIDE_ANYWHERE -> stepSlide(true);
                 case PREVIOUS_SLIDE, PREVIOUS_SLIDE_ANYWHERE -> stepSlide(false);
@@ -5094,6 +5275,7 @@ public class MainFrame extends JFrame {
     }
 
     private void releaseResources() {
+        director.shutdown();
         displays.stopMonitoring();
         output.shutdown();
         streamManager.shutdown();

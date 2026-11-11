@@ -232,8 +232,22 @@ public class LiveDock extends JPanel {
 
     /** Enables TAKE when Preview holds something that is not on Program yet. */
     public void setPreviewReady(boolean ready) {
-        takeButton.setEnabled(ready);
+        contentReady = ready;
+        takeButton.setEnabled(ready || shotReady.getAsBoolean());
         preview.repaint();
+    }
+
+    private boolean contentReady;
+    private java.util.function.BooleanSupplier shotReady = () -> false;
+
+    /** Something else waiting for TAKE (an Auto Director virtual shot in Preview) also enables TAKE. */
+    public void setShotReady(java.util.function.BooleanSupplier ready) {
+        shotReady = ready;
+    }
+
+    /** The waiting virtual shot changed: TAKE's state follows. */
+    public void refreshTakeReady() {
+        takeButton.setEnabled(contentReady || shotReady.getAsBoolean());
     }
 
     /** @param programOnDisplay false shows "NOT ON A DISPLAY" on the Program monitor */
@@ -361,6 +375,43 @@ public class LiveDock extends JPanel {
     private final JPanel programImageNav = Ui.transparent(new BorderLayout(6, 0));
     private final JLabel previewImageLabel = Ui.label(" ", Palette::text, "semibold");
     private final JLabel programImageLabel = Ui.label(" ", Palette::text, "semibold");
+    // a video playlist's progress through ALL its videos, under the PREV / NEXT bar
+    private final NavProgress previewNavProgress = new NavProgress();
+    private final NavProgress programNavProgress = new NavProgress();
+
+    /** A thin bar: how far the playlist (all its videos together) has played. */
+    private static final class NavProgress extends javax.swing.JComponent {
+        private double fraction = -1;
+
+        NavProgress() {
+            setPreferredSize(new java.awt.Dimension(10, 4));
+            setVisible(false);
+        }
+
+        void set(double f) {
+            boolean show = f >= 0;
+            if (show != isVisible()) {
+                setVisible(show);
+            }
+            if (Math.abs(f - fraction) > 0.0005) {
+                fraction = f;
+                repaint();
+            }
+        }
+
+        @Override
+        protected void paintComponent(java.awt.Graphics g) {
+            g.setColor(Palette.border());
+            g.fillRect(0, 0, getWidth(), getHeight());
+            g.setColor(Palette.accent());
+            g.fillRect(0, 0, (int) Math.round(getWidth() * Math.clamp(fraction, 0, 1)), getHeight());
+        }
+    }
+
+    /** The playlist's progress under PREV / NEXT ({@code fraction} 0..1, or -1 to hide it). */
+    public void setNavProgress(boolean program, double fraction) {
+        (program ? programNavProgress : previewNavProgress).set(fraction);
+    }
     /** (on Program?, -1 previous / +1 next). */
     private java.util.function.BiConsumer<Boolean, Integer> imageStep = (program, delta) -> { };
 
@@ -370,10 +421,10 @@ public class LiveDock extends JPanel {
         JLabel label = program ? programImageLabel : previewImageLabel;
         String where = program ? "Program (live now)" : "Preview (TAKE puts it on Program)";
         JButton prev = new JButton("PREV", Icons.get("chevron-left", Icons.SMALL));
-        prev.setToolTipText("Previous image on " + where);
+        prev.setToolTipText("Previous image / video (slideshow or video playlist) on " + where);
         JButton next = new JButton("NEXT", Icons.get("chevron-right", Icons.SMALL));
         next.setHorizontalTextPosition(javax.swing.SwingConstants.LEADING);
-        next.setToolTipText("Next image on " + where);
+        next.setToolTipText("Next image / video (slideshow or video playlist) on " + where);
         for (JButton b : new JButton[]{prev, next}) {
             b.putClientProperty(FlatClientProperties.STYLE, "font: bold -1; margin: 3,10,3,10");
             b.setFocusable(false);
@@ -383,7 +434,10 @@ public class LiveDock extends JPanel {
         next.addActionListener(e -> imageStep.accept(program, 1));
         label.setHorizontalAlignment(javax.swing.SwingConstants.CENTER);
         bar.add(prev, BorderLayout.WEST);
-        bar.add(label, BorderLayout.CENTER);
+        JPanel middle = Ui.transparent(new BorderLayout(0, 2));
+        middle.add(label, BorderLayout.CENTER);
+        middle.add(program ? programNavProgress : previewNavProgress, BorderLayout.SOUTH);
+        bar.add(middle, BorderLayout.CENTER);
         bar.add(next, BorderLayout.EAST);
         bar.setVisible(false);
         return bar;

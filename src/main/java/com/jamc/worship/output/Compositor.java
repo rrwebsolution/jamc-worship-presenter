@@ -74,6 +74,8 @@ public final class Compositor {
         }
     };
     private final DateTimeFormatter clockFormat = DateTimeFormatter.ofPattern("h:mm a");
+    /** This surface's chroma keyer (keyed frames are cached per source). */
+    private final ChromaKey chromaKey = new ChromaKey();
     private boolean editorMode;
 
     public Compositor(SlideRenderer renderer) {
@@ -389,11 +391,22 @@ public final class Compositor {
                     // thumbnail: no camera picture (nothing to keep refreshing), only its name and state
                     cameraState(g, rect, s.getName(), frames.cameraStatus(c.camera), ph);
                 } else if (!keyMode) {
-                    BufferedImage frame = frames.camera(c.camera);
-                    if (frame != null) {
+                    // AI Auto Director: Preview and Program each show their own virtual shot, of this camera or of
+                    // another one (multi-camera); the source's sound stays its own camera's
+                    com.jamc.worship.director.VirtualCameras.Framing shot = editorMode ? null
+                            : com.jamc.worship.director.VirtualCameras.framing(c.camera, c.autoDirector, preview);
+                    String cam = shot != null && shot.camera() != null ? shot.camera() : c.camera;
+                    // CHROMA KEY: the green (key colour) background of an NDI / camera picture becomes transparent
+                    BufferedImage frame = chromaKey.apply(frames.camera(cam), c);
+                    if (shot != null && frame != null) {
+                        BufferedImage old = shot.from() == null ? null
+                                : shot.fromCamera() == null || shot.fromCamera().equals(cam) ? frame
+                                : frames.camera(shot.fromCamera());
+                        drawVirtualShot(g, frame, old, rect, c, opacity(c), shot);
+                    } else if (frame != null) {
                         drawCamera(g, frame, rect, c, opacity(c));
                     } else {
-                        paintCameraOffline(g, rect, s, frames.cameraStatus(c.camera), ph);
+                        paintCameraOffline(g, rect, s, frames.cameraStatus(cam), ph);
                     }
                 }
             }
@@ -770,6 +783,76 @@ public final class Compositor {
             g2.scale(-1, 1); // flipped around the box's vertical center line
         }
         drawFit(g2, pic, box, c.fit, alpha);
+        g2.dispose();
+    }
+
+    /**
+     * A virtual shot of the Auto Director: a cut-out of the full-resolution camera frame (no new capture, no decoder
+     * restart). During a fade the old cut-out is drawn under the new one. The cut-out is placed with sub-pixel
+     * precision, so slow pans and zooms glide instead of stepping a pixel at a time.
+     */
+    static void drawVirtualShot(Graphics2D g, BufferedImage img, Rectangle r, SourceConfig c, float alpha,
+                                com.jamc.worship.director.VirtualCameras.Framing f) {
+        drawVirtualShot(g, img, img, r, c, alpha, f);
+    }
+
+    /** {@code old} is the picture faded out (another camera's frame when the shot changed camera). */
+    static void drawVirtualShot(Graphics2D g, BufferedImage img, BufferedImage old, Rectangle r, SourceConfig c, float alpha,
+                                com.jamc.worship.director.VirtualCameras.Framing f) {
+        if (f.from() != null && f.fadeIn() < 1f) {
+            if (old != null) {
+                drawCut(g, old, r, c, alpha, f.from());
+            }
+            drawCut(g, img, r, c, alpha * Math.clamp(f.fadeIn(), 0f, 1f), f.crop());
+        } else {
+            drawCut(g, img, r, c, alpha, f.crop());
+        }
+    }
+
+    private static void drawCut(Graphics2D g, BufferedImage img, Rectangle r, SourceConfig c, float alpha,
+                                com.jamc.worship.director.CropRect crop) {
+        if (img == null || r.width <= 0 || r.height <= 0 || alpha <= 0f) {
+            return;
+        }
+        double sw = img.getWidth() * crop.width();
+        double sh = img.getHeight() * crop.height();
+        double sx = img.getWidth() * crop.cx() - sw / 2;
+        double sy = img.getHeight() * crop.cy() - sh / 2;
+        if (rotation(c) != 0) {
+            // a turned phone: whole-pixel cut-out, then the usual turning and fitting
+            int x = (int) Math.clamp(Math.round(sx), 0, img.getWidth() - 1);
+            int y = (int) Math.clamp(Math.round(sy), 0, img.getHeight() - 1);
+            int w = (int) Math.clamp(Math.round(sw), 1, img.getWidth() - x);
+            int h = (int) Math.clamp(Math.round(sh), 1, img.getHeight() - y);
+            SourceConfig plain = new SourceConfig();
+            plain.rotation = c.rotation;
+            plain.mirror = c.mirror;
+            plain.fit = c.fit;
+            drawCamera(g, img.getSubimage(x, y, w, h), r, plain, alpha);
+            return;
+        }
+        double kx = r.width / sw;
+        double ky = r.height / sh;
+        FitMode fit = c.fit == null ? FitMode.FILL : c.fit;
+        if (fit != FitMode.STRETCH) {
+            double k = fit == FitMode.FIT ? Math.min(kx, ky) : Math.max(kx, ky);
+            kx = k;
+            ky = k;
+        }
+        Graphics2D g2 = (Graphics2D) g.create();
+        g2.clipRect(r.x, r.y, r.width, r.height);
+        if (alpha < 1f) {
+            g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+        }
+        if (Boolean.TRUE.equals(c.mirror)) {
+            g2.translate(r.x * 2 + r.width, 0);
+            g2.scale(-1, 1);
+        }
+        // the cut-out's center on the box's center
+        g2.translate(r.getCenterX(), r.getCenterY());
+        g2.scale(kx, ky);
+        g2.translate(-(sx + sw / 2), -(sy + sh / 2));
+        g2.drawImage(img, 0, 0, null);
         g2.dispose();
     }
 

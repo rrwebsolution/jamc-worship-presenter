@@ -28,6 +28,7 @@
         <poi.version>5.4.1</poi.version>
         <log4j.version>2.24.3</log4j.version>
         <jcef.version>152.0.6</jcef.version>
+        <onnxruntime.version>1.30.0</onnxruntime.version>
     </properties>
 
     <dependencies>
@@ -89,6 +90,16 @@
             <groupId>me.friwi</groupId>
             <artifactId>jcefmaven</artifactId>
             <version>${jcef.version}</version>
+        </dependency>
+        <!--
+            AI Smart Auto Director: local person detection on the CPU with the bundled YOLOX-nano model
+            (src/main/resources/models, Apache-2.0). ONNX Runtime is MIT licensed and runs offline.
+            Only the Windows x64 natives are shaded in (see the shade filters).
+        -->
+        <dependency>
+            <groupId>com.microsoft.onnxruntime</groupId>
+            <artifactId>onnxruntime</artifactId>
+            <version>${onnxruntime.version}</version>
         </dependency>
         <!-- QR code for the Remote Control address (pure Java, core only) -->
         <dependency>
@@ -190,6 +201,14 @@
                                         <exclude>META-INF/*.RSA</exclude>
                                         <exclude>META-INF/versions/*/module-info.class</exclude>
                                         <exclude>module-info.class</exclude>
+                                    </excludes>
+                                </filter>
+                                <filter>
+                                    <artifact>com.microsoft.onnxruntime:onnxruntime</artifact>
+                                    <excludes>
+                                        <exclude>ai/onnxruntime/native/linux-*/**</exclude>
+                                        <exclude>ai/onnxruntime/native/osx-*/**</exclude>
+                                        <exclude>ai/onnxruntime/native/win-arm64/**</exclude>
                                     </excludes>
                                 </filter>
                             </filters>

@@ -811,7 +811,7 @@ public class SettingsPanel extends JPanel {
                     return;
                 }
                 d.dispose();
-                if (code != KeyEvent.VK_ESCAPE || a == Shortcuts.Action.CLOSE_OUTPUT) {
+                if (code != KeyEvent.VK_ESCAPE || a == Shortcuts.Action.CLOSE_OUTPUT || a == Shortcuts.Action.DIRECTOR_PAUSE) {
                     KeyStroke key = KeyStroke.getKeyStroke(code, e.getModifiersEx());
                     var taken = shortcuts.conflict(a, key);
                     if (taken.isPresent()) {

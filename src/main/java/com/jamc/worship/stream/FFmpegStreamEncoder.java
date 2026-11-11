@@ -460,7 +460,8 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         double master = s.masterMuted() ? 0 : s.masterVolume() / 100.0;
         if (gains.isEmpty()) {
             // platforms expect an audio track: a silent one
-            c.addAll(List.of("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"));
+            // read in real time (-re): unthrottled, the silence ran far ahead of the picture (a 5 s file said 2 minutes)
+            c.addAll(List.of("-re", "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"));
             c.addAll(List.of("-map", "0:v", "-map", "1:a"));
         } else {
             StringBuilder f = new StringBuilder();

@@ -94,6 +94,21 @@ public class SourceConfig {
     public Boolean locked;
     /** CAMERA: flip the picture left to right; null = off. */
     public Boolean mirror;
+    /**
+     * CAMERA: the AI Auto Director chooses this source's picture (virtual shots). TRUE = always (an "Auto Director"
+     * source), FALSE = never (a plain camera, e.g. a picture-in-picture), null = when it shows the director's main camera.
+     */
+    public Boolean autoDirector;
+    /** CAMERA (and NDI): chroma key, the key colour becomes transparent (green screens, NDI graphics on green); null = off. */
+    public Boolean chromaKey;
+    /** Chroma key colour as 0xRRGGBB; null = pure green. */
+    public Integer chromaKeyColor;
+    /** How close to the key colour is removed, 1..100 %; null = 40. */
+    public Integer chromaSimilarity;
+    /** Soft edge after that, 0..100 %; null = 8. */
+    public Integer chromaSmoothness;
+    /** Take the key colour's tinge off the edges; null = on. */
+    public Boolean chromaSpill;
     /** CAMERA: part of the picture cut off at each edge, as a fraction of its width / height (0..0.45); null = 0. */
     public Double cropLeft;
     public Double cropTop;
@@ -131,6 +146,8 @@ public class SourceConfig {
      */
     public java.util.List<Long> videoIds;
     public java.util.List<String> videoPaths;
+    /** VIDEO playlist: the next video plays by itself when one ends; null = on. Off: each video stops, NEXT moves on. */
+    public Boolean autoNext;
     /** SCENE: the scene shown inside this one (referenced by id). */
     public Long sceneId;
     /** A layer inside a GROUP: that group's {@link #uid}. The group moves, shows and hides its layers together. */
@@ -200,6 +217,13 @@ public class SourceConfig {
         c.presentationMode = presentationMode;
         c.keepAspect = keepAspect;
         c.mirror = mirror;
+        c.autoDirector = autoDirector;
+        c.autoNext = autoNext;
+        c.chromaKey = chromaKey;
+        c.chromaKeyColor = chromaKeyColor;
+        c.chromaSimilarity = chromaSimilarity;
+        c.chromaSmoothness = chromaSmoothness;
+        c.chromaSpill = chromaSpill;
         c.cropLeft = cropLeft;
         c.cropTop = cropTop;
         c.cropRight = cropRight;

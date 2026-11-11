@@ -161,6 +161,14 @@ public final class SceneVideos {
         }
         playlistAt.put(player, 0);
         player.addFinishedListener(() -> javax.swing.SwingUtilities.invokeLater(() -> nextInPlaylist(player)));
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            playlistChanged(); // the VIDEO 1 / N bar appears
+            Slot s = slotOf(player);
+            if (s != null) {
+                learnDurations(s.config); // the lengths of all its videos, for the total time
+                preloadNext(s); // video 2 waits ready, so it follows video 1 without a gap
+            }
+        });
     }
 
     /** The slot this player belongs to now (it moves from Preview to Program on TAKE), or null when released. */
@@ -175,8 +183,312 @@ public final class SceneVideos {
         return null;
     }
 
-    /** The next video of the list (random with Shuffle); after the last one, the first again only with Loop. */
+    /** Players whose video ended while Autoplay (next) is off: they wait on the last picture for NEXT. */
+    private final Set<VideoPlayback> waitingForNext = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    /** Players whose playlist played to its end (no Loop): the time stays at the end, not at the last video's start. */
+    private final Set<VideoPlayback> listEnded = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+    private final List<Runnable> playlistListeners = new CopyOnWriteArrayList<>();
+
+    /** Told when a playlist moves to another video or waits for NEXT (for the VIDEO 2 / 3 bar under the monitors). */
+    public void addPlaylistListener(Runnable l) {
+        playlistListeners.add(l);
+    }
+
+    private void playlistChanged() {
+        playlistListeners.forEach(Runnable::run);
+    }
+
+    static boolean autoNext(SourceConfig c) {
+        return c.autoNext == null || c.autoNext;
+    }
+
+    /** A video of a playlist ended: the next one plays by itself (Autoplay), or the list waits for NEXT. */
     void nextInPlaylist(VideoPlayback player) {
+        Slot slot = slotOf(player);
+        if (slot != null && slot.config.isPlaylist() && !autoNext(slot.config)) {
+            waitingForNext.add(player); // Autoplay off: stays on the last picture until NEXT
+            playlistChanged();
+            return;
+        }
+        if (slot != null && swapToCued(slot, -1)) {
+            return; // the next video was ready and paused on its first picture: no gap
+        }
+        advancePlaylist(player);
+    }
+
+    // ---- gapless playlists: the next video waits, opened and paused on its first picture, in a second player
+
+    /** The next video of a playlist, opened in its own player and paused on its first picture. */
+    private record Cued(VideoPlayback player, int index, String path) {
+    }
+
+    private final Map<Slot, Cued> cued = new java.util.IdentityHashMap<>();
+
+    /** Which video comes after {@code at} (Shuffle / Loop), or -1 when the list has ended. */
+    private int nextIndex(Slot slot, int at) {
+        int size = slot.config.videoPaths.size();
+        if (Boolean.TRUE.equals(slot.config.shuffle)) {
+            return size == 1 ? 0 : (at + 1 + shuffle.nextInt(size - 1)) % size;
+        }
+        if (at + 1 < size) {
+            return at + 1;
+        }
+        return effectiveLoop(slot) ? 0 : -1;
+    }
+
+    /**
+     * Opens the playlist's next video in a second player, paused on its first picture, so that when the current one
+     * ends it takes over at once: no wait while VLC opens the file (the "blink" between two videos).
+     */
+    private void preloadNext(Slot slot) {
+        dropCued(slot);
+        if (slot.config == null || !slot.config.isPlaylist() || !autoNext(slot.config) || editor.containsValue(slot)
+                || !(program.containsValue(slot) || preview.containsValue(slot))) {
+            return;
+        }
+        int next = nextIndex(slot, playlistAt.getOrDefault(slot.player, 0));
+        if (next < 0) {
+            return;
+        }
+        String path = slot.config.videoPaths.get(next);
+        String mrl = mrl(path);
+        if (mrl == null) {
+            return;
+        }
+        try {
+            VideoPlayback p = VideoPlayback.create(path);
+            p.setMuted(true);
+            p.cue(mrl, false);
+            cued.put(slot, new Cued(p, next, path));
+        } catch (RuntimeException e) {
+            log.debug("Could not open the next playlist video {}", path, e);
+        }
+    }
+
+    private void dropCued(Slot slot) {
+        Cued c = cued.remove(slot);
+        if (c != null) {
+            c.player.release();
+        }
+    }
+
+    /**
+     * The ready player takes over the slot (Program Media controls and sound follow it); the old one is released.
+     * {@code wanted} = the video asked for (NEXT / PREVIOUS), -1 = whichever was prepared. False when none is ready.
+     */
+    private boolean swapToCued(Slot slot, int wanted) {
+        Cued c = cued.get(slot);
+        if (c == null || (wanted >= 0 && c.index != wanted) || c.index >= slot.config.videoPaths.size()
+                || !c.path.equals(slot.config.videoPaths.get(c.index))) {
+            return false;
+        }
+        cued.remove(slot);
+        VideoPlayback old = slot.player;
+        VideoPlayback next = c.player;
+        slot.player = next;
+        playlistAt.remove(old);
+        waitingForNext.remove(old);
+        listEnded.remove(old);
+        playlistAt.put(next, c.index);
+        next.addFinishedListener(() -> javax.swing.SwingUtilities.invokeLater(() -> nextInPlaylist(next)));
+        boolean onProgram = program.containsValue(slot);
+        if (onProgram) {
+            applyProgramAudio(slot);
+        } else {
+            applyPreviewAudio(slot);
+        }
+        next.playOrResume();
+        old.release();
+        log.info("Playlist \"{}\": video {} of {} (ready, no gap)", slot.name, c.index + 1, slot.config.videoPaths.size());
+        playlistChanged();
+        if (onProgram) {
+            listeners.forEach(Runnable::run); // the Program Media controls take the new player
+        }
+        preloadNext(slot);
+        return true;
+    }
+
+    /** Prepared players whose playlist is no longer on Preview / Program are let go. */
+    private void sweepCued() {
+        cued.keySet().removeIf(slot -> {
+            if (program.containsValue(slot) || preview.containsValue(slot)) {
+                return false;
+            }
+            cued.get(slot).player.release();
+            return true;
+        });
+    }
+
+    /** The playlist on Program (or in Preview) of the current scene, or null. */
+    private Slot playlistSlot(boolean onProgram) {
+        for (Slot s : (onProgram ? program : preview).values()) {
+            if (s.config.isPlaylist() && s.player != null) {
+                return s;
+            }
+        }
+        return null;
+    }
+
+    /** "VIDEO 2 / 3" (and "· ENDED, press NEXT") for the playlist on Program / in Preview, or null when there is none. */
+    public String playlistSummary(boolean onProgram) {
+        Slot s = playlistSlot(onProgram);
+        if (s == null) {
+            return null;
+        }
+        int at = playlistAt.getOrDefault(s.player, 0);
+        return "VIDEO " + (at + 1) + " / " + s.config.videoPaths.size()
+                + (listEnded.contains(s.player) ? " · END" : "")
+                + (waitingForNext.contains(s.player) ? " · ENDED, press NEXT" : autoNext(s.config) ? "" : " · manual");
+    }
+
+    /**
+     * NEXT / PREVIOUS of the playlist on Program (or in Preview): plays that video now. Past the end it goes round
+     * (the operator asked for it). Returns false when there is no playlist there.
+     */
+    public boolean stepPlaylist(boolean onProgram, int delta) {
+        Slot slot = playlistSlot(onProgram);
+        if (slot == null) {
+            return false;
+        }
+        int size = slot.config.videoPaths.size();
+        int at = playlistAt.getOrDefault(slot.player, 0);
+        int target = Math.floorMod(at + delta, size);
+        if (!swapToCued(slot, target)) { // the prepared next video when it is the one asked for
+            playAt(slot, target);
+        }
+        return true;
+    }
+
+    // ---- a playlist's time as one: all its videos together (0:07 / 0:15), for the progress bars
+
+    /** Length of each video file (ms), read once in the background; -1 = being read or unknown. */
+    private final Map<String, Long> durations = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Reads the lengths of a playlist's videos in the background (once per file). */
+    private void learnDurations(SourceConfig c) {
+        if (c == null || c.videoPaths == null) {
+            return;
+        }
+        for (String path : c.videoPaths) {
+            if (durations.putIfAbsent(path, -1L) == null) {
+                Thread.ofVirtual().name("playlist-length").start(() -> {
+                    Path file = resolver.apply(path);
+                    long d = MediaProbe.durationMs(file);
+                    if (d > 0) {
+                        durations.put(path, d);
+                    }
+                });
+            }
+        }
+    }
+
+    /** One video's length: what its player says when it plays now, else what was read; 0 while unknown. */
+    private long durationOf(Slot slot, int index, int playingIndex) {
+        String path = slot.config.videoPaths.get(index);
+        if (index == playingIndex) {
+            long len = slot.player.length();
+            if (len > 0) {
+                durations.put(path, len);
+                return len;
+            }
+        }
+        Long d = durations.get(path);
+        return d == null || d < 0 ? 0 : d;
+    }
+
+    /**
+     * {time, length} of the video playing now in ms: each video has its own time, and "VIDEO 2 / 3" counts the videos
+     * (the operator chose this over one combined time). A video that ended shows its full length.
+     */
+    private long[] playlistProgress(Slot slot) {
+        int at = playlistAt.getOrDefault(slot.player, 0);
+        long len = durationOf(slot, at, at);
+        boolean atEnd = waitingForNext.contains(slot.player) || listEnded.contains(slot.player);
+        long now = atEnd ? len : Math.max(0, slot.player.time());
+        return new long[]{len > 0 ? Math.min(len, now) : now, len};
+    }
+
+    /** {time, total} of the playlist on Program / in Preview, or null when there is none. */
+    public long[] playlistProgress(boolean onProgram) {
+        Slot s = playlistSlot(onProgram);
+        return s == null ? null : playlistProgress(s);
+    }
+
+    /**
+     * PLAY on a playlist that is not playing a video: all of it played → from the first video again; waiting for NEXT
+     * (Autoplay off) → the next video (the first one after the last). False = nothing special, resume as usual.
+     */
+    private boolean playlistPlayAgain(Slot slot) {
+        int size = slot.config.videoPaths.size();
+        int at = playlistAt.getOrDefault(slot.player, 0);
+        int target;
+        if (listEnded.contains(slot.player)) {
+            target = 0;
+        } else if (waitingForNext.contains(slot.player)) {
+            target = at + 1 < size ? at + 1 : 0;
+        } else {
+            return false;
+        }
+        if (!swapToCued(slot, target)) {
+            playAt(slot, target);
+        }
+        return true;
+    }
+
+    /** The playlist slot of this scene source (by its layer uid), on Program first, else in Preview; or null. */
+    private Slot slotOfSource(String uid) {
+        for (Map<String, Slot> m : List.of(program, preview)) {
+            for (Slot s : m.values()) {
+                if (s.config != null && s.config.isPlaylist() && uid != null && uid.equals(s.config.uid)) {
+                    return s;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Which video of this playlist source plays now (0-based), and whether on Program; null when it is not playing. */
+    public int[] playingIndex(String uid) {
+        Slot s = slotOfSource(uid);
+        return s == null ? null : new int[]{playlistAt.getOrDefault(s.player, 0), program.containsValue(s) ? 1 : 0};
+    }
+
+    /** Plays video {@code index} of this playlist source now (where it plays: Program, else Preview). */
+    public boolean playIndex(String uid, int index) {
+        Slot s = slotOfSource(uid);
+        if (s == null || index < 0 || index >= s.config.videoPaths.size()) {
+            return false;
+        }
+        if (!swapToCued(s, index)) {
+            playAt(s, index);
+        }
+        return true;
+    }
+
+    /** Plays video {@code index} of a playlist slot on its player (sound as that surface wants it). */
+    private boolean playAt(Slot slot, int index) {
+        String mrl = mrl(slot.config.videoPaths.get(index));
+        if (mrl == null) {
+            return false; // a missing file
+        }
+        VideoPlayback player = slot.player;
+        waitingForNext.remove(player);
+        listEnded.remove(player);
+        playlistAt.put(player, index);
+        boolean onProgram = program.containsValue(slot);
+        boolean muted = onProgram ? programMuted(slot) : editor.containsValue(slot) || !hearPreview(slot);
+        player.play(mrl, false, muted);
+        if (onProgram) {
+            applyProgramAudio(slot);
+        }
+        log.info("Playlist \"{}\": video {} of {}", slot.name, index + 1, slot.config.videoPaths.size());
+        playlistChanged();
+        preloadNext(slot);
+        return true;
+    }
+
+    /** The next video of the list (random with Shuffle); after the last one, the first again only with Loop. */
+    private void advancePlaylist(VideoPlayback player) {
         Slot slot = slotOf(player);
         if (slot == null || !slot.config.isPlaylist()) {
             playlistAt.remove(player);
@@ -192,25 +504,17 @@ public final class SceneVideos {
                 next = at + 1;
                 if (next >= paths.size()) {
                     if (!effectiveLoop(slot)) {
-                        return; // the list played once: it stays on its last picture
+                        listEnded.add(player); // the list played once: it stays on its last picture (time shows the end)
+                        playlistChanged();
+                        return;
                     }
                     next = 0;
                 }
             }
             at = next;
-            String mrl = mrl(paths.get(next));
-            if (mrl == null) {
-                continue; // a missing file is skipped
-            }
-            playlistAt.put(player, next);
-            boolean onProgram = program.containsValue(slot);
-            boolean muted = onProgram ? programMuted(slot) : editor.containsValue(slot) || !hearPreview(slot);
-            player.play(mrl, false, muted);
-            if (onProgram) {
-                applyProgramAudio(slot);
-            }
-            log.info("Playlist \"{}\": video {} of {}", slot.name, next + 1, paths.size());
-            return;
+            if (playAt(slot, next)) {
+                return;
+            } // a missing file is skipped
         }
     }
 
@@ -218,8 +522,12 @@ public final class SceneVideos {
     private void restartPlaylist(Slot slot, boolean muted) {
         String mrl = mrl(slot.config.videoPaths.getFirst());
         if (mrl != null) {
+            waitingForNext.remove(slot.player);
+            listEnded.remove(slot.player);
             playlistAt.put(slot.player, 0);
             slot.player.play(mrl, false, muted);
+            playlistChanged();
+            preloadNext(slot);
         }
     }
 
@@ -302,10 +610,97 @@ public final class SceneVideos {
         v.lastUsed = System.currentTimeMillis();
         if (play) {
             v.player.setMuted(true); // the editor is silent: the church never hears a video being arranged
-            v.player.playOrResume();
+            if (v.config.isPlaylist() && playlistPlayAgain(v)) {
+                return; // all of it played: from the first video again (waiting for NEXT: the next one)
+            }
+            listEnded.remove(v.player);
+            v.player.playOrResume(); // a video that ended starts again from its beginning
         } else {
             v.player.pause();
         }
+    }
+
+    /**
+     * The scene editor's controls of a video source, like Program Media: play / pause / stop, ±10 s and a seek bar
+     * whose time runs (a playlist: the video playing now). Silent, its own player: Preview and Program are untouched.
+     */
+    public Transport editorTransport(Source s) {
+        return new Transport() {
+            private Slot slot() {
+                return editorSlot(s);
+            }
+
+            @Override public void playOrResume() { setEditorPlaying(s, true); }
+            @Override public void pause() { setEditorPlaying(s, false); }
+            @Override public void stop() {
+                Slot v = slot();
+                if (v != null) {
+                    listEnded.remove(v.player);
+                    v.player.stop();
+                }
+            }
+            @Override public void seek(float position) {
+                Slot v = slot();
+                if (v != null) {
+                    v.player.seek(position);
+                }
+            }
+            @Override public void setVolume(int volume) { }
+            @Override public int volume() { return 100; }
+            @Override public void setMuted(boolean muted) { }
+            @Override public boolean isMuted() { return true; }
+            @Override public void setLoop(boolean loop) { }
+            @Override public boolean isLoop() {
+                Slot v = slot();
+                return v != null && effectiveLoop(v);
+            }
+            @Override public boolean isPlaying() {
+                Slot v = editor.get(key(s));
+                return v != null && v.player.isPlaying();
+            }
+            @Override public long time() {
+                Slot v = editor.get(key(s));
+                return v == null ? 0 : v.config.isPlaylist() ? playlistProgress(v)[0] : singleProgress(v)[0];
+            }
+            @Override public long length() {
+                Slot v = editor.get(key(s));
+                return v == null ? 0 : v.config.isPlaylist() ? playlistProgress(v)[1] : singleProgress(v)[1];
+            }
+            @Override public boolean hasMedia() {
+                Slot v = editor.get(key(s));
+                return v != null && v.player.hasMedia();
+            }
+            @Override public void addStateListener(Runnable listener) {
+                Slot v = slot();
+                if (v != null) {
+                    v.player.addStateListener(listener);
+                }
+            }
+        };
+    }
+
+    /** {time, length} of a single editor video; at its end both are the full length (not VLC's 0:00 / 0:00). */
+    private long[] singleProgress(Slot v) {
+        long len = v.player.length();
+        if (len > 0) {
+            durations.put(v.config.path, len);
+        } else {
+            Long d = durations.get(v.config.path);
+            len = d == null || d < 0 ? 0 : d;
+        }
+        long now = listEnded.contains(v.player) ? len : Math.max(0, v.player.time());
+        return new long[]{now, len};
+    }
+
+    /** "VIDEO 2 / 3" (or "· END") of a playlist in the scene editor, or null for a single video. */
+    public String editorPlaylistSummary(Source s) {
+        Slot v = editor.get(key(s));
+        if (v == null || !v.config.isPlaylist()) {
+            return null;
+        }
+        int at = playlistAt.getOrDefault(v.player, 0);
+        return "VIDEO " + (at + 1) + " / " + v.config.videoPaths.size()
+                + (listEnded.contains(v.player) ? " · END" : waitingForNext.contains(v.player) ? " · ENDED" : "");
     }
 
     /** The scene editor left the screen (another page): every editor video pauses where it is. */
@@ -336,6 +731,13 @@ public final class SceneVideos {
                 player.cue(mrl, playerLoops(c)); // paused: nothing moves until PLAY
                 v = new Slot(k, c.path, player, c, s.getName());
                 editor.put(k, v);
+                // a single video that played to its end: its time stays at the end (VLC reports 0:00 / 0:00 then)
+                player.addFinishedListener(() -> javax.swing.SwingUtilities.invokeLater(() -> {
+                    Slot cur = editor.get(k);
+                    if (cur != null && cur.player == player && !cur.config.isPlaylist()) {
+                        listEnded.add(player);
+                    }
+                }));
             } catch (RuntimeException e) {
                 log.warn("Could not open scene video {} in the editor", c.path, e);
                 return null;
@@ -543,12 +945,19 @@ public final class SceneVideos {
      * mute are live changes on top of the scene's values (the saved scene is not changed).
      */
     public Transport transport(Slot slot) {
-        VideoPlayback p = slot.player;
+        // always the slot's player NOW: a playlist hands its slot to a new player for each video (gapless)
         return new Transport() {
-            @Override public void playOrResume() { p.playOrResume(); }
-            @Override public void pause() { p.pause(); }
-            @Override public void stop() { p.stop(); }
-            @Override public void seek(float position) { p.seek(position); }
+            @Override public void playOrResume() {
+                if (slot.config.isPlaylist() && playlistPlayAgain(slot)) {
+                    return;
+                }
+                slot.player.playOrResume(); // a single video that ended starts again from its beginning
+            }
+            @Override public void pause() { slot.player.pause(); }
+            @Override public void stop() { slot.player.stop(); }
+            @Override public void seek(float position) {
+                slot.player.seek(position); // in the video playing now (a playlist counts its videos, not one time)
+            }
             @Override public void setVolume(int volume) {
                 slot.liveVolume = Math.clamp(volume, 0, 150);
                 applyProgramAudio(slot);
@@ -563,15 +972,16 @@ public final class SceneVideos {
             @Override public boolean isMuted() { return effectiveMuted(slot); }
             @Override public void setLoop(boolean loop) {
                 slot.liveLoop = loop;
-                p.setLoop(!slot.config.isPlaylist() && loop); // a playlist loops as a whole, not its current video
+                slot.player.setLoop(!slot.config.isPlaylist() && loop); // a playlist loops as a whole, not its current video
                 remember(slot);
             }
-            @Override public boolean isLoop() { return slot.config.isPlaylist() ? effectiveLoop(slot) : p.isLoop(); }
-            @Override public boolean isPlaying() { return p.isPlaying(); }
-            @Override public long time() { return p.time(); }
-            @Override public long length() { return p.length(); }
-            @Override public boolean hasMedia() { return p.hasMedia(); }
-            @Override public void addStateListener(Runnable listener) { p.addStateListener(listener); }
+            @Override public boolean isLoop() { return slot.config.isPlaylist() ? effectiveLoop(slot) : slot.player.isLoop(); }
+            @Override public boolean isPlaying() { return slot.player.isPlaying(); }
+            // a playlist shows the time of the video playing now (its number shows under Preview / Program)
+            @Override public long time() { return slot.config.isPlaylist() ? playlistProgress(slot)[0] : slot.player.time(); }
+            @Override public long length() { return slot.config.isPlaylist() ? playlistProgress(slot)[1] : slot.player.length(); }
+            @Override public boolean hasMedia() { return slot.player.hasMedia(); }
+            @Override public void addStateListener(Runnable listener) { slot.player.addStateListener(listener); }
         };
     }
 
@@ -699,6 +1109,7 @@ public final class SceneVideos {
 
     private void sweep() {
         program.values().forEach(this::checkSound);
+        sweepCued();
         long now = System.currentTimeMillis();
         for (Map<String, Slot> players : List.of(preview, editor)) {
             // not drawn for a while (editor closed, source removed): released. A PAUSED editor video is not redrawn,

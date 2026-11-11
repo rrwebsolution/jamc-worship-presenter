@@ -691,9 +691,151 @@ public final class StreamManager {
         }
     }
 
+    // ------------------------------------------------------------------ shot recording (Auto Director)
+
+    /**
+     * Draws one picture of the recorded shot into {@code g} ({@code w} × {@code h}); false = nothing to draw now
+     * (the camera has no picture), and the last picture is sent again. Called on the Swing thread.
+     */
+    public interface ShotPainter {
+        boolean paint(java.awt.Graphics2D g, int w, int h);
+    }
+
+    /** A running shot recording: which shot, its file and when it started. */
+    public record ShotRecording(String shot, Path file, long startedMillis, boolean finishing) {
+    }
+
+    private FFmpegStreamEncoder shotRecorder;
+    private volatile ShotRecording shotRecording;
+    private javax.swing.Timer shotTimer;
+
+    /** The shot being recorded on its own, or null. */
+    public ShotRecording shotRecording() {
+        return shotRecording;
+    }
+
+    /**
+     * Records one Auto Director shot (e.g. the preacher) into its own file, next to and independent of the Program
+     * recording: only that shot's picture, following its performer, with the recording's sound inputs (microphone,
+     * camera audio). Same folder, size, quality and encoder as the Program recording. One shot at a time. Swing thread.
+     */
+    public void startShotRecording(String shotName, ShotPainter painter, Consumer<String> onError) {
+        whenFFmpegChecked(() -> beginShotRecording(shotName, painter, onError));
+    }
+
+    private void beginShotRecording(String shotName, ShotPainter painter, Consumer<String> onError) {
+        if (shotRecording != null) {
+            return;
+        }
+        FFmpeg.Capabilities caps = capabilities;
+        StreamSettings s = settings();
+        String encoder = caps == null ? null : caps.encoderFor(s.encoder());
+        if (caps == null || !caps.available() || encoder == null) {
+            onError.accept(ffmpegProblem(caps));
+            return;
+        }
+        Path folder = recordingsDir();
+        String safe = shotName.replaceAll("[\\\\/:*?\"<>|]+", " ").strip();
+        Path file = folder.resolve((safe.isEmpty() ? "Shot" : safe) + " " + LocalDateTime.now().format(FILE_TIME) + ".mp4");
+        shotRecording = new ShotRecording(shotName, file, System.currentTimeMillis(), false);
+        fire();
+        FFmpegStreamEncoder[] self = new FFmpegStreamEncoder[1];
+        FFmpegStreamEncoder enc = new FFmpegStreamEncoder(caps.executable(), s, encoder, FFmpegStreamEncoder.Target.RECORDING,
+                file.toString(), new StreamEncoder.Listener() {
+            @Override
+            public void stats(StreamEncoder.Stats stats) {
+            }
+
+            @Override
+            public void ended(String error) {
+                SwingUtilities.invokeLater(() -> shotRecordingEnded(self[0], error, onError));
+            }
+        });
+        self[0] = enc;
+        shotRecorder = enc;
+        Thread.ofVirtual().name("shot-recording-start").start(() -> {
+            try {
+                Files.createDirectories(folder);
+                // the app's own sound (videos, music) is the Program recording's; the shot file has the sound inputs
+                enc.start();
+                SwingUtilities.invokeLater(() -> {
+                    if (shotRecorder == enc) {
+                        startShotFrames(enc, painter, s);
+                        log.info("Recording shot \"{}\" to {} ({}x{} {} fps, {})", shotName, file.getFileName(),
+                                s.width(), s.height(), s.fps(), encoder);
+                    }
+                });
+            } catch (IOException e) {
+                SwingUtilities.invokeLater(() -> shotRecordingEnded(enc, "FFmpeg could not be started: " + e.getMessage(), onError));
+            }
+        });
+    }
+
+    /** The shot's pictures, drawn on the Swing thread at the recording's frame rate. */
+    private void startShotFrames(FFmpegStreamEncoder enc, ShotPainter painter, StreamSettings s) {
+        java.awt.image.BufferedImage img = new java.awt.image.BufferedImage(s.width(), s.height(),
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+        int[] pixels = ((java.awt.image.DataBufferInt) img.getRaster().getDataBuffer()).getData();
+        shotTimer = new javax.swing.Timer(Math.max(10, 1000 / Math.max(1, s.fps())), e -> {
+            java.awt.Graphics2D g = img.createGraphics();
+            try {
+                g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+                painter.paint(g, s.width(), s.height());
+            } catch (RuntimeException ex) {
+                log.debug("Shot recording frame", ex);
+            } finally {
+                g.dispose();
+            }
+            enc.offer(pixels); // copied by the encoder
+        });
+        shotTimer.setCoalesce(true);
+        shotTimer.start();
+    }
+
+    /** Ends the shot recording; the file is finished and playable. */
+    public void stopShotRecording() {
+        FFmpegStreamEncoder enc = shotRecorder;
+        if (enc == null || shotRecording == null) {
+            return;
+        }
+        if (shotTimer != null) {
+            shotTimer.stop();
+            shotTimer = null;
+        }
+        enc.stop();
+        ShotRecording r = shotRecording;
+        shotRecording = new ShotRecording(r.shot(), r.file(), r.startedMillis(), true);
+        fire();
+    }
+
+    private void shotRecordingEnded(FFmpegStreamEncoder enc, String error, Consumer<String> onError) {
+        if (enc != shotRecorder) {
+            return;
+        }
+        if (shotTimer != null) {
+            shotTimer.stop();
+            shotTimer = null;
+        }
+        ShotRecording r = shotRecording;
+        shotRecorder = null;
+        shotRecording = null;
+        if (error != null) {
+            onError.accept("Shot recording stopped: " + error);
+        } else if (r != null) {
+            log.info("Shot recording saved: {}", r.file().getFileName());
+        }
+        fire();
+    }
+
     /** Stops everything (application exit). */
     public void shutdown() {
         micWatch.stop();
+        if (shotRecorder != null) {
+            if (shotTimer != null) {
+                shotTimer.stop();
+            }
+            shotRecorder.stop();
+        }
         if (recorder != null) {
             tap.removeSink(recorder);
             recorder.stop();

@@ -177,6 +177,15 @@ public class ScenesPanel extends JPanel {
     private final JSpinner cropBottom = percent();
     private final JComboBox<String> rotationCombo = new JComboBox<>(new String[]{"0°", "90°", "180°", "270°"});
     private final JCheckBox mirrorBox = new JCheckBox("Mirror (flip left to right)");
+    private final JCheckBox directorBox = new JCheckBox("Controlled by Auto Director (virtual shots)");
+    // CHROMA KEY (camera / NDI): the green background of the picture becomes transparent
+    private final JCheckBox chromaBox = new JCheckBox("Remove green background (chroma key)");
+    private final ColorButton chromaColor = new ColorButton("Key color", new Color(0x00FF00));
+    private final JButton chromaGreen = new JButton("Green");
+    private final JButton chromaBlue = new JButton("Blue");
+    private final JSpinner chromaSimilarity = new JSpinner(new SpinnerNumberModel(40, 1, 100, 1));
+    private final JSpinner chromaSmoothness = new JSpinner(new SpinnerNumberModel(8, 0, 100, 1));
+    private final JCheckBox chromaSpill = new JCheckBox("Reduce green edges (spill)", true);
     private final JComboBox<String> offlineCombo = new JComboBox<>(new String[]{"\"Camera Offline\" card", "Black", "Image (e.g. church logo)"});
     private final JButton offlineImageButton = Ui.button("Choose Image…", "image");
     private com.jamc.worship.camera.CameraNames cameraNames;
@@ -923,12 +932,16 @@ public class ScenesPanel extends JPanel {
         menu.add(menuItem("Presentations…", "presentation", this::addPresentationFromLibrary));
         menu.add(menuItem("Images…", "image", this::addImages));
         menu.add(menuItem("Videos…", "video", this::addVideos));
-        JMenuItem playlist = menuItem("VLC Video (Playlist)…", "video", () -> pickPlaylist(null));
-        playlist.setToolTipText("Several videos as one source, played one after another (loop, shuffle), as in OBS");
+        JMenuItem playlist = menuItem("Video Playlist (multiple videos)…", "video", () -> pickPlaylist(null));
+        playlist.setToolTipText("Several videos as one source (like OBS VLC Video): Autoplay plays the next one when one ends; loop, shuffle");
         menu.add(playlist);
         menu.add(menuItem("Audio…", "audio", () -> addMediaFromLibrary(MediaKind.AUDIO)));
         menu.add(menuItem("Media", "layers", () -> addSource(SourceType.BACKGROUND)));
         menu.add(menuItem("Camera…", "video", this::addCameraSource));
+        JMenuItem director = menuItem("Auto Director (virtual shots)", "cpu", this::addAutoDirectorSource);
+        director.setToolTipText("A camera box whose picture the AI Auto Director chooses (Wide, Lead Singer, Drummer… "
+                + "from one or several cameras). Set it up in Library → Camera → AUTO DIRECTOR.");
+        menu.add(director);
         menu.add(menuItem("Audio Input…", "audio", this::addAudioInput));
         JMenuItem pcSound = menuItem("Audio Output Capture", "audio", this::addAudioOutput);
         pcSound.setToolTipText("The PC's sound (other programs) into the recording and the stream, as in OBS");
@@ -980,7 +993,32 @@ public class ScenesPanel extends JPanel {
                 ? "A video sent over the network with NDI (another computer, a phone app, a PTZ camera, OBS)"
                 : "Needs the free NDI Runtime (NDI Tools from ndi.video)");
         menu.add(ndi);
+        narrowTooltips(menu);
         menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    /** Tooltip width in the Add Source menu: long explanations wrap onto more lines instead of one wide line. */
+    static final int TOOLTIP_WIDTH = 220;
+
+    /** Every tooltip of the menu becomes a narrow box; long text wraps word by word onto the next lines. */
+    static void narrowTooltips(JPopupMenu menu) {
+        for (Component c : menu.getComponents()) {
+            if (c instanceof JComponent item && item.getToolTipText() != null) {
+                item.setToolTipText(narrowTooltip(item.getToolTipText()));
+            }
+        }
+    }
+
+    /** "<html>…</html>" with a fixed width, so Swing wraps it (HTML line breaks already in it are kept). */
+    static String narrowTooltip(String text) {
+        if (text == null || text.isBlank()) {
+            return text;
+        }
+        String body = text.startsWith("<html>") ? text.substring(6).replaceFirst("(?s)</html>\\s*$", "")
+                : text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        body = body.replaceFirst("^<body[^>]*>", "").replaceFirst("(?s)</body>\\s*$", "");
+        // Swing draws HTML px about a third wider than screen pixels: 220 screen px ≈ 170 css px
+        return "<html><body style='width:" + Math.round(TOOLTIP_WIDTH / 1.3) + "px'>" + body + "</body></html>";
     }
 
     // ------------------------------------------------------------------ library and service sources
@@ -1056,7 +1094,7 @@ public class ScenesPanel extends JPanel {
         }
         List<MediaCategory> cats = List.of(MediaCategory.VIDEO, MediaCategory.BACKGROUND);
         LibraryPickerDialog.Spec<MediaItem> spec = new LibraryPickerDialog.Spec<MediaItem>(
-                existing == null ? "VLC Video: choose the videos" : "Playlist videos", "Search videos…", "video",
+                existing == null ? "Video Playlist: tick the videos" : "Playlist videos: ticked = in the playlist", "Search videos…", "video",
                 "No videos in the library yet.<br>Click UPLOAD FILES… to add some from this computer.",
                 text -> media.find(cats, text, false).stream()
                         .filter(m -> m.getKind() == MediaKind.VIDEO && !m.isYouTube()).toList(),
@@ -1064,11 +1102,19 @@ public class ScenesPanel extends JPanel {
                 m -> (m.isPixabay() ? "Pixabay video" : "video")
                         + (m.getDurationMs() == null ? "" : "  ·  " + TransportControls.format(m.getDurationMs())),
                 this::thumbnailOf).withUpload(com.jamc.worship.ui.dialogs.LibraryUploads.media(media, MediaKind.VIDEO));
-        List<MediaItem> picked = LibraryPickerDialog.pickMany(this, spec, "videos");
+        // Change…: the videos already in the playlist open ticked (untick to remove one, tick others to add them)
+        List<MediaItem> already = new ArrayList<>();
+        if (existing != null && existing.getConfig().videoIds != null) {
+            List<MediaItem> all = media.find(cats, "", false);
+            for (Long id : existing.getConfig().videoIds) {
+                all.stream().filter(m -> id != null && id.equals(m.getId())).findFirst().ifPresent(already::add);
+            }
+        }
+        List<MediaItem> picked = LibraryPickerDialog.pickMany(this, spec, "videos", already);
         if (picked == null || picked.isEmpty()) {
             return;
         }
-        Source s = existing != null ? existing : new Source("VLC Video (playlist)", SourceType.VIDEO);
+        Source s = existing != null ? existing : new Source("Video Playlist", SourceType.VIDEO);
         SourceConfig c = s.getConfig();
         c.videoIds = new ArrayList<>(picked.stream().map(MediaItem::getId).toList());
         c.videoPaths = new ArrayList<>(picked.stream().map(MediaItem::getPath).toList());
@@ -1076,7 +1122,7 @@ public class ScenesPanel extends JPanel {
         c.mediaId = c.videoIds.getFirst();
         if (existing == null) {
             c.fit = FitMode.FIT;
-            c.loop = true; // a playlist usually goes round, as in OBS
+            c.loop = false; // plays once: Loop only when the operator turns it on
             insertSource(s);
         } else {
             loadProps();
@@ -1092,13 +1138,15 @@ public class ScenesPanel extends JPanel {
         List<String> names = c.videoPaths.stream().map(ScenesPanel::fileName).toList();
         JLabel what = Ui.small(names.size() + " videos: " + String.join(", ", names));
         what.setToolTipText("<html>" + String.join("<br>", names) + "</html>");
-        JButton change = Ui.button("Change…", "video");
-        change.setToolTipText("Choose the videos of this playlist again");
+        JButton change = Ui.button("Edit Videos…", "video");
+        change.setToolTipText("Add, remove or replace videos: the ones in the playlist are ticked; untick to remove, tick others to add");
         change.addActionListener(e -> pickPlaylist(s));
         JPanel row = Ui.transparent(new BorderLayout(6, 0));
         row.add(change, BorderLayout.WEST);
         row.add(what, BorderLayout.CENTER);
         row(g, "Playlist", row);
+        // every chosen video, in play order, with its picture; the one playing now is marked
+        row(g, "Videos", new PlaylistView(c));
         JCheckBox shuffle = new JCheckBox("Shuffle (random order)", Boolean.TRUE.equals(c.shuffle));
         shuffle.setOpaque(false);
         shuffle.addActionListener(e -> {
@@ -1106,7 +1154,18 @@ public class ScenesPanel extends JPanel {
             sceneEdited();
         });
         row(g, "Order", shuffle);
-        row(g, "", Ui.label("<html>The videos play one after another. Loop (below) starts the list over after the "
+        // AUTOPLAY (on by default): when a video ends the next one starts by itself; off = it waits for NEXT
+        JCheckBox autoNext = new JCheckBox("Autoplay: play the next video when one ends", c.autoNext == null || c.autoNext);
+        autoNext.setOpaque(false);
+        autoNext.setToolTipText("<html>On: video 1 ends, video 2 starts by itself.<br>"
+                + "Off: each video stops at its end; press NEXT under Preview / Program for the next one.</html>");
+        autoNext.addActionListener(e -> {
+            c.autoNext = autoNext.isSelected() ? null : Boolean.FALSE;
+            sceneEdited();
+        });
+        row(g, "Autoplay", autoNext);
+        row(g, "", Ui.label("<html>Autoplay on: the videos play one after another. Off: each video stops at its end "
+                + "and NEXT (under Preview / Program) plays the next one. Loop (below) starts the list over after the "
                 + "last one; without it the last picture stays.</html>", Palette::mutedText, "small"));
     }
 
@@ -1750,6 +1809,27 @@ public class ScenesPanel extends JPanel {
         }, err -> Dialogs.showError(this, "Could not look for NDI sources.", err));
     }
 
+    /**
+     * An "Auto Director" source: a full-screen camera box whose picture the AI Auto Director chooses. It is a box of the
+     * director's main camera (its sound, when switched on, is that camera's), cut out and switched by the director.
+     */
+    private void addAutoDirectorSource() {
+        if (editing == null) {
+            return;
+        }
+        String cam = com.jamc.worship.director.VirtualCameras.mainCamera();
+        if (cam == null) {
+            List<String> all = cameras.cameras();
+            cam = all.stream().filter(d -> d.toLowerCase().contains("iriun")).findFirst().orElse(all.isEmpty() ? null : all.get(0));
+        }
+        Source s = new Source("Auto Director", SourceType.CAMERA);
+        s.getConfig().camera = cam;
+        s.getConfig().fit = FitMode.FILL;
+        s.getConfig().autoDirector = Boolean.TRUE;
+        insertSource(s);
+        statusHandler.accept("Auto Director source added. Turn it on and choose the shots in Library → Camera → AUTO DIRECTOR.");
+    }
+
     /** A Camera source for this camera (a device or an NDI source); a second camera starts picture-in-picture. */
     private void insertCameraSource(String cam) {
         Source s = new Source(cameraNames == null ? cam : cameraNames.label(cam), SourceType.CAMERA);
@@ -1854,6 +1934,115 @@ public class ScenesPanel extends JPanel {
     }
 
     /** A source's file name for labels; a YouTube video has no file, only its reference. */
+    /**
+     * A playlist's videos, one row each: number, picture and name. The video playing now (on Program, else in
+     * Preview) is marked; double-click a row to play that video now.
+     */
+    private final class PlaylistView extends JComponent {
+        private static final int ROW = 58;
+        private static final int THUMB_W = 88;
+        private final SourceConfig config;
+        private final javax.swing.Timer timer = new javax.swing.Timer(500, e -> repaint());
+        private final Runnable stillReady = this::repaint;
+
+        PlaylistView(SourceConfig config) {
+            this.config = config;
+            setToolTipText("Double-click a video to play it now");
+            setCursor(java.awt.Cursor.getPredefinedCursor(java.awt.Cursor.HAND_CURSOR));
+            addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    int i = e.getY() / ROW;
+                    if (e.getClickCount() == 2 && i >= 0 && i < config.videoPaths.size()) {
+                        var videos = sceneVideos();
+                        if (videos == null || !videos.playIndex(config.uid, i)) {
+                            statusHandler.accept("Put the scene in Preview or on Program to play its videos.");
+                        }
+                        repaint();
+                    }
+                }
+            });
+        }
+
+        @Override
+        public void addNotify() {
+            super.addNotify();
+            timer.start();
+            com.jamc.worship.media.VideoStills.addListener(stillReady);
+        }
+
+        @Override
+        public void removeNotify() {
+            timer.stop();
+            com.jamc.worship.media.VideoStills.removeListener(stillReady);
+            super.removeNotify();
+        }
+
+        private com.jamc.worship.media.SceneVideos sceneVideos() {
+            return com.jamc.worship.render.Rendering.frames() instanceof com.jamc.worship.media.MediaHub hub
+                    ? hub.sceneVideos() : null;
+        }
+
+        @Override
+        public Dimension getPreferredSize() {
+            return new Dimension(260, Math.max(1, config.videoPaths.size()) * ROW);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            g.setRenderingHint(java.awt.RenderingHints.KEY_ANTIALIASING, java.awt.RenderingHints.VALUE_ANTIALIAS_ON);
+            g.setRenderingHint(java.awt.RenderingHints.KEY_TEXT_ANTIALIASING, java.awt.RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+            g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            var videos = sceneVideos();
+            int[] playing = videos == null ? null : videos.playingIndex(config.uid);
+            java.awt.Font bold = getFont().deriveFont(java.awt.Font.BOLD, 12f);
+            java.awt.Font small = getFont().deriveFont(10f);
+            for (int i = 0; i < config.videoPaths.size(); i++) {
+                int y = i * ROW;
+                boolean now = playing != null && playing[0] == i;
+                Color mark = playing != null && playing[1] == 1 ? Palette.live() : Palette.accent();
+                g.setColor(now ? Palette.withAlpha(mark, 40) : Palette.secondaryBackground());
+                g.fillRoundRect(0, y + 2, getWidth() - 1, ROW - 4, 8, 8);
+                if (now) {
+                    g.setColor(mark);
+                    g.setStroke(new java.awt.BasicStroke(2f));
+                    g.drawRoundRect(1, y + 3, getWidth() - 3, ROW - 6, 8, 8);
+                }
+                g.setFont(bold);
+                g.setColor(Palette.secondaryText());
+                g.drawString(String.valueOf(i + 1), 8, y + ROW / 2 + 5);
+                int th = THUMB_W * 9 / 16;
+                int tx = 26;
+                int ty = y + (ROW - th) / 2;
+                g.setColor(Palette.monitorBackground());
+                g.fillRoundRect(tx, ty, THUMB_W, th, 4, 4);
+                java.awt.image.BufferedImage still = com.jamc.worship.media.VideoStills.get(media.resolve(config.videoPaths.get(i)));
+                if (still != null) {
+                    Graphics2D g2 = (Graphics2D) g.create();
+                    g2.clip(new java.awt.geom.RoundRectangle2D.Double(tx, ty, THUMB_W, th, 4, 4));
+                    g2.drawImage(still, tx, ty, THUMB_W, th, null);
+                    g2.dispose();
+                }
+                int textX = tx + THUMB_W + 8;
+                int textW = getWidth() - textX - 6;
+                g.setFont(bold);
+                g.setColor(Palette.text());
+                String name = fileName(config.videoPaths.get(i));
+                java.awt.FontMetrics fm = g.getFontMetrics();
+                while (fm.stringWidth(name) > textW && name.length() > 4) {
+                    name = name.substring(0, name.length() - 2);
+                }
+                g.drawString(name, textX, y + ROW / 2 - 2);
+                g.setFont(small);
+                g.setColor(now ? mark : Palette.mutedText());
+                g.drawString(now ? (playing[1] == 1 ? "▶ PLAYING ON PROGRAM" : "▶ PLAYING IN PREVIEW") : "double-click to play",
+                        textX, y + ROW / 2 + 13);
+            }
+            g.dispose();
+        }
+    }
+
     private static String fileName(String path) {
         if (com.jamc.worship.youtube.YouTubeRef.is(path)) {
             return "YouTube video (" + com.jamc.worship.youtube.YouTubeRef.id(path) + ")";
@@ -2079,6 +2268,20 @@ public class ScenesPanel extends JPanel {
         }
         rotationCombo.addActionListener(e -> apply.run());
         mirrorBox.addActionListener(e -> apply.run());
+        directorBox.addActionListener(e -> apply.run());
+        chromaBox.addActionListener(e -> apply.run());
+        chromaColor.addColorListener(col -> apply.run());
+        chromaGreen.addActionListener(e -> {
+            chromaColor.setColor(new Color(0x00FF00));
+            apply.run();
+        });
+        chromaBlue.addActionListener(e -> {
+            chromaColor.setColor(new Color(0x0000FF));
+            apply.run();
+        });
+        chromaSimilarity.addChangeListener(e -> apply.run());
+        chromaSmoothness.addChangeListener(e -> apply.run());
+        chromaSpill.addActionListener(e -> apply.run());
         offlineCombo.addActionListener(e -> apply.run());
         offlineImageButton.addActionListener(e -> chooseOfflineImage());
         colorButton.addColorListener(c -> apply.run());
@@ -2411,16 +2614,21 @@ public class ScenesPanel extends JPanel {
                 opacity.setValue(c.opacity == null ? 100 : (int) Math.round(c.opacity * 100));
             }
             if (t == SourceType.IMAGE || t == SourceType.VIDEO || t == SourceType.AUDIO) {
-                if (t != SourceType.AUDIO) {
+                // a Video Playlist has its own list of videos and Edit Videos… (its first video alone
+                // here, with CHANGE FROM LIBRARY, would only confuse)
+                boolean playlist = t == SourceType.VIDEO && c.isPlaylist();
+                if (t != SourceType.AUDIO && !playlist) {
                     // a picture of the chosen file (a video as one still): the operator sees what this source shows
                     row(g, "", new MediaThumb(() -> thumbnailOf(c, t), c.path == null ? "None chosen" : null));
                 }
-                row(g, "Media", Ui.label(c.path == null ? "None chosen" : fileName(c.path),
-                        Palette::text, "semibold"));
-                row(g, "", selectFromLibrary);
-                selectFromLibrary.setText("CHANGE FROM LIBRARY");
+                if (!playlist) {
+                    row(g, "Media", Ui.label(c.path == null ? "None chosen" : fileName(c.path),
+                            Palette::text, "semibold"));
+                    row(g, "", selectFromLibrary);
+                    selectFromLibrary.setText("CHANGE FROM LIBRARY");
+                }
                 if (t == SourceType.VIDEO && c.path != null) {
-                    row(g, "Editor", editorPlayButton(s));
+                    row(g, "Editor", editorVideoControls(s));
                 }
             }
             if (t == SourceType.LYRICS && c.songId != null) {
@@ -2471,7 +2679,8 @@ public class ScenesPanel extends JPanel {
                 row(g, "Opacity", o);
                 opacity.setValue(c.opacity == null ? 100 : (int) Math.round(c.opacity * 100));
             }
-            if (t == SourceType.IMAGE || t == SourceType.CHURCH_LOGO || t == SourceType.VIDEO) {
+            // a Video Playlist chooses its files with Edit Videos… (no single "Choose…" file here)
+            if ((t == SourceType.IMAGE || t == SourceType.CHURCH_LOGO || t == SourceType.VIDEO) && !c.isPlaylist()) {
                 JPanel f = Ui.transparent(new BorderLayout(6, 0));
                 f.add(fileButton, BorderLayout.WEST);
                 f.add(fileLabel, BorderLayout.CENTER);
@@ -2824,6 +3033,39 @@ public class ScenesPanel extends JPanel {
     }
 
     /**
+     * The scene editor's video controls, like PROGRAM MEDIA: play / pause / stop, ±10 s and a seek bar whose time runs
+     * ("VIDEO 2 / 3" above it for a playlist). Silent, its own player: Preview and Program are not affected. PLAY after
+     * the end starts again from the beginning (a playlist: from its first video).
+     */
+    private JComponent editorVideoControls(Source s) {
+        if (!(Rendering.frames() instanceof com.jamc.worship.media.MediaHub hub)) {
+            return editorPlayButton(s); // no media engine: the simple PLAY / PAUSE
+        }
+        var videos = hub.sceneVideos();
+        TransportControls controls = new TransportControls(true);
+        controls.setSoundControlsVisible(false); // the editor is silent
+        controls.bind(videos.editorTransport(s));
+        JPanel box = Ui.transparent(new BorderLayout(0, 2));
+        if (s.getConfig().isPlaylist()) {
+            JLabel which = Ui.label(" ", Palette::secondaryText, "small");
+            Timer follow = new Timer(300, ev -> {
+                if (!which.isDisplayable()) {
+                    ((Timer) ev.getSource()).stop();
+                    return;
+                }
+                String text = videos.editorPlaylistSummary(s);
+                which.setText(text == null ? "VIDEO 1 / " + s.getConfig().videoPaths.size() : text);
+                preview.repaint();
+            });
+            follow.start();
+            box.add(which, BorderLayout.NORTH);
+        }
+        box.add(controls, BorderLayout.CENTER);
+        box.setToolTipText("Plays here in the editor only (silent). Preview and Program are not affected.");
+        return box;
+    }
+
+    /**
      * PLAY / PAUSE of a video in the scene editor (paused by default). Only the editor's own silent player moves:
      * Preview and Program, and how the video plays when the scene goes live, are not changed.
      */
@@ -3151,6 +3393,37 @@ public class ScenesPanel extends JPanel {
         row(g, "Rotation", rotationCombo);
         mirrorBox.setSelected(Boolean.TRUE.equals(c.mirror));
         row(g, "", mirrorBox);
+        // AUTO DIRECTOR: by default a box of the director's main camera is controlled; a plain PiP can opt out
+        String main = com.jamc.worship.director.VirtualCameras.mainCamera();
+        boolean mainCam = main != null && main.equals(c.camera);
+        directorBox.setSelected(Boolean.TRUE.equals(c.autoDirector) || c.autoDirector == null && mainCam);
+        directorBox.setToolTipText("<html>On: the AI Auto Director chooses this box's picture (its shots, zoom and cameras).<br>"
+                + "Off: a plain camera that always shows the whole picture (e.g. a picture-in-picture).</html>");
+        row(g, "", directorBox);
+        // CHROMA KEY: NDI from other programs (graphics, a presenter on a green screen) often comes on green
+        boolean keyed = Boolean.TRUE.equals(c.chromaKey);
+        chromaBox.setSelected(keyed);
+        chromaBox.setToolTipText("<html>The key color (green) becomes transparent, so the layers under this one show "
+                + "through.<br>For NDI from other programs and green screens.</html>");
+        row(g, "Chroma key", chromaBox);
+        chromaColor.setColor(new Color(c.chromaKeyColor == null ? 0x00FF00 : c.chromaKeyColor & 0xFFFFFF));
+        chromaSimilarity.setValue(c.chromaSimilarity == null ? 40 : Math.clamp(c.chromaSimilarity, 1, 100));
+        chromaSmoothness.setValue(c.chromaSmoothness == null ? 8 : Math.clamp(c.chromaSmoothness, 0, 100));
+        chromaSpill.setSelected(!Boolean.FALSE.equals(c.chromaSpill));
+        if (keyed) {
+            JPanel colors = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 4, 0));
+            chromaGreen.setFocusable(false);
+            chromaBlue.setFocusable(false);
+            colors.add(chromaColor);
+            colors.add(chromaGreen);
+            colors.add(chromaBlue);
+            row(g, "Key color", colors);
+            chromaSimilarity.setToolTipText("How close to the key color is removed (higher removes more; too high eats into the picture)");
+            chromaSmoothness.setToolTipText("How soft the edge is after that");
+            row(g, "Similarity %", chromaSimilarity);
+            row(g, "Smoothness %", chromaSmoothness);
+            row(g, "", chromaSpill);
+        }
         // AUDIO: off by default; one camera mic at a time (several give echo and feedback)
         String input = cameras.audioDevice(c.camera);
         audioBox.setSelected(Boolean.TRUE.equals(c.audioEnabled));
@@ -3203,6 +3476,24 @@ public class ScenesPanel extends JPanel {
         c.cropBottom = fraction(cropBottom);
         c.rotation = rotationCombo.getSelectedIndex() <= 0 ? null : rotationCombo.getSelectedIndex() * 90;
         c.mirror = mirrorBox.isSelected() ? Boolean.TRUE : null;
+        // stored only when it differs from the default (a box of the main camera is controlled), so old scenes keep working
+        String mainCamera = com.jamc.worship.director.VirtualCameras.mainCamera();
+        boolean byDefault = mainCamera != null && mainCamera.equals(c.camera);
+        c.autoDirector = directorBox.isSelected() == byDefault ? null : directorBox.isSelected();
+        boolean wasKeyed = Boolean.TRUE.equals(c.chromaKey);
+        c.chromaKey = chromaBox.isSelected() ? Boolean.TRUE : null;
+        if (wasKeyed) { // the key settings are on screen only while the key is on
+            int rgb = chromaColor.getColor().getRGB() & 0xFFFFFF;
+            c.chromaKeyColor = rgb == 0x00FF00 ? null : rgb;
+            int sim = ((Number) chromaSimilarity.getValue()).intValue();
+            int smooth = ((Number) chromaSmoothness.getValue()).intValue();
+            c.chromaSimilarity = sim == 40 ? null : sim;
+            c.chromaSmoothness = smooth == 8 ? null : smooth;
+            c.chromaSpill = chromaSpill.isSelected() ? null : Boolean.FALSE;
+        }
+        if (wasKeyed != chromaBox.isSelected()) {
+            javax.swing.SwingUtilities.invokeLater(this::loadProps); // show / hide the key settings
+        }
         c.audioEnabled = audioBox.isSelected() ? Boolean.TRUE : null;
         c.muted = srcMute.isSelected() ? Boolean.TRUE : null;
         c.volume = srcVolume.getValue() == 100 ? null : srcVolume.getValue();

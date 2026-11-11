@@ -96,6 +96,39 @@ public final class MediaProbe {
         }
     }
 
+    /** A video's length in ms (read by VLC, not played), or -1 when unknown. Blocks for up to a few seconds. */
+    public static long durationMs(Path file) {
+        MediaEngine engine = MediaEngine.get();
+        if (!engine.isAvailable() || file == null || !Files.isRegularFile(file)) {
+            return -1;
+        }
+        uk.co.caprica.vlcj.media.Media media = null;
+        try {
+            media = engine.factory().media().newMedia(file.toString());
+            media.parsing().parse((int) TIMEOUT_MS);
+            long deadline = System.currentTimeMillis() + TIMEOUT_MS + 500;
+            while (System.currentTimeMillis() < deadline) {
+                var status = media.parsing().status();
+                if (status != null && status != uk.co.caprica.vlcj.media.MediaParsedStatus.SKIPPED) {
+                    break;
+                }
+                Thread.sleep(40);
+            }
+            long d = media.info().duration();
+            return d > 0 ? d : -1;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return -1;
+        } catch (RuntimeException | LinkageError e) {
+            log.debug("Could not read the length of {}", file, e);
+            return -1;
+        } finally {
+            if (media != null) {
+                media.release();
+            }
+        }
+    }
+
     /**
      * Number of audio tracks in a video file: 0 = the file has no sound (not an error), -1 = could not
      * tell (VLC unavailable or the file could not be read). Blocks for up to a few seconds.

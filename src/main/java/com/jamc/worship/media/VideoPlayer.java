@@ -212,6 +212,12 @@ public final class VideoPlayer implements VideoPlayback {
         if (mrl == null || released) {
             return;
         }
+        var state = player.status().state();
+        if (state == uk.co.caprica.vlcj.player.base.State.ENDED || state == uk.co.caprica.vlcj.player.base.State.STOPPED) {
+            // the video played to its end (or was stopped): PLAY starts it again from the beginning, at once
+            play(mrl, loop, player.audio().isMute());
+            return;
+        }
         if (player.status().length() > 0 && !player.status().isPlaying()) {
             player.controls().play();
         } else if (!player.status().isPlaying()) {

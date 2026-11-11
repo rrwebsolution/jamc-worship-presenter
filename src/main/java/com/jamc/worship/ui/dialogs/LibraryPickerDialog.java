@@ -210,7 +210,16 @@ public final class LibraryPickerDialog<T> extends JDialog {
      * ADD N … returns them in the order they were ticked; empty when cancelled.
      */
     public static <T> List<T> pickMany(Component parent, Spec<T> spec, String noun) {
+        return pickMany(parent, spec, noun, List.of());
+    }
+
+    /**
+     * As {@link #pickMany(Component, Spec, String)}, with {@code already} ticked when it opens (e.g. the videos already
+     * in a playlist): untick to remove, tick others to add. The result keeps their order, new ticks after them.
+     */
+    public static <T> List<T> pickMany(Component parent, Spec<T> spec, String noun, List<T> already) {
         LibraryPickerDialog<T> d = new LibraryPickerDialog<>(SwingUtilities.getWindowAncestor(parent), spec, true);
+        d.ticked.addAll(already);
         d.noun = noun;
         d.updateAddButton();
         com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile

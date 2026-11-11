@@ -163,6 +163,7 @@ class StreamFoundationTest {
         List<String> silent = FFmpegStreamEncoder.command("ffmpeg", settings("Mic", null, true), "h264_nvenc",
                 FFmpegStreamEncoder.Target.RECORDING, "x.mp4");
         assertTrue(String.join(" ", silent).contains("anullsrc"), "a muted mic gives a silent track, not none");
+        assertTrue(String.join(" ", silent).contains("-re -f lavfi -i anullsrc"), "the silent track runs in real time (not ahead of the picture)");
         assertTrue(silent.contains("h264_nvenc"));
     }
 

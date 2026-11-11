@@ -12,7 +12,6 @@ import java.awt.KeyEventDispatcher;
 import java.awt.KeyboardFocusManager;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
-import java.util.Optional;
 import java.util.function.Predicate;
 
 /**
@@ -77,16 +76,25 @@ public final class GlobalShortcuts implements KeyEventDispatcher {
         if (before.test(e)) {
             return consume(e);
         }
-        Optional<Shortcuts.Action> action = shortcuts.match(e);
-        if (action.isEmpty()) {
+        java.util.List<Shortcuts.Action> actions = shortcuts.matchAll(e);
+        if (actions.isEmpty()) {
             return false;
         }
         Component focus = KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusOwner();
         KeyStroke key = KeyStroke.getKeyStroke(e.getKeyCode(), e.getModifiersEx());
-        if (!allowed(key, context(focus)) || !handler.run(action.get())) {
+        if (!allowed(key, context(focus))) {
             return false;
         }
-        return consume(e);
+        // several actions may share a key (Esc: Pause AI, else Close projector): the first one that acts takes it
+        for (Shortcuts.Action action : actions) {
+            if (action.director() && focus instanceof JTextComponent) {
+                continue; // camera keys never fire while typing, not even with Ctrl
+            }
+            if (handler.run(action)) {
+                return consume(e);
+            }
+        }
+        return false;
     }
 
     private boolean consume(KeyEvent e) {
