@@ -70,7 +70,10 @@ public final class Ui {
     }
 
     public static JLabel small(String text) {
-        return label(text, Palette::secondaryText, "small");
+        // Helper text must remain readable on a control-room display.  FlatLaf's
+        // `small` class is intentionally tiny and was falling below the useful
+        // size once the application was spread across several production panes.
+        return label(text, Palette::secondaryText, null);
     }
 
     /** Uppercase, letter-spaced caption used above groups ("LIBRARY", "PLAYLISTS"). */
@@ -92,6 +95,7 @@ public final class Ui {
     public static JButton button(String text, String icon) {
         JButton b = new JButton(text, icon == null ? null : Icons.get(icon, Icons.SMALL));
         b.setIconTextGap(6);
+        b.setMargin(new Insets(6, 11, 6, 11));
         return b;
     }
 
@@ -99,6 +103,7 @@ public final class Ui {
         JButton b = new JButton(text, icon == null ? null : Icons.get(icon, Icons.SMALL, () -> Color.WHITE));
         b.putClientProperty(FlatClientProperties.BUTTON_TYPE, "default");
         b.setIconTextGap(6);
+        b.setMargin(new Insets(7, 12, 7, 12));
         return b;
     }
 

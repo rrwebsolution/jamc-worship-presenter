@@ -73,6 +73,7 @@ public class LiveDock extends JPanel {
     private final JButton hideLowerThird = new JButton("Hide Lower Third");
 
     private final ProgramOutput program;
+    private final ProgramOutput previewState;
     private final Actions actions;
     private final PreviewMonitor preview;
     private final ProgramMonitor programMonitor;
@@ -113,6 +114,7 @@ public class LiveDock extends JPanel {
     public LiveDock(ProgramOutput program, ProgramOutput previewState, Actions actions) {
         super(new GridBagLayout());
         this.program = program;
+        this.previewState = previewState;
         this.preview = new PreviewMonitor(previewState);
         this.actions = actions;
         this.programMonitor = new ProgramMonitor(program);
@@ -564,7 +566,7 @@ public class LiveDock extends JPanel {
         lyricsButton.addActionListener(e -> program.toggleLyrics());
         backgroundButton.addActionListener(e -> program.toggleBackground());
         autoTakeButton.setToolTipText("Skips Preview: choosing a slide sends it straight to Program and the projector. Normally off.");
-        autoTakeButton.putClientProperty(FlatClientProperties.STYLE, "font: -1; margin: 3,8,3,8");
+        autoTakeButton.putClientProperty(FlatClientProperties.STYLE, "font: -1; margin: 5,10,5,10");
         autoTakeButton.setFocusable(false);
         autoTakeButton.addActionListener(e -> {
             updateTakeTooltip();
@@ -572,27 +574,30 @@ public class LiveDock extends JPanel {
         });
         projectorButton.setToolTipText("Open or close the projector output (F5). Choose the display on the Output page.");
         projectorButton.setFocusable(false);
-        projectorButton.putClientProperty(FlatClientProperties.STYLE, "font: bold");
+        projectorButton.putClientProperty(FlatClientProperties.STYLE, "font: bold; margin: 5,10,5,10");
         projectorButton.addActionListener(e -> actions.toggleOutput());
 
-        JPanel left = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 4, 0));
-        left.add(blackButton);
-        left.add(blankButton);
-        left.add(lyricsButton);
-        left.add(backgroundButton);
-        left.add(javax.swing.Box.createHorizontalStrut(6));
-        left.add(autoTakeButton);
+        JPanel emergency = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        emergency.add(blackButton);
+        emergency.add(blankButton);
+        emergency.add(lyricsButton);
+        JPanel look = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        look.add(backgroundButton);
+        look.add(autoTakeButton);
         hideLowerThird.putClientProperty(FlatClientProperties.STYLE,
                 "font: bold -1; margin: 3,9,3,9; background: #EF4444; foreground: #FFFFFF");
         hideLowerThird.setFocusable(false);
         hideLowerThird.setVisible(false);
-        hideLowerThird.addActionListener(e -> program.hideLowerThird());
-        left.add(hideLowerThird);
+        hideLowerThird.addActionListener(e -> {
+            previewState.hideLowerThird();
+            program.hideLowerThird();
+        });
+        emergency.add(hideLowerThird);
         // quick switch: what the projector / TV shows
         javax.swing.ButtonGroup sourceGroup = new javax.swing.ButtonGroup();
         JPanel quick = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 0, 0));
         for (JToggleButton b : new JToggleButton[]{projectorPreview, projectorProgram}) {
-            b.putClientProperty(FlatClientProperties.STYLE, "font: bold -2; margin: 3,7,3,7");
+            b.putClientProperty(FlatClientProperties.STYLE, "font: bold -1; margin: 5,9,5,9");
             b.setFocusable(false);
             sourceGroup.add(b);
             quick.add(b);
@@ -605,10 +610,23 @@ public class LiveDock extends JPanel {
         JPanel right = Ui.transparent(new FlowLayout(FlowLayout.RIGHT, 6, 0));
         right.add(projectorButton);
         right.add(quick);
-        JPanel bar = Ui.transparent(new java.awt.BorderLayout());
-        bar.add(left, java.awt.BorderLayout.WEST);
-        bar.add(right, java.awt.BorderLayout.EAST);
+        JPanel left = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        left.add(controlGroup("OUTPUT SAFETY", emergency));
+        left.add(controlGroup("LIVE BEHAVIOR", look));
+        JPanel bar = Ui.transparent(new java.awt.BorderLayout(10, 0));
+        bar.add(left, java.awt.BorderLayout.CENTER);
+        bar.add(controlGroup("PROJECTOR ROUTE", right), java.awt.BorderLayout.EAST);
         return bar;
+    }
+
+    /** Compact labels make unrelated live actions harder to confuse under pressure. */
+    private static JComponent controlGroup(String title, JComponent controls) {
+        JPanel group = Ui.transparent(new BorderLayout(0, 2));
+        JLabel caption = Ui.caption(title);
+        caption.setBorder(BorderFactory.createEmptyBorder(0, 4, 0, 0));
+        group.add(caption, BorderLayout.NORTH);
+        group.add(controls, BorderLayout.CENTER);
+        return group;
     }
 
     /** Shows the Program video transport while a video is live (null hides it). */
@@ -724,7 +742,7 @@ public class LiveDock extends JPanel {
         b.setToolTipText(tooltip);
         b.setFocusable(false);
         b.putClientProperty(FlatClientProperties.STYLE,
-                "font: bold -1; margin: 3,9,3,9; selectedBackground: #EF4444; selectedForeground: #FFFFFF");
+                "font: bold -1; margin: 5,10,5,10; selectedBackground: #EF4444; selectedForeground: #FFFFFF");
         return b;
     }
 

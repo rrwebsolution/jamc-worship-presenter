@@ -85,6 +85,12 @@ public final class LibraryPickerDialog<T> extends JDialog {
     private final CardLayout cards = new CardLayout();
     private final JPanel holder = Ui.transparent(cards);
     private final JLabel empty = Ui.label("", Palette::mutedText, null);
+    /** Edit Videos only: the checked videos in their actual playback order. */
+    private final DefaultListModel<T> sequenceModel = new DefaultListModel<>();
+    private final JList<T> sequenceList = new JList<>(sequenceModel);
+    private final JPanel sequencePanel = Ui.panel(new BorderLayout(0, 8), Palette::secondaryBackground);
+    private final JButton sequenceUp = Ui.toolButton("arrow-up", "Play the selected video earlier");
+    private final JButton sequenceDown = Ui.toolButton("arrow-down", "Play the selected video later");
     private T chosen;
     /** Multi-select (IMAGE SLIDESHOW): a click ticks or unticks an item; ADD N … returns them all. */
     private final boolean multi;
@@ -153,6 +159,12 @@ public final class LibraryPickerDialog<T> extends JDialog {
         holder.add(empty, "empty");
         root.add(holder, BorderLayout.CENTER);
 
+        if (multi) {
+            buildSequencePanel();
+            sequencePanel.setVisible(false); // enabled by pickMany(..., "videos", ...), not for image pickers
+            root.add(sequencePanel, BorderLayout.EAST);
+        }
+
         JButton cancel = Ui.button("CANCEL", null);
         cancel.addActionListener(e -> dispose());
         add.addActionListener(e -> accept());
@@ -218,9 +230,23 @@ public final class LibraryPickerDialog<T> extends JDialog {
      * in a playlist): untick to remove, tick others to add. The result keeps their order, new ticks after them.
      */
     public static <T> List<T> pickMany(Component parent, Spec<T> spec, String noun, List<T> already) {
+        return pickMany(parent, spec, noun, already, false, false);
+    }
+
+    /** Scene editor variant: the primary action reflects whether the source is new or already exists. */
+    public static <T> List<T> pickManyForScene(Component parent, Spec<T> spec, String noun, List<T> already,
+                                                boolean sourceExists) {
+        return pickMany(parent, spec, noun, already, true, sourceExists);
+    }
+
+    private static <T> List<T> pickMany(Component parent, Spec<T> spec, String noun, List<T> already,
+                                         boolean sceneSourceAction, boolean sourceExists) {
         LibraryPickerDialog<T> d = new LibraryPickerDialog<>(SwingUtilities.getWindowAncestor(parent), spec, true);
         d.ticked.addAll(already);
         d.noun = noun;
+        d.sceneSourceAction = sceneSourceAction;
+        d.updatingSceneSource = sourceExists;
+        d.enableSequence("videos".equalsIgnoreCase(noun));
         d.updateAddButton();
         com.jamc.worship.ui.SoftModal.showAndWait(d); // minimizing it lets the app be used meanwhile
         return d.chosenMany;
@@ -230,6 +256,82 @@ public final class LibraryPickerDialog<T> extends JDialog {
     private final java.util.LinkedHashSet<T> ticked = new java.util.LinkedHashSet<>();
     private boolean restoring;
     private String noun = "items";
+    private boolean sceneSourceAction;
+    private boolean updatingSceneSource;
+
+    /** Adds the Edit Videos play-order column without changing other multi-pickers. */
+    private void enableSequence(boolean enabled) {
+        sequencePanel.setVisible(enabled);
+        if (enabled) {
+            setSize(820, 560);
+            setLocationRelativeTo(getOwner());
+            syncSequence();
+        }
+    }
+
+    private void buildSequencePanel() {
+        sequencePanel.setPreferredSize(new Dimension(270, 10));
+        sequencePanel.setBorder(BorderFactory.createCompoundBorder(Ui.line(true, true, true, true),
+                BorderFactory.createEmptyBorder(10, 10, 10, 10)));
+        JPanel heading = Ui.transparent(new BorderLayout(6, 2));
+        heading.add(Ui.label("PLAY ORDER", Palette::text, "semibold"), BorderLayout.NORTH);
+        heading.add(Ui.small("First to last"), BorderLayout.SOUTH);
+        sequencePanel.add(heading, BorderLayout.NORTH);
+
+        sequenceList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        sequenceList.setFixedCellHeight(42);
+        sequenceList.setCellRenderer((l, item, index, selected, focus) -> {
+            JLabel label = Ui.label((index + 1) + ".  " + spec.name().apply(item),
+                    selected ? () -> l.getSelectionForeground() : Palette::text, "semibold");
+            label.setOpaque(true);
+            label.setBackground(selected ? l.getSelectionBackground() : l.getBackground());
+            label.setBorder(BorderFactory.createEmptyBorder(5, 8, 5, 8));
+            return label;
+        });
+        sequenceList.addListSelectionListener(e -> updateSequenceButtons());
+        JScrollPane sequenceScroll = new JScrollPane(sequenceList);
+        sequenceScroll.setBorder(Ui.line(true, true, true, true));
+        sequencePanel.add(sequenceScroll, BorderLayout.CENTER);
+
+        sequenceUp.addActionListener(e -> moveSequence(-1));
+        sequenceDown.addActionListener(e -> moveSequence(1));
+        JPanel controls = Ui.transparent(new FlowLayout(FlowLayout.CENTER, 6, 0));
+        controls.add(sequenceUp);
+        controls.add(sequenceDown);
+        sequencePanel.add(controls, BorderLayout.SOUTH);
+        updateSequenceButtons();
+    }
+
+    private void syncSequence() {
+        T selected = sequenceList.getSelectedValue();
+        sequenceModel.clear();
+        sequenceModel.addAll(ticked);
+        if (selected != null) {
+            sequenceList.setSelectedValue(selected, true);
+        }
+        updateSequenceButtons();
+    }
+
+    /** Reorders the LinkedHashSet so accept() returns the exact visible play sequence. */
+    private void moveSequence(int delta) {
+        int from = sequenceList.getSelectedIndex();
+        int to = from + delta;
+        if (from < 0 || to < 0 || to >= sequenceModel.size()) {
+            return;
+        }
+        java.util.ArrayList<T> ordered = new java.util.ArrayList<>(ticked);
+        java.util.Collections.swap(ordered, from, to);
+        ticked.clear();
+        ticked.addAll(ordered);
+        syncSequence();
+        sequenceList.setSelectedIndex(to);
+    }
+
+    private void updateSequenceButtons() {
+        int index = sequenceList.getSelectedIndex();
+        sequenceUp.setEnabled(index > 0);
+        sequenceDown.setEnabled(index >= 0 && index < sequenceModel.size() - 1);
+    }
 
     private void updateAddButton() {
         if (!multi) {
@@ -245,9 +347,16 @@ public final class LibraryPickerDialog<T> extends JDialog {
                 }
             }
         }
-        add.setText(ticked.isEmpty() ? "ADD " + noun.toUpperCase() : "ADD " + ticked.size() + " "
-                + (ticked.size() == 1 ? noun.substring(0, noun.length() - 1) : noun).toUpperCase());
+        if (sceneSourceAction) {
+            add.setText(updatingSceneSource ? "UPDATE SCENE" : "ADD TO SCENE");
+        } else {
+            add.setText(ticked.isEmpty() ? "ADD " + noun.toUpperCase() : "ADD " + ticked.size() + " "
+                    + (ticked.size() == 1 ? noun.substring(0, noun.length() - 1) : noun).toUpperCase());
+        }
         add.setEnabled(!ticked.isEmpty());
+        if (sequencePanel.isVisible()) {
+            syncSequence();
+        }
     }
 
     private void accept() {

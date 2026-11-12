@@ -42,11 +42,12 @@ import java.awt.Insets;
 import java.util.Objects;
 import java.util.function.Consumer;
 
-/** Edit a lower third with a live preview, and SHOW / HIDE it on Program. */
+/** Edit a lower third with a design preview, and SHOW / HIDE it on the main Preview and Program monitors. */
 public class LowerThirdEditorPanel extends JPanel {
 
     private final SceneService scenes;
     private final ProgramOutput program;
+    private final ProgramOutput previewState;
     private final StyleForm.ImageImporter importer;
     private final JTextField nameField = new JTextField();
     private final JTextField titleField = new JTextField();
@@ -71,10 +72,12 @@ public class LowerThirdEditorPanel extends JPanel {
     private boolean loading;
     private Consumer<LowerThird> savedListener = l -> { };
 
-    public LowerThirdEditorPanel(SceneService scenes, ProgramOutput program, StyleForm.ImageImporter importer) {
+    public LowerThirdEditorPanel(SceneService scenes, ProgramOutput program, ProgramOutput previewState,
+                                 StyleForm.ImageImporter importer) {
         super(new BorderLayout());
         this.scenes = scenes;
         this.program = program;
+        this.previewState = previewState;
         this.importer = importer;
         setOpaque(false);
 
@@ -83,14 +86,18 @@ public class LowerThirdEditorPanel extends JPanel {
         hideButton.putClientProperty(FlatClientProperties.STYLE, "font: bold; margin: 8,14,8,14");
         showButton.addActionListener(e -> {
             if (editing != null) {
+                previewState.showLowerThird(editing);
                 program.showLowerThird(editing);
             }
         });
-        hideButton.addActionListener(e -> program.hideLowerThird());
+        hideButton.addActionListener(e -> {
+            previewState.hideLowerThird();
+            program.hideLowerThird();
+        });
         JPanel liveRow = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 8, 0));
         liveRow.add(showButton);
         liveRow.add(hideButton);
-        JLabel note = Ui.label("Shown on Program in scenes that contain a Lower Third source.", Palette::mutedText, "small");
+        JLabel note = Ui.small("Shown on Preview and Program when their scenes contain a Lower Third source.");
         liveRow.add(note);
 
         JPanel form = Ui.transparent(new GridBagLayout());
@@ -165,6 +172,7 @@ public class LowerThirdEditorPanel extends JPanel {
             b.addColorListener(c -> changed());
         }
         program.addListener(this::updateLiveButtons);
+        previewState.addListener(this::updateLiveButtons);
     }
 
     public void setSavedListener(Consumer<LowerThird> l) {
@@ -220,6 +228,10 @@ public class LowerThirdEditorPanel extends JPanel {
                 && Objects.equals(program.lowerThird().getId(), editing.getId())) {
             program.showLowerThird(editing); // live: update the on-air graphic immediately
         }
+        if (previewState.isLowerThirdOn() && previewState.lowerThird() != null
+                && Objects.equals(previewState.lowerThird().getId(), editing.getId())) {
+            previewState.showLowerThird(editing); // the prepared composition follows edits too
+        }
         saveTimer.restart();
     }
 
@@ -251,10 +263,13 @@ public class LowerThirdEditorPanel extends JPanel {
     }
 
     private void updateLiveButtons() {
-        boolean on = program.isLowerThirdOn();
+        boolean on = program.isLowerThirdOn() || previewState.isLowerThirdOn();
         hideButton.setEnabled(on);
-        showButton.setText(on && editing != null && program.lowerThird() != null
-                && Objects.equals(program.lowerThird().getId(), editing.getId()) ? "ON AIR" : "SHOW LOWER THIRD");
+        boolean sameOnBoth = editing != null && program.isLowerThirdOn() && previewState.isLowerThirdOn()
+                && program.lowerThird() != null && previewState.lowerThird() != null
+                && Objects.equals(program.lowerThird().getId(), editing.getId())
+                && Objects.equals(previewState.lowerThird().getId(), editing.getId());
+        showButton.setText(sameOnBoth ? "ON PREVIEW + PROGRAM" : "SHOW LOWER THIRD");
     }
 
     private static void row(JPanel form, GridBagConstraints g, String l1, JComponent c1, String l2, JComponent c2) {

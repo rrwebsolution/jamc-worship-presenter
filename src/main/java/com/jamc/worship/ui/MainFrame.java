@@ -482,7 +482,7 @@ public class MainFrame extends JFrame {
                     }
                 });
         lowerThirds = new LowerThirdsPanel(context.sceneService());
-        lowerThirdEditor = new LowerThirdEditorPanel(context.sceneService(), program, importer);
+        lowerThirdEditor = new LowerThirdEditorPanel(context.sceneService(), program, previewState, importer);
         presentationLibrary = new PresentationLibraryPanel(context.presentationService());
         presentationDetail = new PresentationDetailPanel(new PresentationDetailPanel.Actions() {
             @Override
@@ -1860,6 +1860,8 @@ public class MainFrame extends JFrame {
         if (p == null) {
             bibleDetail.setPassage(null, 0);
             if (stripSource == StripSource.BIBLE) {
+                thumbnails.setTitle("Bible slides");
+                thumbnails.setEmptyMessage("Choose a passage or select verses to prepare Bible slides.");
                 thumbnails.setSlides(List.of(), bibleStyle);
             }
             return;
@@ -4300,6 +4302,14 @@ public class MainFrame extends JFrame {
                 }
                 Scene copy = context.sceneService().duplicate(copyFrom);
                 copy.setName(req.name());
+                if (req.start() == com.jamc.worship.ui.dialogs.CreateSceneDialog.Start.TEMPLATE) {
+                    // A newly created camera scene must never unexpectedly add a webcam/HDMI microphone
+                    // to the live mix. Templates can be edited by the operator, so do not inherit an
+                    // enabled camera-audio checkbox from the source template.
+                    copy.getSources().stream()
+                            .filter(source -> source.getType() == com.jamc.worship.model.SourceType.CAMERA)
+                            .forEach(source -> source.getConfig().audioEnabled = null); // null = camera audio off
+                }
                 return context.sceneService().save(copy);
             }, created -> editLayout(created), // opening it reloads every scene list; Program is not touched
                     err -> Dialogs.showError(MainFrame.this, "Could not add the scene.", err));
@@ -5051,7 +5061,10 @@ public class MainFrame extends JFrame {
                 case BLACK -> program.toggleBlack();
                 case BLANK -> program.toggleBlank();
                 case LYRICS -> program.toggleLyrics();
-                case HIDE_LOWER_THIRD -> program.hideLowerThird();
+                case HIDE_LOWER_THIRD -> {
+                    previewState.hideLowerThird();
+                    program.hideLowerThird();
+                }
                 case NEXT_ITEM -> schedule.selectNext();
                 case PREVIOUS_ITEM -> schedule.selectPrevious();
                 case TOGGLE_OUTPUT -> output.toggle(this);

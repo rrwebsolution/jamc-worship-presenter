@@ -476,10 +476,12 @@ public class ScenesPanel extends JPanel {
         head.add(buttons, BorderLayout.EAST);
         p.add(head, BorderLayout.NORTH);
         p.add(preview, BorderLayout.CENTER);
-        p.add(Ui.label("<html>SCENE EDITOR: changes here stay a draft until SAVE SCENE. Saved, a scene on Preview or Program "
-                + "updates there at once (other scenes show at TAKE). Layers are drawn from the "
-                + "bottom of the Sources list upwards; lyrics show what is on Program.</html>",
-                Palette::mutedText, "small"), BorderLayout.SOUTH);
+        JLabel editorHelp = Ui.small("Changes remain a draft until you select SAVE SCENE.");
+        editorHelp.setBorder(BorderFactory.createEmptyBorder(4, 0, 0, 0));
+        editorHelp.setToolTipText("<html>Saved changes update a scene already on Preview or Program immediately.<br>"
+                + "Other scenes update the next time they are taken. Layers draw from the bottom<br>"
+                + "of the Sources list upward; the lyrics layer follows Program.</html>");
+        p.add(editorHelp, BorderLayout.SOUTH);
         updateDraftState();
         p.setMinimumSize(new Dimension(300, 0));
         return p;
@@ -1110,7 +1112,7 @@ public class ScenesPanel extends JPanel {
                 all.stream().filter(m -> id != null && id.equals(m.getId())).findFirst().ifPresent(already::add);
             }
         }
-        List<MediaItem> picked = LibraryPickerDialog.pickMany(this, spec, "videos", already);
+        List<MediaItem> picked = LibraryPickerDialog.pickManyForScene(this, spec, "videos", already, existing != null);
         if (picked == null || picked.isEmpty()) {
             return;
         }

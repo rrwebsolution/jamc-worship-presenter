@@ -25,6 +25,9 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.FlowLayout;
 import java.awt.GridLayout;
+import java.awt.Font;
+import java.awt.FontMetrics;
+import java.awt.Graphics;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.time.ZoneId;
@@ -42,8 +45,10 @@ public class ServicesPanel extends JPanel {
     private final ServicePlanService plans;
     private final DefaultListModel<Service> services = new DefaultListModel<>();
     private final DefaultListModel<Service> templates = new DefaultListModel<>();
-    private final JList<Service> serviceList = new JList<>(services);
-    private final JList<Service> templateList = new JList<>(templates);
+    private final JList<Service> serviceList = new EmptyServiceList(services,
+            "No services yet", "Create a service to build your first rundown.");
+    private final JList<Service> templateList = new EmptyServiceList(templates,
+            "No templates yet", "Save a service as a template to reuse its order.");
     private final JComboBox<String> playlistFilter = new JComboBox<>();
     private Consumer<Service> openHandler = s -> { };
     private Consumer<String> statusHandler = s -> { };
@@ -239,6 +244,38 @@ public class ServicesPanel extends JPanel {
             setBackground(selected ? l.getSelectionBackground() : l.getBackground());
             setOpaque(selected);
             return this;
+        }
+    }
+
+    /** Keeps an empty management page informative instead of presenting a large unexplained rectangle. */
+    private static final class EmptyServiceList extends JList<Service> {
+        private final String heading;
+        private final String message;
+
+        EmptyServiceList(DefaultListModel<Service> model, String heading, String message) {
+            super(model);
+            this.heading = heading;
+            this.message = message;
+        }
+
+        @Override
+        protected void paintComponent(Graphics g) {
+            super.paintComponent(g);
+            if (getModel().getSize() != 0) {
+                return;
+            }
+            int centerY = Math.max(70, getHeight() / 2 - 12);
+            Font titleFont = getFont().deriveFont(Font.BOLD, getFont().getSize2D() + 1f);
+            g.setFont(titleFont);
+            FontMetrics titleMetrics = g.getFontMetrics();
+            g.setColor(Palette.text());
+            g.drawString(heading, Math.max(16, (getWidth() - titleMetrics.stringWidth(heading)) / 2), centerY);
+
+            g.setFont(getFont());
+            FontMetrics messageMetrics = g.getFontMetrics();
+            g.setColor(Palette.secondaryText());
+            g.drawString(message, Math.max(16, (getWidth() - messageMetrics.stringWidth(message)) / 2),
+                    centerY + messageMetrics.getHeight() + 4);
         }
     }
 }
