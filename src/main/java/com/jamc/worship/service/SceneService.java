@@ -35,7 +35,7 @@ public class SceneService {
     public Scene create(String name) {
         Scene s = new Scene(null, validName(name));
         s.getSources().add(new Source("Lyrics", com.jamc.worship.model.SourceType.LYRICS));
-        s.getSources().add(new Source("Media", com.jamc.worship.model.SourceType.BACKGROUND));
+        s.getSources().add(new Source("Background", com.jamc.worship.model.SourceType.BACKGROUND));
         Scene saved = scenes.save(s, scenes.count());
         log.info("Created scene #{} '{}'", saved.getId(), saved.getName());
         return saved;

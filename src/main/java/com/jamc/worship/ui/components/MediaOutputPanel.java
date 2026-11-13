@@ -83,6 +83,8 @@ public class MediaOutputPanel extends JPanel {
     private final JButton takeAsBackground = Ui.button("TAKE AS BACKGROUND", "landscape");
     private final JButton favorite = Ui.button("ADD TO FAVORITES", "star");
     private final JButton playAudio = Ui.primaryButton("PLAY AS AUDIO", "play");
+    /** A Pixabay video: save it on this computer (plays offline, no data used again). */
+    private final JButton download = Ui.button("DOWNLOAD", "arrow-down");
     /** The applicable actions, two per row so they fit the narrow panel (rebuilt per media kind). */
     private final JPanel actionRow = Ui.transparent(new java.awt.GridLayout(0, 2, 6, 6));
     private final CardLayout cards = new CardLayout();
@@ -122,6 +124,7 @@ public class MediaOutputPanel extends JPanel {
         favorite.addActionListener(e -> {
             if (item != null) actions.toggleFavorite(item);
         });
+        download.addActionListener(e -> downloadItem());
         playAudio.setToolTipText("Play through the audio player; it keeps playing while slides change");
         playAudio.addActionListener(e -> {
             if (item != null) {
@@ -196,6 +199,56 @@ public class MediaOutputPanel extends JPanel {
         return com.jamc.worship.media.MediaStates.mediaKey(m.getPath());
     }
 
+    /** DOWNLOAD on a Pixabay video: saved on this computer for good; it then plays offline everywhere. */
+    private void downloadItem() {
+        MediaItem m = item;
+        if (m == null || !m.isPixabay()) {
+            return;
+        }
+        com.jamc.worship.media.OnlineMedia.download(m.getPath(), ok -> {
+            java.nio.file.Path file = ok ? com.jamc.worship.media.OnlineMedia.copyFile(m.getPath()) : null;
+            // shown in the panel, never a window: one could take the keys (Space is TAKE) in the middle of a service
+            if (item == m) {
+                updateDownloadState();
+                meta.setText(describe(m, media.resolve(m)));
+                warning.setText(file != null ? " " : "Could not download it. Check the internet and press DOWNLOAD again; it still plays online.");
+            }
+            if (file != null) {
+                // the download is a local video too: Library → Videos → Local
+                com.jamc.worship.ui.BackgroundTask.run("Add downloaded video", () -> media.addDownloaded(file, m.getName(),
+                        m.getChannelName(), m.getWidth(), m.getHeight(), m.getDurationMs()), local -> {
+                    if (item == m) {
+                        meta.setText(describe(m, media.resolve(m)) + "  ·  also in Videos → Local");
+                    }
+                }, err -> {
+                    if (item == m) {
+                        warning.setText("Downloaded, but it could not be added to Videos → Local: " + err.getMessage());
+                    }
+                });
+            }
+        });
+        updateDownloadState();
+    }
+
+    private void updateDownloadState() {
+        MediaItem m = item;
+        if (m == null || !m.isPixabay()) {
+            return;
+        }
+        if (com.jamc.worship.media.OnlineMedia.hasCopy(m.getPath())) {
+            download.setText("✓ SAVED (OFFLINE)");
+            download.setToolTipText("Saved on this computer: plays offline, no data used");
+            download.setEnabled(false);
+        } else if (com.jamc.worship.media.OnlineMedia.isDownloading(m.getPath())) {
+            download.setText("DOWNLOADING…");
+            download.setEnabled(false);
+        } else {
+            download.setText("DOWNLOAD");
+            download.setToolTipText("Save it on this computer: plays offline and loops smoothly, no data used again");
+            download.setEnabled(true);
+        }
+    }
+
     /** Shows the selected library item for inspection; nothing is sent anywhere. */
     public void show(MediaItem m) {
         boolean toProgram = actions.sendsToProgram(m);
@@ -204,6 +257,9 @@ public class MediaOutputPanel extends JPanel {
                 : "Put this on the main PREVIEW. Program stays as it is until TAKE.");
         boolean same = m != null && item != null && Objects.equals(m.getId(), item.getId()) && Objects.equals(m.getPath(), item.getPath());
         this.item = m;
+        // a background video chosen here is opened for TAKE AS BACKGROUND now, so that it then starts at once
+        backgroundControls.prepare(m != null && !m.isYouTube() && m.getCategory() == MediaCategory.BACKGROUND
+                && m.getKind() == MediaKind.VIDEO && !BackgroundPresets.isPreset(m) ? m.getPath() : null);
         if (m == null) {
             stopPreview();
             cards.show(body, "empty");
@@ -240,8 +296,10 @@ public class MediaOutputPanel extends JPanel {
         favorite.setEnabled(!preset);
         favorite.setText(m.isFavorite() ? "REMOVE FROM FAVORITES" : "ADD TO FAVORITES");
         favorite.setIcon(Icons.get(m.isFavorite() ? "star-filled" : "star", Icons.SMALL));
+        download.setVisible(m.isPixabay());
+        updateDownloadState();
         actionRow.removeAll();
-        for (JButton b : new JButton[]{sendToPreview, playAudio, addToService, favorite, fullscreen, takeAsBackground}) {
+        for (JButton b : new JButton[]{sendToPreview, playAudio, addToService, favorite, fullscreen, takeAsBackground, download}) {
             if (b.isVisible()) {
                 actionRow.add(b);
             }
@@ -407,7 +465,8 @@ public class MediaOutputPanel extends JPanel {
         }
         if (m.isPixabay()) {
             // streamed from Pixabay (nothing downloaded); the creator is credited wherever it is described
-            s.append("  ·  streams from Pixabay")
+            s.append(com.jamc.worship.media.OnlineMedia.hasCopy(m.getPath())
+                            ? "  ·  saved on this computer (plays offline)" : "  ·  streams from Pixabay")
                     .append(m.getChannelName() == null ? "" : "  ·  by " + m.getChannelName() + " via Pixabay");
             return s.toString();
         }

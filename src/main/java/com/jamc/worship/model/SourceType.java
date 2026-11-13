@@ -2,7 +2,7 @@ package com.jamc.worship.model;
 
 /** Layer types a scene can contain. */
 public enum SourceType {
-    BACKGROUND("Media", "layers"),
+    BACKGROUND("Background", "landscape"),
     LYRICS("Lyrics / Slide Text", "music"),
     BIBLE("Bible Text", "book"),
     CAMERA("Camera", "video"),
@@ -21,7 +21,7 @@ public enum SourceType {
     /** Sound only (music from the audio library): plays on Program with the scene, no picture. */
     AUDIO("Audio", "audio"),
     /** Live sound from a connected input (a microphone, a camera's audio, the audio tech's mixer), no picture. */
-    AUDIO_INPUT("Audio Input", "audio"),
+    AUDIO_INPUT("Audio Input", "mic"),
     /** Several library images as ONE source, shown one after another (auto play or Previous / Next). */
     SLIDESHOW("Image Slideshow", "slides"),
     /** A live picture of one open window on this computer (e.g. a browser, a Zoom call), found by its title. */
@@ -35,9 +35,9 @@ public enum SourceType {
     /** Layers kept together: they move, show and hide as one (like OBS's Group). Draws nothing itself. */
     GROUP("Group", "folder"),
     /** Everything the PC plays (other programs, system sounds), except this app, into the recording and stream. */
-    AUDIO_OUTPUT("Audio Output Capture", "audio"),
+    AUDIO_OUTPUT("Audio Output Capture", "pc-sound"),
     /** What one program plays (e.g. a browser), into the recording and stream, like OBS Application Audio Capture. */
-    APP_AUDIO("Application Audio", "audio");
+    APP_AUDIO("Application Audio", "app-audio");
 
     private final String label;
     private final String icon;

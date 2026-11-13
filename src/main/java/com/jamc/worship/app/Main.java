@@ -132,11 +132,14 @@ public final class Main {
         vlc.start();
 
         SwingUtilities.invokeLater(() -> {
+            long building = System.nanoTime();
             try {
                 MainFrame frame = new MainFrame(context);
                 frame.setVisible(true);
-                log.info("Main window shown");
+                // the whole window is built on the Swing thread while the splash shows: expected, not a freeze
+                log.info("Main window shown (built in {} ms)", (System.nanoTime() - building) / 1_000_000);
             } finally {
+                HangWatchdog.startupDone();
                 com.jamc.worship.ui.SplashWindow.close();
             }
         });

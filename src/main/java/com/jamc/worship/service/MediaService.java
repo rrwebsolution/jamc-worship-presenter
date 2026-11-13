@@ -158,6 +158,47 @@ public class MediaService {
         return saved;
     }
 
+    private final java.util.List<Runnable> changeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Told (on the thread that changed it) when an item is added outside a library list, e.g. a download that finished. */
+    public void addChangeListener(Runnable l) {
+        changeListeners.add(l);
+    }
+
+    /**
+     * A Pixabay video the operator downloaded: a local video file (Library → Videos → Local) that plays offline, with
+     * the Pixabay title and creator. The file stays where the download put it (data/pixabay/videos), so it is not
+     * stored twice and the Pixabay address keeps playing it too. Downloading the same file again returns that item.
+     */
+    public MediaItem addDownloaded(Path file, String name, String creator, Integer width, Integer height, Long durationMs)
+            throws IOException {
+        if (file == null || !Files.isRegularFile(file)) {
+            throw new ValidationException("The downloaded video is missing.");
+        }
+        String stored = FileUtils.toStoredPath(paths, file);
+        for (MediaItem m : repository.find(List.of(MediaCategory.VIDEO), null, false)) {
+            if (stored.equals(m.getPath()) && m.getSourceType() == MediaSourceType.LOCAL) {
+                return m;
+            }
+        }
+        MediaItem m = new MediaItem();
+        m.setName(name == null || name.isBlank() ? stripExtension(file.getFileName().toString()) : name);
+        m.setKind(MediaKind.VIDEO);
+        m.setCategory(MediaCategory.VIDEO);
+        m.setPath(stored);
+        m.setCopied(true); // in LiveCat's own data folder: never "missing" when a USB stick is removed
+        m.setFileSize(Files.size(file));
+        m.setWidth(width);
+        m.setHeight(height);
+        m.setDurationMs(durationMs);
+        m.setSourceType(MediaSourceType.LOCAL);
+        m.setChannelName(creator); // credit: "by X via Pixabay"
+        MediaItem saved = repository.insert(m);
+        log.info("Downloaded Pixabay video '{}' is a local video ({})", saved.getName(), stored);
+        changeListeners.forEach(Runnable::run);
+        return saved;
+    }
+
     /** Points a Pixabay item at the address Pixabay gives now (an old address stopped playing). */
     public void updatePixabayAddress(MediaItem item, com.jamc.worship.pixabay.PixabayVideo fresh) {
         if (item == null || !item.isPixabay() || fresh == null || fresh.playback() == null) {

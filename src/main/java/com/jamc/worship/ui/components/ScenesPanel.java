@@ -938,16 +938,21 @@ public class ScenesPanel extends JPanel {
         playlist.setToolTipText("Several videos as one source (like OBS VLC Video): Autoplay plays the next one when one ends; loop, shuffle");
         menu.add(playlist);
         menu.add(menuItem("Audio…", "audio", () -> addMediaFromLibrary(MediaKind.AUDIO)));
-        menu.add(menuItem("Media", "layers", () -> addSource(SourceType.BACKGROUND)));
+        // was "Media", which read like "a video file" (user, 2026-11-13: people would not know where to use it)
+        JMenuItem background = menuItem("Background (TAKE AS BACKGROUND / theme)", "landscape", () -> addSource(SourceType.BACKGROUND));
+        background.setToolTipText("The background layer behind the words: the video or picture taken with TAKE AS "
+                + "BACKGROUND, or the song's / verse's theme. Shows play / pause / loop / volume while it is a video. "
+                + "For one fixed video use Videos… instead.");
+        menu.add(background);
         menu.add(menuItem("Camera…", "video", this::addCameraSource));
         JMenuItem director = menuItem("Auto Director (virtual shots)", "cpu", this::addAutoDirectorSource);
         director.setToolTipText("A camera box whose picture the AI Auto Director chooses (Wide, Lead Singer, Drummer… "
                 + "from one or several cameras). Set it up in Library → Camera → AUTO DIRECTOR.");
         menu.add(director);
-        menu.add(menuItem("Audio Input…", "audio", this::addAudioInput));
-        JMenuItem pcSound = menuItem("Audio Output Capture", "audio", this::addAudioOutput);
+        menu.add(menuItem("Audio Input…", "mic", this::addAudioInput));
+        JMenuItem pcSound = menuItem("Audio Output Capture", "pc-sound", this::addAudioOutput);
         pcSound.setToolTipText("The PC's sound (other programs) into the recording and the stream, as in OBS");
-        JMenuItem appSound = menuItem("Application Audio Capture…", "audio", () -> pickApp(null));
+        JMenuItem appSound = menuItem("Application Audio Capture…", "app-audio", () -> pickApp(null));
         appSound.setToolTipText("One program's sound (a browser, Zoom…) into the recording and the stream, as in OBS");
         if (!com.jamc.worship.capture.WindowCapture.supported()) {
             pcSound.setEnabled(false);
@@ -2733,10 +2738,15 @@ public class ScenesPanel extends JPanel {
                 String help = switch (t) {
                     case LYRICS, BIBLE -> "Shows the text of whatever slide is on Program. Drag the box or its corners on the "
                             + "preview to move it or make it smaller: the text shrinks to fit the box.";
-                    case BACKGROUND -> "Shows the background of the slide on Program, or a video/image taken live.";
+                    case BACKGROUND -> "The background layer: shows the video or picture taken with TAKE AS BACKGROUND, "
+                            + "or the song's / verse's theme background. Put it below the Lyrics / Bible source so the "
+                            + "words sit on it.";
                     default -> "Shows the lower third when you press SHOW in Lower Thirds.";
                 };
                 row(g, "", Ui.label("<html><body style='width:190px'>" + help + "</html>", Palette::mutedText, "small"));
+                if (t == SourceType.BACKGROUND) {
+                    backgroundVideoControls(g);
+                }
             }
             g.weighty = 1;
             props.add(Ui.transparent(new BorderLayout()), g);
@@ -3032,6 +3042,48 @@ public class ScenesPanel extends JPanel {
                 : "Only this presentation. Its slides sent from the library show here; other presentations never do "
                 + "(this box keeps its last slide).";
         row(g, "", Ui.label("<html><body style='width:190px'>" + help + "</html>", Palette::mutedText, "small"));
+    }
+
+    /**
+     * A Background source's playback controls (user, 2026-11-13): shown only while the background is a video (TAKE AS
+     * BACKGROUND). They are the live background's own controls: play / pause, stop, ±10 s, seek, mute, loop and volume
+     * change the background on Preview and Program, as the background controls under them do. A picture, a color or
+     * no background hides them; they come and go as the background changes.
+     */
+    private void backgroundVideoControls(GridBagConstraints g) {
+        if (!(Rendering.globalBackground() instanceof com.jamc.worship.background.GlobalBackgroundManager bg)) {
+            return;
+        }
+        TransportControls controls = new TransportControls(true);
+        JLabel heading = Ui.label("BACKGROUND VIDEO · live on Preview and Program", Palette::secondaryText, "small");
+        JPanel box = Ui.transparent(new BorderLayout(0, 4));
+        box.add(heading, BorderLayout.NORTH);
+        box.add(controls, BorderLayout.CENTER);
+        box.setToolTipText("The video taken with TAKE AS BACKGROUND: these controls change it on Preview and Program");
+        row(g, "", box);
+        com.jamc.worship.media.Transport live = bg.transport();
+        boolean[] shown = {false};
+        Runnable sync = () -> {
+            boolean video = bg.isVideoActive();
+            if (video != shown[0]) {
+                shown[0] = video;
+                controls.bind(video ? live : null);
+                box.setVisible(video);
+                props.revalidate();
+                props.repaint();
+            }
+        };
+        box.setVisible(false);
+        sync.run();
+        Runnable follow = () -> javax.swing.SwingUtilities.invokeLater(sync);
+        bg.addListener(follow);
+        // the properties were rebuilt (another source chosen): stop following the background
+        box.addHierarchyListener(e -> {
+            if ((e.getChangeFlags() & java.awt.event.HierarchyEvent.DISPLAYABILITY_CHANGED) != 0 && !box.isDisplayable()) {
+                bg.removeListener(follow);
+                controls.bind(null);
+            }
+        });
     }
 
     /**

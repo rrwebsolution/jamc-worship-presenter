@@ -32,6 +32,7 @@ public class VideoLibraryPanel extends JPanel {
     private final ButtonGroup group = new ButtonGroup();
     private final JToggleButton backgroundsTab;
     private final JToggleButton allTab;
+    private final JToggleButton localTab;
     private MediaLibraryPanel active;
     private Consumer<MediaLibraryPanel> switchListener = p -> { };
 
@@ -44,7 +45,8 @@ public class VideoLibraryPanel extends JPanel {
 
         allTab = tab("All", "Every video, local files first", () -> showVideos(MediaLibraryPanel.VIDEOS_ALL));
         allTab.setSelected(true);
-        tab("Local", "Video files on this computer", () -> showVideos(MediaLibraryPanel.VIDEOS_LOCAL));
+        localTab = tab("Local", "Video files on this computer (downloaded Pixabay videos too)",
+                () -> showVideos(MediaLibraryPanel.VIDEOS_LOCAL));
         tab("YouTube", "Videos that play from YouTube", () -> showVideos(MediaLibraryPanel.VIDEOS_YOUTUBE));
         tab("Pixabay", "Pixabay videos (they stream from Pixabay; + → Pixabay Worship Backgrounds… to find more)",
                 () -> showVideos(MediaLibraryPanel.VIDEOS_PIXABAY));
@@ -73,6 +75,13 @@ public class VideoLibraryPanel extends JPanel {
             allTab.setSelected(true);
             showVideos(MediaLibraryPanel.VIDEOS_ALL);
         }
+        videos.select(id);
+    }
+
+    /** Opens the Local tab and selects this video there (a Pixabay video just downloaded). */
+    public void selectLocal(long id) {
+        localTab.setSelected(true);
+        showVideos(MediaLibraryPanel.VIDEOS_LOCAL);
         videos.select(id);
     }
 

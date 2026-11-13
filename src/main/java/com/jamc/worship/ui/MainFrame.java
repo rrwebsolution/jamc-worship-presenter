@@ -385,6 +385,18 @@ public class MainFrame extends JFrame {
         };
         videoLibrary.setOpenBackground(openBackground);
         backgroundLibrary.setOpenBackground(openBackground);
+        // a Pixabay video downloaded: Library → Videos → Local opens on it
+        java.util.function.Consumer<MediaItem> openLocal = m -> {
+            showCategory(Sidebar.Category.VIDEOS);
+            videoTabs.selectLocal(m.getId());
+        };
+        videoLibrary.setOpenLocal(openLocal);
+        backgroundLibrary.setOpenLocal(openLocal);
+        // a download that finished after its window closed: the lists show it without a click
+        context.mediaService().addChangeListener(() -> javax.swing.SwingUtilities.invokeLater(() -> {
+            videoLibrary.refresh(null);
+            mediaLibrary.refresh(null);
+        }));
         com.jamc.worship.pixabay.PixabayThumbnails.install(context.paths().dataDir().resolve("pixabay").resolve("posters"));
         startPixabayLighterVersions();
         // the one MEDIA PREVIEW monitor for every media library; the background's controls sit under it
@@ -3729,6 +3741,7 @@ public class MainFrame extends JFrame {
     private void startPixabayLighterVersions() {
         java.nio.file.Path dir = context.paths().dataDir().resolve("pixabay");
         com.jamc.worship.media.OnlineMedia.install(dir.resolve("playback.properties"));
+        com.jamc.worship.media.OnlineMedia.installCopies(dir.resolve("videos"));
         Thread.ofVirtual().name("pixabay-lighter").start(() -> {
             try {
                 Map<String, Long> saved = new java.util.LinkedHashMap<>();

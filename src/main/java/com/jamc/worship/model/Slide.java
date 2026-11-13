@@ -41,8 +41,15 @@ public class Slide {
         s.presentationId = presentationId;
         s.presentationIndex = presentationIndex;
         s.songId = songId;
+        s.bible = bible;
         return s;
     }
+
+    /** A Bible verse slide (made by the Bible page): a scene's Bible source shows only these. */
+    private boolean bible;
+
+    public boolean isBible() { return bible; }
+    public void setBible(boolean bible) { this.bible = bible; }
 
     /** Resolves this slide's final look on top of {@code base}. */
     public SlideStyle styleOver(SlideStyle base) {

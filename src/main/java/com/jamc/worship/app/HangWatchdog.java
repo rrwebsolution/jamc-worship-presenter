@@ -27,8 +27,21 @@ public final class HangWatchdog {
 
     private static volatile long lastBeat = System.nanoTime();
     private static volatile boolean beatQueued;
+    /**
+     * While the main window is being built (splash on screen) the Swing thread is busy on purpose: 2 s normally, about
+     * 4 s when started from VS Code. That was logged as "App is frozen" with a thread dump at every start. Until
+     * {@link #startupDone()} only a really stuck start is reported.
+     */
+    private static final long STARTUP_HANG_MS = 20_000;
+    private static volatile boolean starting = true;
 
     private HangWatchdog() {
+    }
+
+    /** The main window is shown: from now on a Swing thread silent for {@link #HANG_MS} is a freeze. */
+    public static void startupDone() {
+        lastBeat = System.nanoTime();
+        starting = false;
     }
 
     public static void start() {
@@ -61,13 +74,15 @@ public final class HangWatchdog {
                 });
             }
             long silentMs = (System.nanoTime() - lastBeat) / 1_000_000;
-            if (silentMs >= HANG_MS) {
+            boolean opening = starting;
+            if (silentMs >= (opening ? STARTUP_HANG_MS : HANG_MS)) {
                 if (frozenSince == 0) {
                     frozenSince = lastBeat;
                 }
-                if (dumps == 0 || (dumps == 1 && silentMs >= SECOND_DUMP_MS)) {
+                if (dumps == 0 || (dumps == 1 && silentMs >= SECOND_DUMP_MS + (opening ? STARTUP_HANG_MS : 0))) {
                     dumps++;
-                    log.warn("App is frozen: the Swing thread has not answered for {} ms. Thread dump {}:\n{}",
+                    log.warn(opening ? "LiveCat is stuck while opening: the Swing thread has not answered for {} ms. Thread dump {}:\n{}"
+                                    : "App is frozen: the Swing thread has not answered for {} ms. Thread dump {}:\n{}",
                             silentMs, dumps, threadDump());
                 }
             } else if (frozenSince != 0) {

@@ -230,6 +230,11 @@ public class GlobalBackgroundPanel extends JPanel {
         statusHandler.accept("\"" + name + "\" is now the background under Preview and Program. Scenes are unchanged.");
     }
 
+    /** A background video shown in MEDIA PREVIEW: opened now, paused and unseen, so TAKE AS BACKGROUND starts it at once. */
+    public void prepare(String storedPath) {
+        manager.prepare(storedPath);
+    }
+
     /** Chooses a video (checked by VLC) or an image and takes it as the background. */
     private void choose() {
         JFileChooser chooser = new JFileChooser();

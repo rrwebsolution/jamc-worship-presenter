@@ -392,6 +392,13 @@ public class MediaLibraryPanel extends JPanel {
         openBackground = l == null ? m -> { } : l;
     }
 
+    /** Told when a Pixabay video was downloaded: Videos → Local opens on it. */
+    private java.util.function.Consumer<MediaItem> openLocal = m -> { };
+
+    public void setOpenLocal(java.util.function.Consumer<MediaItem> l) {
+        openLocal = l == null ? m -> { } : l;
+    }
+
     private void browsePixabay() {
         var r = com.jamc.worship.ui.dialogs.PixabayBrowserDialog.showDialog(
                 javax.swing.SwingUtilities.getWindowAncestor(this), media, config);
@@ -401,6 +408,11 @@ public class MediaLibraryPanel extends JPanel {
         MediaItem m = r.item();
         if (!search.getText().isEmpty()) {
             search.setText("");
+        }
+        if (r.local()) {
+            statusHandler.accept("\"" + m.getName() + "\" is downloaded: Library → Videos → Local. It plays offline.");
+            openLocal.accept(m);
+            return;
         }
         if (r.background()) {
             statusHandler.accept("\"" + m.getName() + "\" is in Library → Backgrounds and in MEDIA PREVIEW. "

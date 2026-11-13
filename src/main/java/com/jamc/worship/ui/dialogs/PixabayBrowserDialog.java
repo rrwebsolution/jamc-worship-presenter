@@ -78,8 +78,14 @@ public final class PixabayBrowserDialog extends JDialog {
     private static final int HOVER_DELAY_MS = 200;
     private static final int CARD_MIN_WIDTH = 250;
 
-    /** What the operator chose: the last item added, and whether it should open in Backgrounds. */
-    public record Result(MediaItem item, boolean background) {
+    /**
+     * What the operator chose: the last item added, and whether it should open in Backgrounds, or in Videos → Local
+     * (a downloaded video).
+     */
+    public record Result(MediaItem item, boolean background, boolean local) {
+        public Result(MediaItem item, boolean background) {
+            this(item, background, false);
+        }
     }
 
     private final MediaService media;
@@ -394,6 +400,68 @@ public final class PixabayBrowserDialog extends JDialog {
         }, err -> Dialogs.showError(this, "Could not add the Pixabay video.", err));
     }
 
+    /**
+     * Download: saves the video on this computer for good and puts it in Library → Videos → Local, as a video file
+     * (user, 2026-11-13: "a download goes straight to Local"). It plays offline and loops smoothly, with no data used
+     * again. The window stays open; the download carries on if it is closed, and the list then updates by itself.
+     */
+    private void downloadVideo(PixabayVideo v, JButton button) {
+        hover.stop();
+        PixabayVideo.Rendition r = v.playback();
+        if (r == null) {
+            return;
+        }
+        button.setEnabled(false);
+        button.setText("Downloading…");
+        showStatus("Downloading \"" + v.title() + "\" (" + sizeText(v) + ")… You can keep browsing.", false);
+        com.jamc.worship.media.OnlineMedia.download(r.url(), ok -> {
+            java.nio.file.Path file = ok ? com.jamc.worship.media.OnlineMedia.copyFile(r.url()) : null;
+            if (file == null) {
+                showDownloadState(button, v);
+                if (isDisplayable()) {
+                    showStatus("Could not download \"" + v.title() + "\". Check the internet and press Download again.", false);
+                }
+                return;
+            }
+            BackgroundTask.run("Add downloaded video", () -> media.addDownloaded(file, v.title(), v.user(),
+                    r.width() > 0 ? r.width() : null, r.height() > 0 ? r.height() : null,
+                    v.durationSec() > 0 ? v.durationSec() * 1000L : null), item -> {
+                result = new Result(item, false, true); // Videos → Local opens on it when this window closes
+                showDownloadState(button, v);
+                if (isDisplayable()) {
+                    showStatus("\"" + item.getName() + "\" is downloaded: Library → Videos → Local. "
+                            + "It plays offline, with no data used again.", false);
+                }
+            }, err -> {
+                showDownloadState(button, v);
+                Dialogs.showError(this, "The video was downloaded but could not be added to the library.", err);
+            });
+        });
+    }
+
+    /** Download, Downloading… or ✓ Saved, by whether this video's copy is on this computer. */
+    private static void showDownloadState(JButton button, PixabayVideo v) {
+        String url = v.playback() == null ? null : v.playback().url();
+        if (url != null && com.jamc.worship.media.OnlineMedia.hasCopy(url)) {
+            button.setText("✓ Saved (plays offline)");
+            button.setToolTipText("Downloaded: in Library → Videos → Local, plays offline. Press to make sure it is listed there");
+            button.setEnabled(true);
+        } else if (url != null && com.jamc.worship.media.OnlineMedia.isDownloading(url)) {
+            button.setText("Downloading…");
+            button.setEnabled(false);
+        } else {
+            button.setText("Download");
+            button.setToolTipText("Downloads it (" + sizeText(v) + ") into Library → Videos → Local: "
+                    + "plays offline and loops smoothly, no data used again");
+            button.setEnabled(url != null);
+        }
+    }
+
+    private static String sizeText(PixabayVideo v) {
+        long size = v.playback() == null ? 0 : v.playback().size();
+        return size <= 0 ? "size unknown" : size >= 1024 * 1024 ? (size / (1024 * 1024)) + " MB" : (size / 1024) + " KB";
+    }
+
     private void showDetails(PixabayVideo v) {
         hover.stop();
         PixabayVideo.Rendition r = v.playback();
@@ -533,12 +601,16 @@ public final class PixabayBrowserDialog extends JDialog {
             JButton toVideos = Ui.button("Add to Videos", "plus");
             toVideos.setToolTipText("Adds it to Library → Videos (streams from Pixabay; nothing is downloaded)");
             toVideos.addActionListener(e -> addVideo(video, false));
+            JButton download = Ui.button("Download", "arrow-down");
+            showDownloadState(download, video);
+            download.addActionListener(e -> downloadVideo(video, download));
             JPanel text = Ui.transparent(new GridLayout(0, 1, 0, 1));
             text.add(name);
             text.add(by);
-            JPanel buttons = Ui.transparent(new GridLayout(2, 1, 0, 4)); // stacked: both labels always readable
+            JPanel buttons = Ui.transparent(new GridLayout(3, 1, 0, 4)); // stacked: every label always readable
             buttons.add(use);
             buttons.add(toVideos);
+            buttons.add(download);
             JPanel south = Ui.transparent(new BorderLayout(0, 6));
             south.add(text, BorderLayout.NORTH);
             south.add(buttons, BorderLayout.SOUTH);

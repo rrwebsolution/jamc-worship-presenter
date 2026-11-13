@@ -71,6 +71,23 @@ public final class FontChoices {
      * stay in the normal font) and its tooltip says how many fonts the computer has. When the list is shown
      * again it picks up fonts installed in Windows meanwhile.
      */
+    /**
+     * Every row of the font list the same size, so Swing never measures the whole list. Without it, selecting a font
+     * (Settings is built at startup) measured each of the hundreds of names in its own font, loading every font from
+     * Windows: the app froze at startup (HangWatchdog: over 3 s in TypographyEditor.selectFamily, 2026-11-13). Now only
+     * the rows on screen are drawn, when the list is opened.
+     */
+    static void fixedRows(JComboBox<String> combo) {
+        if (!(combo.getUI().getAccessibleChild(combo, 0) instanceof javax.swing.plaf.basic.ComboPopup popup)) {
+            return;
+        }
+        JList<?> list = popup.getList();
+        java.awt.Font big = combo.getFont().deriveFont(combo.getFont().getSize2D() + 2f);
+        java.awt.FontMetrics fm = combo.getFontMetrics(big);
+        list.setFixedCellHeight(fm.getHeight() + 8); // room for tall script fonts, as the renderer gives them
+        list.setFixedCellWidth(Math.max(fm.stringWidth("Segoe UI Semibold Wide Condensed") + 24, combo.getPreferredSize().width));
+    }
+
     public static void familyRenderer(JComboBox<String> combo) {
         java.util.Map<String, java.awt.Font> faces = new java.util.HashMap<>();
         combo.setRenderer(new DefaultListCellRenderer() {
@@ -90,6 +107,8 @@ public final class FontChoices {
                 return this;
             }
         });
+        fixedRows(combo);
+        combo.addPropertyChangeListener("UI", e -> fixedRows(combo)); // light / dark theme: a new list, sized again
         Runnable count = () -> combo.setToolTipText(combo.getItemCount() + " fonts on this computer (every installed font). "
                 + "Each name is shown in its own font.");
         count.run();

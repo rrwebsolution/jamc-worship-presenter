@@ -39,3 +39,24 @@
 - **One camera or multiple cameras:** in **Camera setup** choose **One camera** (every shot is cut out of your Iriun) or **Multiple cameras**, then pick a camera for each shot (for example Wide = phone 1, Lead Singer = phone 2). The sound stays on the main camera. A change to another camera fades across.
 - The Auto Director is now a tab of **Camera** (CAMERAS | AUTO DIRECTOR), and every shot change glides smoothly in Preview too.
 - The AI runs on this computer (no internet needed). It is always **off** (and in **Manual**) when LiveCat opens: turn it on when you need it.
+
+## Fixed
+- Clicking a video in **Library → Videos → Backgrounds** (especially a Pixabay background, which streams from the internet) no longer makes Preview and Program freeze for a moment. The video now opens in MEDIA PREVIEW in the background while everything keeps moving.
+- **TAKE AS BACKGROUND starts at once.** A background video you click in the Library is made ready right away, so TAKE AS BACKGROUND only has to press play. Changing backgrounds no longer makes Preview and Program stop for a moment.
+- **Pixabay backgrounds loop smoothly and use data only once.** The first time you take a Pixabay video as the background, LiveCat saves a copy on this computer while it plays. From then on it loops with no pause (before, it often stopped for about 4 seconds near the end) and works offline. Before, every loop downloaded the whole video again: one 8-second background used about 9.5 GB an hour.
+- **Fixed:** turning **Loop** off and on while a background played made every later loop start from that point instead of the beginning.
+
+## Download Pixabay videos
+- In **Pixabay Worship Backgrounds**, every video now has a **Download** button. The video goes **straight into Library → Videos → Local**, like your own video files: it plays **offline**, loops smoothly and never uses data again. You can keep browsing while it downloads; when you close the window, Videos → Local opens on it.
+- A Pixabay video already in your Library has **DOWNLOAD** in MEDIA PREVIEW: it is then in Videos → Local too, and shows **✓ SAVED (OFFLINE)**.
+- Downloaded videos stay for good. Copies saved automatically when you TAKE a Pixabay background are cleared oldest-first only when they pass 3 GB.
+
+## Lyrics and background are separate sources
+- A **Lyrics** or **Bible** source in a scene is now **the words only**. It no longer brings a background video along by itself.
+- For a background behind the words, add **Add Source → Media** to the scene (or show its Media source with the eye). The song's theme and TAKE AS BACKGROUND then show through that source, and you can move, hide or reorder it like any other source.
+- A scene with only a Lyrics or Bible source now shows the words on black: add a Media source to it if you want a background.
+- A **Lyrics** source shows both song lyrics and Bible verses, so one source is enough for both. A **Bible** source shows **Bible verses only**: song lyrics never appear in it.
+- **Fixed:** LiveCat could freeze for a few seconds while opening, building the font lists in Settings (each font was loaded just to measure the list). The font lists now open instantly.
+- The scene source **Media** is now called **Background (TAKE AS BACKGROUND / theme)** in Add Source, with a tooltip saying what it is for. Your scenes keep the names their sources already have.
+- Select a **Background** source in the scene editor while the background is a **video**: its playback controls appear under it (play / pause, stop, ±10 s, progress bar with time, mute, loop, volume). They change the background on Preview and Program. With a picture, a color or no background they are hidden.
+- In Add Source, **Audio Input** (microphone), **Audio Output Capture** (the PC's sound) and **Application Audio Capture** (one program's sound) now each have their own icon, in the menu and in the scene's source list.

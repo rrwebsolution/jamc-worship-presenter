@@ -88,6 +88,10 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
     private String previewPath;
     private Layer previewPlayer;
 
+    /** A background video chosen in the Library, open and paused, ready for TAKE AS BACKGROUND ({@link #prepare}). */
+    private String preparedPath;
+    private Layer prepared;
+
     private Layer outgoing;
     private Change activeChange = Change.CUT;
     private long changeStart = -1;
@@ -248,8 +252,45 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         }
         releasePreview();
         previewPath = newPath;
-        previewPlayer = start(newPath, true);
+        if (prepared != null && newPath.equals(preparedPath)) {
+            // chosen in the Library a moment ago: already open on its first picture, so it starts at once
+            previewPlayer = prepared;
+            prepared = null;
+            preparedPath = null;
+            ((VideoLayer) previewPlayer).go();
+        } else {
+            previewPlayer = start(newPath, true);
+        }
         fire();
+    }
+
+    /**
+     * A background video chosen in the Library (MEDIA PREVIEW): it is opened now, paused on its first picture and
+     * shown nowhere, so that TAKE AS BACKGROUND starts it at once instead of waiting for VLC to open it (1–1.6 s for a
+     * streamed Pixabay video). Only the one chosen is kept; null, a picture or the live background lets it go.
+     */
+    public void prepare(String newPath) {
+        if (newPath != null && newPath.equals(preparedPath)) {
+            return;
+        }
+        releasePrepared();
+        if (newPath == null || !isVideo(newPath) || !isAvailable() || (newPath.equals(path) && player != null)) {
+            return;
+        }
+        try {
+            prepared = start(newPath, true, true);
+            preparedPath = newPath;
+        } catch (RuntimeException e) {
+            log.debug("Could not prepare background {}", newPath, e);
+        }
+    }
+
+    private void releasePrepared() {
+        if (prepared != null) {
+            prepared.release();
+        }
+        prepared = null;
+        preparedPath = null;
     }
 
     public void clearPreview() {
@@ -289,7 +330,68 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
             old.release();
         }
         log.info("Global background taken: {} ({})", fileName(path), wasShowing ? change : "first");
+        keepCopy(path);
         fire();
+    }
+
+    /**
+     * A streamed (Pixabay) background is saved on this computer once, in the background, while it plays; then it plays
+     * from the copy: seamless loops and no more data (streamed, every loop downloaded the whole video again).
+     */
+    private void keepCopy(String taken) {
+        if (!com.jamc.worship.media.OnlineMedia.isUrl(taken) || com.jamc.worship.media.OnlineMedia.hasCopy(taken)) {
+            return;
+        }
+        com.jamc.worship.media.OnlineMedia.keepCopy(taken, () -> {
+            if (taken.equals(path) && player instanceof VideoLayer v) {
+                v.reload(); // the same position, now from the copy
+                log.info("Background {} now plays from its saved copy", fileName(taken));
+            }
+        });
+    }
+
+    /** True when the background on Program is a video now (its playback controls apply). */
+    public boolean isVideoActive() {
+        return isActive() && isVideo(path) && player != null;
+    }
+
+    /**
+     * The live background as a {@link com.jamc.worship.media.Transport}, for the standard playback controls (a scene's
+     * Background source in the scene editor shows them while the background is a video). Every action is the same as
+     * the background controls under Preview / Program: it changes the background on Preview and Program.
+     */
+    public com.jamc.worship.media.Transport transport() {
+        GlobalBackgroundManager m = this;
+        return new com.jamc.worship.media.Transport() {
+            public void playOrResume() { m.setPaused(false); }
+            public void pause() { m.setPaused(true); }
+            /** Back to the start, paused. */
+            public void stop() {
+                if (player != null) {
+                    player.seek(0f);
+                }
+                m.setPaused(true);
+                fire();
+            }
+            public void seek(float position) {
+                if (player != null) {
+                    player.seek(Math.clamp(position, 0f, 1f));
+                    fire();
+                }
+            }
+            public void setVolume(int v) { m.setVolume(Math.min(100, v)); }
+            public int volume() { return m.volume(); }
+            public void setMuted(boolean v) { m.setMuted(v); }
+            public boolean isMuted() { return m.muted(); }
+            public void setLoop(boolean v) { m.setLoop(v); }
+            public boolean isLoop() { return m.loop(); }
+            public boolean isPlaying() { return isVideoActive() && !paused && !pausedForBlack; }
+            public long time() { return Math.max(0, m.position()); }
+            public long length() { return Math.max(0, m.length()); }
+            public boolean hasMedia() { return isVideoActive(); }
+            /** Not kept: the controls ask four times a second anyway, and a kept one would outlive every panel. */
+            public void addStateListener(Runnable l) { }
+        };
     }
 
     /** Plays the chosen background straight to Program (preview + take). */
@@ -396,7 +498,7 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
     /** Releases every player (application exit). */
     public void shutdown() {
         changeTimer.stop();
-        for (Layer p : new Layer[]{player, outgoing, previewPlayer}) {
+        for (Layer p : new Layer[]{player, outgoing, previewPlayer, prepared}) {
             if (p != null) {
                 p.release();
             }
@@ -404,6 +506,8 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         player = null;
         outgoing = null;
         previewPlayer = null;
+        prepared = null;
+        preparedPath = null;
     }
 
     // ------------------------------------------------------------------ painting
@@ -551,13 +655,24 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
      */
     static final String HW_DECODE = ":avcodec-hw=d3d11va";
 
+    /**
+     * How much of a streamed (Pixabay) background VLC buffers before its first picture. 3000 ms made the next background
+     * wait 1.2–3.7 s (measured); 1000 ms showed it in 1.0–1.6 s and still looped without a hold. Less gained little.
+     */
+    static final String STREAM_CACHING = ":network-caching=1000";
+
     private Layer start(String mediaPath, boolean startMuted) {
+        return start(mediaPath, startMuted, false);
+    }
+
+    /** {@code cued}: a video opens paused on its first picture and starts only on {@link VideoLayer#go()}. */
+    private Layer start(String mediaPath, boolean startMuted, boolean cued) {
         if (isSolid(mediaPath)) {
             return new ImageLayer(solidImage(mediaPath));
         }
         if (com.jamc.worship.media.OnlineMedia.isUrl(mediaPath)) {
             // an online (Pixabay) background video: streamed by VLC, nothing downloaded
-            return new VideoLayer(mediaPath, loop, startMuted, volume, ":network-caching=3000", HW_DECODE);
+            return new VideoLayer(mediaPath, loop, startMuted, volume, cued, STREAM_CACHING, HW_DECODE);
         }
         Path file = resolver.apply(mediaPath);
         if (!Files.isRegularFile(file)) {
@@ -566,7 +681,7 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         if (isImage(mediaPath)) {
             return new ImageLayer(file, this::fire);
         }
-        return new VideoLayer(file.toString(), loop, startMuted, volume, HW_DECODE);
+        return new VideoLayer(file.toString(), loop, startMuted, volume, cued, HW_DECODE);
     }
 
     /** True for a still-image background (JPG, PNG, WebP...); anything else is played as a video. */
@@ -653,28 +768,114 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
     /**
      * A background video. Looping uses VLC's input repeat, not its playlist repeat: the playlist repeat closes and reopens
      * the file (or the Pixabay stream, buffering again) at every end, and the picture froze for 0.9 to 1.3 s before the
-     * start came back. Input repeat measured no freeze at all (the normal 33 ms between frames). The repeat is fixed when
-     * the video opens, so switching Loop reopens it at the same point (only when the operator changes Loop).
+     * start came back. Input repeat measured no freeze for a file on this computer (under 80 ms between pictures) and
+     * about 0.3 s for a stream, which has to ask the internet for the start again. (A second player opening the start
+     * before the end was tried for streams: no better at the loop, and it sometimes stalled the playing stream for 3.9 s.)
+     * The repeat is fixed when the video opens, so switching Loop reopens it at the same point.
+     *
+     * <p>A layer made with {@code cued} opens paused on its first picture (a background chosen in the Library, ready
+     * before TAKE AS BACKGROUND) and starts only on {@link #go()}.
      */
-    private static final class VideoLayer implements Layer {
+    static final class VideoLayer implements Layer {
         private final VideoPlayer p = new VideoPlayer();
         private final String mrl;
         private final String[] baseOptions;
         private boolean looping;
         /** A Loop change made while paused, applied on the next resume. */
         private Boolean pendingLoop;
+        private boolean muted;
+        /** Opened paused, waiting for {@link #go()}. */
+        private boolean cued;
+        /** A saved copy became ready while paused: opened from it on the next resume. */
+        private boolean pendingReload;
+        /** A looping video changes over to its saved copy where it next starts again. */
+        private boolean switchAtLoop;
+        private long lastTime;
+        /** Where a reopened video goes once VLC has opened it; -1 when nowhere. */
+        private long seekTo = -1;
+        private final Timer watch = new Timer(50, e -> tick());
 
-        VideoLayer(String mrl, boolean loop, boolean muted, int volume, String... baseOptions) {
+        VideoLayer(String mrl, boolean loop, boolean muted, int volume, boolean cued, String... baseOptions) {
             this.mrl = mrl;
             this.baseOptions = baseOptions;
             this.looping = loop;
-            p.play(mrl, false, muted, videoOptions(loop, baseOptions));
+            this.muted = muted;
+            this.cued = cued;
+            if (cued) {
+                p.setMuted(true);
+                p.cue(mrl, false, videoOptions(loop, baseOptions));
+            } else {
+                p.play(mrl, false, muted, videoOptions(loop, baseOptions));
+            }
             p.setVolume(volume);
+        }
+
+        /** Starts a layer made with {@code cued}; one VLC has not opened yet is opened again with its options. */
+        void go() {
+            if (!cued) {
+                return;
+            }
+            cued = false;
+            if (p.length() > 0) {
+                p.setMuted(muted);
+                p.playOrResume();
+            } else {
+                p.play(mrl, false, muted, videoOptions(looping, baseOptions));
+            }
         }
 
         public BufferedImage currentFrame() { return p.currentFrame(); }
 
+        /**
+         * Plays the video from its saved copy from now on. A looping one changes over where it starts again anyway (the
+         * stream is going back to its start there), so its picture does not jump; one that does not loop, or is paused,
+         * is opened again at the same point.
+         */
+        void reload() {
+            if (cued) {
+                return; // go() opens it, from the copy
+            }
+            if (looping && p.isPlaying()) {
+                switchAtLoop = true;
+                lastTime = p.time();
+                watch.start();
+            } else if (p.isPlaying()) {
+                reopen(looping);
+            } else {
+                pendingReload = true;
+            }
+        }
+
+        /** Every 50 ms while needed: a reopened video goes to its point once open; a waiting change-over at the loop. */
+        private void tick() {
+            if (seekTo >= 0 && p.length() > 0) {
+                p.seekTime(seekTo);
+                seekTo = -1;
+            }
+            if (switchAtLoop) {
+                long t = p.time();
+                if (t + 1000 < lastTime) { // went back to the start
+                    switchAtLoop = false;
+                    p.play(mrl, false, p.isMuted(), videoOptions(looping, baseOptions)); // now the copy, from 0
+                }
+                lastTime = t;
+            }
+            if (seekTo < 0 && !switchAtLoop) {
+                watch.stop();
+            }
+        }
+
         public void playOrResume() {
+            if (cued) {
+                go();
+                return;
+            }
+            if (pendingReload) {
+                pendingReload = false;
+                pendingLoop = null;
+                reopen(looping);
+                return;
+            }
             if (pendingLoop != null) {
                 boolean v = pendingLoop;
                 pendingLoop = null;
@@ -692,28 +893,45 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
                 pendingLoop = null;
                 return;
             }
-            if (p.isPlaying()) {
+            if (p.isPlaying() || seekTo >= 0) { // still opening after a reopen counts as playing
                 reopen(loop);
             } else {
                 pendingLoop = loop;
             }
         }
 
-        /** Opens the video again with the other repeat, from where it was. */
+        /**
+         * Opens the video again with the other repeat, then goes back to where it was once it is open. Not VLC's
+         * {@code :start-time}: with input repeat, every loop then started again from that point instead of the start
+         * (measured: a 1.8 s hold at the same place in every loop).
+         */
         private void reopen(boolean loop) {
-            long at = p.time();
+            long at = seekTo >= 0 ? seekTo : p.time(); // reopened again before it got there: the same point
             looping = loop;
-            String[] opts = videoOptions(loop, baseOptions);
-            String[] withStart = java.util.Arrays.copyOf(opts, opts.length + 1);
-            withStart[opts.length] = ":start-time=" + (at / 1000.0);
-            p.play(mrl, false, p.isMuted(), withStart);
+            switchAtLoop = false;
+            p.play(mrl, false, p.isMuted(), videoOptions(loop, baseOptions));
+            if (at > 0) {
+                seekTo = at;
+                watch.start();
+            }
         }
 
-        public void setMuted(boolean muted) { p.setMuted(muted); }
+        public void setMuted(boolean muted) {
+            this.muted = muted;
+            if (!cued) {
+                p.setMuted(muted);
+            }
+        }
+
         public void setVolume(int volume) { p.setVolume(volume); }
         public long time() { return p.time(); }
         public long length() { return p.length(); }
-        public void release() { p.release(); }
+
+        /** Off the Swing thread: stopping a stream waits for VLC (measured up to about 1 s). */
+        public void release() {
+            watch.stop();
+            p.releaseLater();
+        }
     }
 
     /** A still picture, read once off the event thread; playback controls do nothing. */

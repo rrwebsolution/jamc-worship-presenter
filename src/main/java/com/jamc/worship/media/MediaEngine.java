@@ -117,8 +117,41 @@ public final class MediaEngine {
         releasers.remove(releaser);
     }
 
+    /**
+     * Releasing a player stops its media first, which waits for VLC: measured 75–980 ms for a streamed (Pixabay)
+     * background. Players that are no longer shown are released here, one after another, instead of on the Swing
+     * thread, where Preview and Program froze for that long at every background change.
+     */
+    private final java.util.concurrent.ExecutorService releasing = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "vlc-release");
+        t.setDaemon(true);
+        return t;
+    });
+
+    void releaseLater(Runnable release) {
+        try {
+            releasing.execute(release);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            release.run(); // shutting down
+        }
+    }
+
     /** Stops and releases every player and the VLC instance. */
-    public synchronized void shutdown() {
+    public void shutdown() {
+        // players still being released must be done before the VLC instance goes. Not under this object's lock:
+        // each of those releases calls forget(), which needs it.
+        releasing.shutdown();
+        try {
+            if (!releasing.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                log.warn("Media players were still being released at exit");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        releaseAll();
+    }
+
+    private synchronized void releaseAll() {
         for (Runnable r : List.copyOf(releasers)) {
             try {
                 r.run();

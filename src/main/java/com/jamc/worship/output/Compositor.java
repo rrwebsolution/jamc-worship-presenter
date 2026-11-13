@@ -201,47 +201,14 @@ public final class Compositor {
     }
 
     /**
-     * The theme background under lyrics and Bible text in a scene that has nothing else behind them (no visible
-     * Media / Video / Image / Slideshow / Camera / Presentation / Color layer filling the screen). Without it the
-     * words stood on black whenever the background video was hidden or the scene was made with a text layer only.
+     * The scene's layers, exactly as the operator made them. Lyrics and Bible sources are the words only; a background
+     * (the theme's picture, TAKE AS BACKGROUND) shows only through the scene's own Media source, like any other source.
+     * A background used to be added by itself under words with nothing behind them, so a Lyrics source seemed to bring
+     * a background video along (user, 2026-11-13: "they should be separate sources"). A scene with only text now shows
+     * the words on black; show or add its Media source for a background.
      */
-    static final Source THEME_BACKGROUND = new Source("Theme background", SourceType.BACKGROUND);
-
-    /** The scene's layers, plus {@link #THEME_BACKGROUND} at the bottom when its text would have nothing behind it. */
     static List<Source> layers(Scene scene) {
-        List<Source> sources = scene.getSources();
-        boolean text = false;
-        for (Source s : sources) {
-            if (!s.isVisible()) {
-                continue;
-            }
-            switch (s.getType()) {
-                case LYRICS, BIBLE -> text = true;
-                case BACKGROUND -> {
-                    return sources; // the scene shows the content's background itself
-                }
-                case VIDEO, IMAGE, SLIDESHOW, CAMERA, PRESENTATION, COLOR -> {
-                    SourceConfig c = s.getConfig();
-                    if (c.w >= 0.95 && c.h >= 0.95) {
-                        return sources; // a picture fills the screen behind the text
-                    }
-                }
-                default -> {
-                }
-            }
-        }
-        if (!text) {
-            return sources;
-        }
-        List<Source> out = new java.util.ArrayList<>(sources);
-        out.add(THEME_BACKGROUND);
-        return out;
-    }
-
-    /** The theme background is added for words (songs, verses, text slides) only, never for videos, pictures or pages. */
-    private static boolean themeBackgroundApplies(LiveContent content) {
-        return content != null && !content.isVideo() && content.slide() != null && !content.slide().coversBackground()
-                && content.slide().getPresentationId() == null;
+        return scene.getSources();
     }
 
     /**
@@ -308,9 +275,7 @@ public final class Compositor {
         switch (s.getType()) {
             case BACKGROUND -> {
                 LiveContent content = spec.content();
-                // the automatic background under a scene's words: also before any words were sent, so TAKE AS
-                // BACKGROUND shows on Preview and Program at once (not only after a lyrics card was clicked)
-                if (keyMode || (s == THEME_BACKGROUND && content != null && !themeBackgroundApplies(content))) {
+                if (keyMode) {
                     return;
                 }
                 GlobalBackgroundView global = Rendering.globalBackground();
@@ -370,7 +335,11 @@ public final class Compositor {
                     label.color = "#94A3B8";
                     drawText(g, rect, s.getName() + " · this song only", label, ph);
                 }
-                if (content != null && !content.isVideo() && spec.text() && (fixed || !hidesPresentation(spec, slot))) {
+                // a Lyrics source shows songs and Bible verses; a Bible source shows Bible verses only (user, 2026-11-13)
+                boolean bibleOnly = s.getType() == SourceType.BIBLE
+                        && (content == null || content.slide() == null || !content.slide().isBible());
+                if (content != null && !content.isVideo() && spec.text() && !bibleOnly
+                        && (fixed || !hidesPresentation(spec, slot))) {
                     // a scene may place the text itself (e.g. smaller, at the bottom over a camera)
                     // inside the layer's box when the scene gives it one (smaller box = smaller text)
                     // exactly the whole screen: the theme's own text layout. A box made BIGGER than the screen (past its

@@ -63,6 +63,10 @@ public final class VideoPlayer implements VideoPlayback {
     private volatile boolean errored;
     /** Frames received so far (a camera that stops counting has stalled or been unplugged). */
     private volatile long frameCount;
+    /** Goes up on every play, cue and stop, so a late first-frame step never touches newer media. */
+    private volatile long generation;
+    /** The {@link #generation} of a cue still waiting for VLC's "playing" event; -1 when none. */
+    private volatile long cueGeneration = -1;
     /** Audio settings re-applied when playback starts (VLC can drop values set before the media opens). */
     private volatile String outputDevice;
     /** The device last routed to (re-routing to the same device would restart the sound). */
@@ -82,6 +86,7 @@ public final class VideoPlayer implements VideoPlayback {
                 errored = false;
                 // never call back into libVLC on its own event thread
                 mediaPlayer.submit(VideoPlayer.this::applyAudio);
+                finishCue(mediaPlayer);
                 fireState();
             }
 
@@ -123,6 +128,7 @@ public final class VideoPlayer implements VideoPlayback {
         }
         this.mrl = mrlOrPath;
         this.loop = loop;
+        generation++;
         player.controls().setRepeat(loop);
         wantMute = muted;
         player.audio().setMute(muted);
@@ -134,16 +140,49 @@ public final class VideoPlayer implements VideoPlayback {
         fireState();
     }
 
-    /** Loads media paused on its first frame (for previews). */
+    /**
+     * Loads media paused on its first frame (for previews). Never blocks: vlcj's {@code startPaused} waited, with no
+     * time limit, until VLC had opened the media. It is called on the Swing thread (a click in the Library), so
+     * Preview and Program froze on every click: 0.4–1.7 s for a streamed Pixabay video. VLC's own
+     * {@code start-paused} option does the pausing; vlcj's "show the first frame" step runs on VLC's "playing" event.
+     */
     public void cue(String path, boolean loop) {
+        cue(path, loop, new String[0]);
+    }
+
+    /** {@link #cue(String, boolean)} with VLC media options (e.g. network caching, hardware decoding). */
+    public void cue(String path, boolean loop, String... options) {
         if (released) {
             return;
         }
         this.mrl = path;
         this.loop = loop;
+        long cue = ++generation;
+        cueGeneration = cue;
         player.controls().setRepeat(loop);
-        player.media().startPaused(OnlineMedia.playable(path));
+        String[] withPause = java.util.Arrays.copyOf(options, options.length + 1);
+        withPause[options.length] = "start-paused";
+        if (!player.media().play(OnlineMedia.playable(path), withPause)) {
+            cueGeneration = -1;
+            errored = true;
+            log.warn("Could not open {}", path);
+        }
         fireState();
+    }
+
+    /** On "playing" after {@link #cue}: what vlcj's startPaused did after its wait, so the first frame shows. */
+    private void finishCue(MediaPlayer mediaPlayer) {
+        long cue = cueGeneration;
+        if (cue < 0 || cue != generation) {
+            return;
+        }
+        cueGeneration = -1;
+        // never call back into libVLC on its own event thread; skipped if PLAY, STOP or another cue came first
+        mediaPlayer.submit(() -> {
+            if (!released && generation == cue) {
+                player.controls().setPosition(0f);
+            }
+        });
     }
 
     public String mrl() {
@@ -235,6 +274,7 @@ public final class VideoPlayer implements VideoPlayback {
     @Override
     public void stop() {
         if (!released) {
+            generation++;
             player.controls().stop();
             front = null;
             MediaFrames.frameArrived();
@@ -419,6 +459,18 @@ public final class VideoPlayer implements VideoPlayback {
 
     public void addFinishedListener(Runnable listener) {
         finishedListeners.add(listener);
+    }
+
+    /**
+     * Releases this player off the Swing thread (see {@link MediaEngine#releaseLater}). Call when it is no longer shown;
+     * its picture is gone at once, and nothing else may be asked of it afterwards.
+     */
+    public void releaseLater() {
+        if (released) {
+            return;
+        }
+        front = null;
+        MediaEngine.get().releaseLater(this::release);
     }
 
     public void release() {

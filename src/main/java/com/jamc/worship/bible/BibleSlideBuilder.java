@@ -129,6 +129,7 @@ public final class BibleSlideBuilder {
         String[] hc = headingAndCaption(chunk);
         Slide s = new Slide(reference(chunk, false) + (labelSuffix == null ? "" : labelSuffix), body, hc[1]);
         s.setHeading(hc[0]);
+        s.setBible(true); // a scene's Bible source shows only verses, never song lyrics
         return s;
     }
 
