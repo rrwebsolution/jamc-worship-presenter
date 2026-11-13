@@ -62,6 +62,30 @@ class LyricsBibleSourceTest {
         assertFalse(showsWords(song(), scene(SourceType.BIBLE)), "song lyrics never show in a Bible source");
     }
 
+    @org.junit.jupiter.api.AfterEach
+    void defaults() {
+        Compositor.setTextSources(true, false);
+    }
+
+    /** Settings → Live & Scenes: both choices, in all four combinations. */
+    @Test
+    void whatEachSourceShowsIsASetting() {
+        Compositor.setTextSources(false, false);
+        assertTrue(showsWords(song(), scene(SourceType.LYRICS)));
+        assertFalse(showsWords(verse(), scene(SourceType.LYRICS)), "Lyrics source: songs only");
+        assertTrue(showsWords(verse(), scene(SourceType.BIBLE)));
+        assertFalse(showsWords(song(), scene(SourceType.BIBLE)));
+
+        Compositor.setTextSources(true, true);
+        assertTrue(showsWords(verse(), scene(SourceType.LYRICS)));
+        assertTrue(showsWords(song(), scene(SourceType.BIBLE)), "Bible source shows songs too");
+
+        Compositor.setTextSources(false, true);
+        assertFalse(showsWords(verse(), scene(SourceType.LYRICS)));
+        assertTrue(showsWords(song(), scene(SourceType.BIBLE)));
+        assertTrue(showsWords(verse(), scene(SourceType.BIBLE)), "its own kind always");
+    }
+
     @Test
     void theBibleMarkSurvivesACopy() {
         assertTrue(verse().slide().copy().isBible());

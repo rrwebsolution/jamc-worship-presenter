@@ -55,7 +55,7 @@
 - A **Lyrics** or **Bible** source in a scene is now **the words only**. It no longer brings a background video along by itself.
 - For a background behind the words, add **Add Source → Media** to the scene (or show its Media source with the eye). The song's theme and TAKE AS BACKGROUND then show through that source, and you can move, hide or reorder it like any other source.
 - A scene with only a Lyrics or Bible source now shows the words on black: add a Media source to it if you want a background.
-- A **Lyrics** source shows both song lyrics and Bible verses, so one source is enough for both. A **Bible** source shows **Bible verses only**: song lyrics never appear in it.
+- What a scene's **Lyrics** and **Bible** sources show is set in **Settings → Live & Scenes**: *Scene Lyrics source also shows Bible verses* (on: one Lyrics source is enough for songs and verses) and *Scene Bible source also shows song lyrics* (off: a Bible source shows verses only). A change shows at once.
 - **Fixed:** LiveCat could freeze for a few seconds while opening, building the font lists in Settings (each font was loaded just to measure the list). The font lists now open instantly.
 - The scene source **Media** is now called **Background (TAKE AS BACKGROUND / theme)** in Add Source, with a tooltip saying what it is for. Your scenes keep the names their sources already have.
 - Select a **Background** source in the scene editor while the background is a **video**: its playback controls appear under it (play / pause, stop, ±10 s, progress bar with time, mute, loop, volume). They change the background on Preview and Program. With a picture, a color or no background they are hidden.

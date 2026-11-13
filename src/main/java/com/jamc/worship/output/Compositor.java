@@ -200,6 +200,30 @@ public final class Compositor {
         }
     }
 
+    /** Settings → Live & Scenes: a scene's Lyrics source also shows Bible verses (default on). */
+    private static volatile boolean lyricsShowBible = true;
+    /** Settings → Live & Scenes: a scene's Bible source also shows song lyrics (default off). */
+    private static volatile boolean bibleShowsLyrics = false;
+
+    /** Which words a scene's Lyrics and Bible sources show (Settings → Live & Scenes; user, 2026-11-13). */
+    public static void setTextSources(boolean lyricsSourceShowsBible, boolean bibleSourceShowsLyrics) {
+        lyricsShowBible = lyricsSourceShowsBible;
+        bibleShowsLyrics = bibleSourceShowsLyrics;
+    }
+
+    /**
+     * Whether a Lyrics or Bible source shows this content: a Bible verse in a Lyrics source when that setting is on,
+     * other words (songs, text slides) in a Bible source when that setting is on, and each its own kind always.
+     */
+    static boolean shows(SourceType type, LiveContent content) {
+        boolean verse = content != null && content.slide() != null && content.slide().isBible();
+        return switch (type) {
+            case LYRICS -> !verse || lyricsShowBible;
+            case BIBLE -> verse || bibleShowsLyrics;
+            default -> true;
+        };
+    }
+
     /**
      * The scene's layers, exactly as the operator made them. Lyrics and Bible sources are the words only; a background
      * (the theme's picture, TAKE AS BACKGROUND) shows only through the scene's own Media source, like any other source.
@@ -335,10 +359,9 @@ public final class Compositor {
                     label.color = "#94A3B8";
                     drawText(g, rect, s.getName() + " · this song only", label, ph);
                 }
-                // a Lyrics source shows songs and Bible verses; a Bible source shows Bible verses only (user, 2026-11-13)
-                boolean bibleOnly = s.getType() == SourceType.BIBLE
-                        && (content == null || content.slide() == null || !content.slide().isBible());
-                if (content != null && !content.isVideo() && spec.text() && !bibleOnly
+                // which words each source shows is a setting (Settings → Live & Scenes): by default a Lyrics source shows
+                // songs and Bible verses, a Bible source Bible verses only
+                if (content != null && !content.isVideo() && spec.text() && shows(s.getType(), content)
                         && (fixed || !hidesPresentation(spec, slot))) {
                     // a scene may place the text itself (e.g. smaller, at the bottom over a camera)
                     // inside the layer's box when the scene gives it one (smaller box = smaller text)

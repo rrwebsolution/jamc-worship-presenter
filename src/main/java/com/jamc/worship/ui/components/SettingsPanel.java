@@ -60,6 +60,10 @@ public class SettingsPanel extends JPanel {
     /** The Audio Mixer under Preview / Program (on unless switched off). */
     public static final String KEY_SHOW_MIXER = "ui.showAudioMixer";
     public static final String KEY_SEPARATE_PRESENTATION = "live.separatePresentation";
+    /** A scene's Lyrics source also shows Bible verses (default true). */
+    public static final String KEY_LYRICS_SOURCE_SHOWS_BIBLE = "scene.lyricsSourceShowsBible";
+    /** A scene's Bible source also shows song lyrics (default false). */
+    public static final String KEY_BIBLE_SOURCE_SHOWS_LYRICS = "scene.bibleSourceShowsLyrics";
     public static final String KEY_SEPARATE_VIDEOS = "live.separateVideos";
     public static final String KEY_SEPARATE_IMAGES = "live.separateImages";
     /** Clicking a PowerPoint slide sends it straight to Program, like song lyrics. */
@@ -924,6 +928,23 @@ public class SettingsPanel extends JPanel {
         separateBible.addActionListener(e -> h.contentSeparationChanged());
         JCheckBox separatePresentation = checkbox("Separate Presentation", KEY_SEPARATE_PRESENTATION, false);
         separatePresentation.addActionListener(e -> h.contentSeparationChanged());
+        // what a scene's Lyrics and Bible sources show (user, 2026-11-13: "this should be set up in Settings")
+        JCheckBox lyricsShowBible = checkbox("Scene Lyrics source also shows Bible verses", KEY_LYRICS_SOURCE_SHOWS_BIBLE, true);
+        JCheckBox bibleShowsLyrics = checkbox("Scene Bible source also shows song lyrics", KEY_BIBLE_SOURCE_SHOWS_LYRICS, false);
+        lyricsShowBible.setToolTipText("On: one Lyrics source is enough for songs and verses. Off: the Lyrics source shows songs only");
+        bibleShowsLyrics.setToolTipText("Off: a Bible source shows verses only, never song lyrics. On: it shows songs too");
+        Runnable applyTextSources = () -> {
+            com.jamc.worship.output.Compositor.setTextSources(lyricsShowBible.isSelected(), bibleShowsLyrics.isSelected());
+            for (java.awt.Window w : java.awt.Window.getWindows()) {
+                w.repaint(); // Preview, Program, the projector and the scene editor show the change at once
+            }
+        };
+        applyTextSources.run();
+        lyricsShowBible.addActionListener(e -> applyTextSources.run());
+        bibleShowsLyrics.addActionListener(e -> applyTextSources.run());
+        JLabel textSourcesHelp = Ui.label("<html>In a scene, what the <b>Lyrics</b> and <b>Bible</b> sources show. "
+                + "Lyrics source: songs" + " (and Bible verses when ticked). Bible source: Bible verses"
+                + " (and songs when ticked).</html>", Palette::mutedText, "small");
         JCheckBox separate = new JCheckBox("Separate Layouts (Scene): Preview (church TV) and Program (livestream) keep their own scene");
         JComboBox<SceneChoice> defaultScene = new JComboBox<>();
         Runnable saveTransition = () -> {
@@ -1053,6 +1074,7 @@ public class SettingsPanel extends JPanel {
                         Palette::mutedText, "small"),
                 separateLyrics, separateBible, separatePresentation,
                 checkbox("Separate Videos", KEY_SEPARATE_VIDEOS, true), checkbox("Separate Images", KEY_SEPARATE_IMAGES, true),
+                textSourcesHelp, lyricsShowBible, bibleShowsLyrics,
                 separate,
                 flow(Ui.small("Scene when the app starts:"), defaultScene),
                 Ui.label("The same settings are next to the TAKE button and in the Scenes list.", Palette::mutedText, "small")),
