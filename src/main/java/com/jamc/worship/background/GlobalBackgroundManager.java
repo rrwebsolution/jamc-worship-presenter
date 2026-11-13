@@ -68,6 +68,10 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
     static final String K_CHANGE = "background.global.change";
     static final String K_CHANGE_MS = "background.global.changeMs";
     static final String K_KEEP_IN_BLACK = "background.global.keepPlayingInBlack";
+    /** Whether the background was on when the app closed (off by the operator stays off after a restart). */
+    static final String K_ON = "background.global.on";
+    /** Settings: when the app opens, the last TAKE AS BACKGROUND plays again (default on). */
+    public static final String KEY_RESUME_ON_START = "background.global.resumeOnStart";
 
     /** A solid-color background is stored as {@code color:#RRGGBB}. */
     public static final String COLOR_PREFIX = "color:";
@@ -84,6 +88,12 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
     private boolean on;
     private boolean paused;
     private boolean pausedForBlack;
+    /**
+     * False while neither Preview nor Program shows a scene with a (visible) Background source: nothing draws the
+     * background then, so its video is held (no decoding, no lag) and its controls are hidden, until a scene with one
+     * is shown again. It continues from the same point.
+     */
+    private boolean used = true;
 
     private String previewPath;
     private Layer previewPlayer;
@@ -193,7 +203,7 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
     public GlobalBackgroundState state() {
         boolean video = GlobalBackgroundState.typeOf(path) == GlobalBackgroundState.Type.VIDEO;
         return new GlobalBackgroundState(GlobalBackgroundState.typeOf(path), path, isActive(),
-                video && isActive() && !paused && !pausedForBlack, loop, muted, volume, video ? position() : -1, overlay, fit);
+                video && isActive() && !paused && !pausedForBlack && used, loop, muted, volume, video ? position() : -1, overlay, fit);
     }
 
     // ------------------------------------------------------------------ operator actions
@@ -225,9 +235,9 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
             }
             on = true;
             if (player == null) {
-                player = start(path, muted);
+                player = start(path, muted, !used); // no scene shows it yet: opened, waiting on its first picture
                 paused = false;
-            } else if (!paused && !pausedForBlack) {
+            } else if (!paused && !pausedForBlack && used) {
                 player.playOrResume();
             }
             log.info("Global background on: {}", fileName(path));
@@ -239,7 +249,46 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
             finishChange();
             log.info("Global background off");
         }
+        save(K_ON, String.valueOf(on));
         fire();
+    }
+
+    /** Whether a scene on Preview or Program has a visible Background source (see {@link #used}). */
+    public boolean isUsed() {
+        return used;
+    }
+
+    public void setUsed(boolean v) {
+        if (v == used) {
+            return;
+        }
+        used = v;
+        if (player != null && on && !paused && !pausedForBlack) {
+            if (v) {
+                player.playOrResume(); // continues from where it was held
+            } else {
+                player.pause();
+            }
+        }
+        log.info("Global background {}", v ? "shown by a scene again: playing" : "not in any scene on Preview / Program: held");
+        fire();
+    }
+
+    /**
+     * App start: the last background taken (TAKE AS BACKGROUND) plays again under Preview and Program, so scenes with
+     * a Background source show it as before. Only when Settings allows it and it was still on when the app closed.
+     */
+    public void resumeOnStart() {
+        if (!config.getBoolean(KEY_RESUME_ON_START, true) || !config.getBoolean(K_ON, true)
+                || path == null || !canShow(path) || on) {
+            return;
+        }
+        try {
+            setOn(true);
+            log.info("Global background resumed after start: {}", fileName(path));
+        } catch (RuntimeException e) {
+            log.warn("Could not resume the global background {}", path, e);
+        }
     }
 
     /**
@@ -320,6 +369,7 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         pausedForBlack = false;
         on = true;
         config.set(K_PATH, path);
+        config.set(K_ON, "true");
         config.save();
         if (wasShowing && change != Change.CUT && changeMs > 0) {
             outgoing = old;
@@ -328,6 +378,9 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
             changeTimer.start();
         } else if (old != null) {
             old.release();
+        }
+        if (!used) {
+            incoming.pause(); // no scene on Preview / Program shows it: held until one does
         }
         log.info("Global background taken: {} ({})", fileName(path), wasShowing ? change : "first");
         keepCopy(path);
@@ -428,7 +481,7 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         paused = pause;
         if (pause) {
             player.pause();
-        } else if (on && !pausedForBlack) {
+        } else if (on && !pausedForBlack && used) {
             player.playOrResume();
         }
         fire();
@@ -444,7 +497,7 @@ public final class GlobalBackgroundManager implements GlobalBackgroundView {
         pausedForBlack = shouldHold;
         if (shouldHold) {
             player.pause();
-        } else if (on && !paused) {
+        } else if (on && !paused && used) {
             player.playOrResume(); // continues from the same position
         }
     }

@@ -136,19 +136,29 @@ public final class MediaEngine {
         }
     }
 
-    /** Stops and releases every player and the VLC instance. */
+    /** At exit, how long the Swing thread waits for VLC; the process ends right after anyway, freeing everything. */
+    private static final long EXIT_RELEASE_MS = 1_500;
+
+    /**
+     * Stops and releases every player and the VLC instance. It all runs on the release thread, after the players
+     * already queued there (they must be done before the VLC instance goes). VLC's stop can hang for seconds (a
+     * streamed video, a stuck driver): the caller waits at most {@link #EXIT_RELEASE_MS} instead of freezing the
+     * closing window, and the process exit frees whatever is left.
+     */
     public void shutdown() {
-        // players still being released must be done before the VLC instance goes. Not under this object's lock:
-        // each of those releases calls forget(), which needs it.
+        try {
+            releasing.execute(this::releaseAll);
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            return; // already shut down
+        }
         releasing.shutdown();
         try {
-            if (!releasing.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
-                log.warn("Media players were still being released at exit");
+            if (!releasing.awaitTermination(EXIT_RELEASE_MS, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                log.warn("VLC was still releasing its players after {} ms; the app closes anyway", EXIT_RELEASE_MS);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-        releaseAll();
     }
 
     private synchronized void releaseAll() {

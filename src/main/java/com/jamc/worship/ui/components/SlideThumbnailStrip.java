@@ -340,7 +340,6 @@ public class SlideThumbnailStrip extends JPanel {
     public void addHeaderAction(JComponent action) {
         headerActions.add(action, 0);
     }
-
     /**
      * Lyrics cards (the words, with the section as a small label) or rendered thumbnails (PowerPoint,
      * custom slides). {@code unit} names one card in the count ("lyric", "verse", "page", "slide").

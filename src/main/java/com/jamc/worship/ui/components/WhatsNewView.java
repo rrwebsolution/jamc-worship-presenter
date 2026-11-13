@@ -37,6 +37,7 @@ public final class WhatsNewView {
             pane.setForeground(Palette.text());
             pane.setText("<html><head><style>"
                     + "body{margin:6px 10px;color:" + hex(Palette.text()) + "}"
+                    + "h2{margin:14px 0 2px 0;font-size:1.25em;color:" + hex(Palette.text()) + "}"
                     + "h3{margin:8px 0 2px 0;color:" + hex(Palette.accent()) + "}"
                     + "ul{margin:2px 0 2px 18px} li{margin:3px 0} p{margin:4px 0}"
                     + "code{font-family:monospaced}"
@@ -56,10 +57,17 @@ public final class WhatsNewView {
 
     /** The "What's new in version …" window (after an update, or Help → What's New). */
     public static void show(Component parent, String appName, String version, String notes) {
+        show(parent, appName, null, version, notes);
+    }
+
+    /** {@code from}: the version this computer had before (its changes since then are listed), or null. */
+    public static void show(Component parent, String appName, String from, String version, String notes) {
+        boolean fromKnown = from != null && from.matches("\\d.*") && !from.equals(version);
         String intro = notes == null || notes.isBlank()
                 ? "No list of changes was included with " + WhatsNew.label(version) + "."
-                : "<b>" + escape(appName) + "</b> was updated to " + WhatsNew.label(version)
-                + ". These are the new features and fixes:";
+                : "<b>" + escape(appName) + "</b> was updated "
+                + (fromKnown ? "from " + escape(from) + " " : "") + "to " + WhatsNew.label(version)
+                + (fromKnown ? ". These are all the new features and fixes you got:" : ". These are the new features and fixes:");
         JOptionPane.showMessageDialog(parent, panel(intro, notes), "What's new in " + escape(appName),
                 JOptionPane.INFORMATION_MESSAGE);
     }

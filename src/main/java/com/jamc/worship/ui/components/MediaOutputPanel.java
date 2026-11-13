@@ -85,8 +85,8 @@ public class MediaOutputPanel extends JPanel {
     private final JButton playAudio = Ui.primaryButton("PLAY AS AUDIO", "play");
     /** A Pixabay video: save it on this computer (plays offline, no data used again). */
     private final JButton download = Ui.button("DOWNLOAD", "arrow-down");
-    /** The applicable actions, two per row so they fit the narrow panel (rebuilt per media kind). */
-    private final JPanel actionRow = Ui.transparent(new java.awt.GridLayout(0, 2, 6, 6));
+    /** The applicable actions side by side in one row, one column per button (rebuilt per media kind). */
+    private final JPanel actionRow = Ui.transparent(new java.awt.GridLayout(1, 0, 6, 6));
     private final CardLayout cards = new CardLayout();
     private final JPanel body = Ui.transparent(cards);
     private VideoPlayer previewPlayer;
@@ -139,6 +139,12 @@ public class MediaOutputPanel extends JPanel {
         heading.add(badge, BorderLayout.NORTH);
         heading.add(title, BorderLayout.CENTER);
         heading.add(meta, BorderLayout.SOUTH);
+        // ✕: takes the item out of MEDIA PREVIEW (the box stays); the library list loses its selection too
+        JButton clear = Ui.toolButton("x", "Clear MEDIA PREVIEW (nothing selected). Preview and Program are not touched.");
+        clear.addActionListener(e -> clear());
+        JPanel clearBox = Ui.transparent(new BorderLayout());
+        clearBox.add(clear, BorderLayout.NORTH);
+        heading.add(clearBox, BorderLayout.EAST);
         heading.setBorder(BorderFactory.createCompoundBorder(Ui.line(false, false, true, false),
                 BorderFactory.createEmptyBorder(10, 14, 8, 12)));
 
@@ -189,6 +195,19 @@ public class MediaOutputPanel extends JPanel {
     }
 
     private com.jamc.worship.media.MediaStates states;
+    private Runnable clearHandler = () -> { };
+
+    /** ✕ also clears the selection in the library lists (so clicking the same item shows it again). */
+    public void setClearHandler(Runnable h) {
+        clearHandler = h == null ? () -> { } : h;
+    }
+
+    /** ✕: MEDIA PREVIEW shows nothing (its inspection video stops); Preview, Program and the background stay. */
+    private void clear() {
+        stopPreview();
+        show(null);
+        clearHandler.run();
+    }
 
     /** Where each file's mute / volume / loop is remembered (outside this panel, so leaving it changes nothing). */
     public void setMediaStates(com.jamc.worship.media.MediaStates states) {
@@ -287,7 +306,7 @@ public class MediaOutputPanel extends JPanel {
         playAudio.setVisible(!visual);
         addToService.setVisible(!backgroundItem);
         favorite.setVisible(backgroundItem);
-        // a video or image: four actions, two per row (FULLSCREEN and TAKE AS BACKGROUND side by side)
+        // a video or image: all actions in one horizontal row
         fullscreen.setVisible(visual);
         fullscreen.setText(kind == MediaKind.VIDEO ? "FULLSCREEN VIDEO" : "FULLSCREEN IMAGE");
         fullscreen.setIcon(Icons.get(kind == MediaKind.VIDEO ? "video" : "image", Icons.SMALL));

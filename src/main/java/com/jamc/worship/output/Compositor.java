@@ -236,6 +236,33 @@ public final class Compositor {
     }
 
     /**
+     * True when this scene (null: the built-in one) shows the global background (TAKE AS BACKGROUND): it has a visible
+     * Background source, itself or in a scene shown inside it. Otherwise the background video need not play.
+     */
+    public static boolean showsGlobalBackground(Scene scene) {
+        return showsGlobalBackground(scene == null ? DEFAULT_SCENE : scene, 0);
+    }
+
+    private static boolean showsGlobalBackground(Scene scene, int depth) {
+        for (Source s : scene.getSources()) {
+            if (!s.isVisible()) {
+                continue;
+            }
+            if (s.getType() == SourceType.BACKGROUND) {
+                return true;
+            }
+            if (s.getType() == SourceType.SCENE && depth < com.jamc.worship.model.SceneLookup.MAX_DEPTH) {
+                Scene inner = com.jamc.worship.model.SceneLookup.find(s.getConfig().sceneId);
+                if (inner != null && inner != scene && !java.util.Objects.equals(inner.getId(), scene.getId())
+                        && showsGlobalBackground(inner, depth + 1)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
      * Scene editor mode: Presentation sources with nothing to show, or whose library presentation is
      * gone, draw a labelled placeholder instead of nothing (never on Preview / Program outputs).
      */

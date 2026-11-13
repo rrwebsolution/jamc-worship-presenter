@@ -296,6 +296,12 @@ public class BiblePanel extends JPanel {
         passageListener = l;
     }
 
+    /** No verses selected (the ✕ on the slide cards): the Bible cards empty. */
+    public void clearSelection() {
+        verseList.clearSelection();
+        firePassage();
+    }
+
     public void setStatusHandler(Consumer<String> h) {
         statusHandler = h;
     }

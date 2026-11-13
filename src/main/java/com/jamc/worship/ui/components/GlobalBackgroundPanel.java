@@ -276,7 +276,8 @@ public class GlobalBackgroundPanel extends JPanel {
     private void sync() {
         loading = true;
         try {
-            setVisible(manager.path() != null);
+            // only while a scene on Preview / Program has a Background source (else nothing shows the background)
+            setVisible(manager.path() != null && manager.isUsed());
             status.set(manager.status());
             fileLabel.setText(manager.path() == null ? "No background" : displayName(manager.path()));
             fileLabel.setToolTipText(manager.path());

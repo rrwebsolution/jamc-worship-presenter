@@ -1077,6 +1077,8 @@ public class SettingsPanel extends JPanel {
                 textSourcesHelp, lyricsShowBible, bibleShowsLyrics,
                 separate,
                 flow(Ui.small("Scene when the app starts:"), defaultScene),
+                checkbox("When the app opens, play the last TAKE AS BACKGROUND again (Background source shows it)",
+                        com.jamc.worship.background.GlobalBackgroundManager.KEY_RESUME_ON_START, true),
                 Ui.label("The same settings are next to the TAKE button and in the Scenes list.", Palette::mutedText, "small")),
                 BorderLayout.CENTER);
         liveSync.add(syncLive);

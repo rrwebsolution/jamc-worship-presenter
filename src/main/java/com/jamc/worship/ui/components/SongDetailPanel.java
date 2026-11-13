@@ -22,6 +22,19 @@ import java.util.List;
  */
 public class SongDetailPanel extends JPanel {
 
+    /** ✕ at the right end of the header: clears what this panel and the cards beside it show (the box stays). */
+    private final javax.swing.JButton clearButton = com.jamc.worship.ui.Ui.toolButton("x",
+            "Clear (nothing selected). Preview and Program are not touched.");
+    private Runnable clearAction = () -> { };
+
+    {
+        clearButton.addActionListener(e -> clearAction.run());
+    }
+
+    public void setClearAction(Runnable action) {
+        clearAction = action == null ? () -> { } : action;
+    }
+
     private final JLabel title = Ui.label(" ", Palette::text, "h2");
     private final JLabel meta = Ui.secondary(" ");
     private final JLabel info = Ui.small(" ");
@@ -40,7 +53,7 @@ public class SongDetailPanel extends JPanel {
         editButton.addActionListener(e -> onEdit.run());
         addButton.addActionListener(e -> onAddToService.run());
 
-        JPanel header = Ui.header(title, meta, addButton, editButton);
+        JPanel header = Ui.header(title, meta, addButton, editButton, clearButton);
         header.setBorder(BorderFactory.createCompoundBorder(Ui.line(false, false, true, false),
                 BorderFactory.createEmptyBorder(12, 16, 10, 12)));
 

@@ -16,6 +16,19 @@ import java.awt.CardLayout;
 /** Center view for the Bible: the passage reference and a large preview of the selected verse slide. */
 public class BibleDetailPanel extends JPanel {
 
+    /** ✕ at the right end of the header: clears what this panel and the cards beside it show (the box stays). */
+    private final javax.swing.JButton clearButton = com.jamc.worship.ui.Ui.toolButton("x",
+            "Clear (nothing selected). Preview and Program are not touched.");
+    private Runnable clearAction = () -> { };
+
+    {
+        clearButton.addActionListener(e -> clearAction.run());
+    }
+
+    public void setClearAction(Runnable action) {
+        clearAction = action == null ? () -> { } : action;
+    }
+
     private final JLabel title = Ui.label(" ", Palette::text, "h2");
     private final JLabel meta = Ui.secondary(" ");
     private final SlidePreviewCanvas canvas = new SlidePreviewCanvas();
@@ -31,7 +44,7 @@ public class BibleDetailPanel extends JPanel {
         next.addActionListener(e -> onNext.run());
         JButton add = Ui.button("Add to Service", "list-plus");
         add.addActionListener(e -> onAddToService.run());
-        JPanel header = Ui.header(title, meta, add, prev, next);
+        JPanel header = Ui.header(title, meta, add, prev, next, clearButton);
         header.setBorder(BorderFactory.createCompoundBorder(Ui.line(false, false, true, false),
                 BorderFactory.createEmptyBorder(12, 16, 10, 12)));
         canvas.setBadge("SELECTED VERSE", Palette::mutedText);

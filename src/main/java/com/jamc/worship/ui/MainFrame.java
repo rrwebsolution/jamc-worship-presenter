@@ -840,6 +840,10 @@ public class MainFrame extends JFrame {
         order.setToolTipText("Change the order (a song's arrangement)");
         order.addActionListener(e -> showOrderEditor());
         thumbnails.addHeaderAction(order);
+        // ✕ in the second box (the details beside the cards): empties the song / verses / presentation; the boxes stay
+        songDetail.setClearAction(this::clearSlideCards);
+        bibleDetail.setClearAction(this::clearSlideCards);
+        presentationDetail.setClearAction(this::clearSlideCards);
         // lyrics cards as Cards (one per row) or Grid (several per row): the operator's choice is remembered
         thumbnails.setGridView(context.config().getBoolean(KEY_LYRICS_GRID, false));
         thumbnails.addViewListener(grid -> {
@@ -948,6 +952,8 @@ public class MainFrame extends JFrame {
         if (context.config().getBoolean(SettingsPanel.KEY_OPEN_OUTPUT, false)) {
             output.restore(this); // the remembered Preview / Program routing
         }
+        watchBackgroundUse();
+        globalBackground.resumeOnStart(); // the last TAKE AS BACKGROUND plays again (Settings → Live & Scenes)
         BackgroundTask.run("Remove installed update files", () -> {
             java.nio.file.Path dir = context.paths().root().resolve("updates"); // the installer already ran
             if (java.nio.file.Files.isDirectory(dir)) {
@@ -967,6 +973,22 @@ public class MainFrame extends JFrame {
         }
     }
 
+    /**
+     * The TAKE AS BACKGROUND video plays (and its BACKGROUND controls show under MEDIA PREVIEW) only while the scene on
+     * Preview or Program has a visible Background source. Otherwise nothing shows it, and decoding it for nothing made
+     * the app lag. Switching to a scene without one turns the video off at once; back to a scene with one, it is on
+     * again (from where it was). With Studio Mode off Preview is hidden, so only Program counts. Checked every 150 ms
+     * (scenes change in many places); it only reads the scenes' source lists.
+     */
+    private void watchBackgroundUse() {
+        Runnable check = () -> globalBackground.setUsed(
+                com.jamc.worship.output.Compositor.showsGlobalBackground(program.scene())
+                        || (studioMode() && com.jamc.worship.output.Compositor.showsGlobalBackground(previewState.scene())));
+        check.run();
+        javax.swing.Timer t = new javax.swing.Timer(150, e -> check.run());
+        t.start();
+    }
+
     // ------------------------------------------------------------------ updates
 
     /** The first start of a new version (after an update): shows once what is new in it. */
@@ -980,24 +1002,45 @@ public class MainFrame extends JFrame {
         if (last == null && context.config().get(AppConfig.KEY_WINDOW_MAXIMIZED, null) != null) {
             last = "older"; // used before versions were remembered: this start is an update, not a first install
         }
+        boolean updated = com.jamc.worship.update.WhatsNew.justUpdated(last, current);
         if (!current.equals(last)) {
             context.config().set(key, current);
+            if (updated) {
+                // this laptop's version before the update: What's New lists every change since then
+                context.config().set(com.jamc.worship.update.WhatsNew.KEY_PREVIOUS_VERSION, last);
+            }
             context.config().save();
         }
-        if (com.jamc.worship.update.WhatsNew.justUpdated(last, current)) {
-            String notes = com.jamc.worship.update.WhatsNew.bundled();
-            if (!notes.isBlank()) {
-                javax.swing.Timer later = new javax.swing.Timer(1500, e -> showWhatsNew()); // after the window is up
-                later.setRepeats(false);
-                later.start();
-            }
+        if (updated) {
+            javax.swing.Timer later = new javax.swing.Timer(1500, e -> showWhatsNew()); // after the window is up
+            later.setRepeats(false);
+            later.start();
         }
     }
 
-    /** Help → What's New: the new features and fixes of this version. */
+    /**
+     * Help → What's New (and once after an update): everything this computer got with its last update — all the
+     * versions between the one it had before and this one (from GitHub), not only the newest. Offline, or for a
+     * development copy, this version's own notes.
+     */
     void showWhatsNew() {
-        com.jamc.worship.ui.components.WhatsNewView.show(this, branding.applicationName(),
-                com.jamc.worship.update.UpdateChecker.currentVersion(), com.jamc.worship.update.WhatsNew.bundled());
+        String current = com.jamc.worship.update.UpdateChecker.currentVersion();
+        String from = context.config().get(com.jamc.worship.update.WhatsNew.KEY_PREVIOUS_VERSION, null);
+        String bundled = com.jamc.worship.update.WhatsNew.bundled();
+        boolean several = current != null && from != null && from.matches("\\d.*")
+                && com.jamc.worship.update.UpdateChecker.isNewer(current, from);
+        if (!several) {
+            com.jamc.worship.ui.components.WhatsNewView.show(this, branding.applicationName(), current, bundled);
+            return;
+        }
+        BackgroundTask.run("What's new since " + from,
+                () -> new com.jamc.worship.update.UpdateChecker().notesBetween(from, current),
+                notes -> com.jamc.worship.ui.components.WhatsNewView.show(this, branding.applicationName(), from, current,
+                        notes == null || notes.isBlank() ? bundled : notes),
+                err -> {
+                    log.info("What's new from GitHub skipped: {}", err.getMessage()); // offline: this version's notes
+                    com.jamc.worship.ui.components.WhatsNewView.show(this, branding.applicationName(), current, bundled);
+                });
     }
 
     /**
@@ -1014,7 +1057,21 @@ public class MainFrame extends JFrame {
             return;
         }
         var checker = new com.jamc.worship.update.UpdateChecker();
-        BackgroundTask.run("Check for updates", checker::latest, found -> {
+        BackgroundTask.run("Check for updates", () -> {
+            var latest = checker.latest();
+            if (latest.isPresent() && com.jamc.worship.update.UpdateChecker.isNewer(latest.get().version(), current)) {
+                // every version this laptop does not have yet, not only the newest one's notes
+                try {
+                    String all = checker.notesBetween(current, latest.get().version());
+                    if (!all.isBlank()) {
+                        return java.util.Optional.of(latest.get().withNotes(all));
+                    }
+                } catch (java.io.IOException e) {
+                    log.info("All release notes not loaded: {}", e.getMessage());
+                }
+            }
+            return latest;
+        }, found -> {
             var release = found.orElse(null);
             boolean newer = release != null && com.jamc.worship.update.UpdateChecker.isNewer(release.version(), current);
             String skipped = context.config().get(com.jamc.worship.update.UpdateChecker.KEY_SKIPPED, "");
@@ -1028,6 +1085,7 @@ public class MainFrame extends JFrame {
             String intro = "A new version of <b>" + branding.applicationName().replace("<", "&lt;") + "</b> is available.<br><br>"
                     + "Installed: " + current + "<br>New: <b>" + release.version() + "</b>"
                     + String.format("  (%.0f MB download)", release.size() / 1_048_576.0)
+                    + "<br>Below: all the changes since your version " + current + "."
                     + "<br><br>Update Now downloads it, saves your work, closes the app and opens the installer. "
                     + "Songs, services and settings are kept.";
             int choice = javax.swing.JOptionPane.showOptionDialog(this,
@@ -1360,6 +1418,8 @@ public class MainFrame extends JFrame {
         });
         biblePanel.setPassageListener(this::onPassage);
 
+        mediaDetail.setClearHandler(() -> List.of(mediaLibrary, videoLibrary, imageLibrary, audioLibrary, backgroundLibrary)
+                .forEach(MediaLibraryPanel::clearSelection));
         for (MediaLibraryPanel lib : List.of(mediaLibrary, videoLibrary, imageLibrary, audioLibrary, backgroundLibrary)) {
             lib.setStatusHandler(statusBar::showMessage);
             lib.setAddToServiceHandler(schedule::addItem);
@@ -1692,6 +1752,24 @@ public class MainFrame extends JFrame {
         } else if (stripSource == StripSource.ITEM && loaded != null && !isSceneLibraryItem(loaded.song().getId())
                 && (activeCategory == Sidebar.Category.SONGS || activeCategory == Sidebar.Category.FAVORITES)) {
             leaveItemWorkspace(); // a song picked while a service item (Blank, …) was showing: the lyrics return
+        }
+    }
+
+    /**
+     * ✕ on the slide cards: what the cards show is taken away and its library list loses its selection (so the same
+     * song, passage or presentation can be clicked again). A service item or scene shown here goes back to the
+     * Library tab, which is then emptied too. Preview, Program and the live markers are not touched.
+     */
+    private void clearSlideCards() {
+        if (stripSource == StripSource.ITEM || showingSceneItem()) {
+            leaveItemWorkspace();
+        }
+        switch (stripSource) {
+            case SONG -> songLibrary.clearSelection();
+            case BIBLE -> biblePanel.clearSelection();
+            case PRESENTATION -> presentationLibrary.clearSelection();
+            case DECK -> deckLibrary.clearSelection();
+            default -> { }
         }
     }
 
@@ -3635,23 +3713,7 @@ public class MainFrame extends JFrame {
      */
     private void showSceneContentInLibrary(Scene scene) {
         sceneLibraryRef = null;
-        com.jamc.worship.model.Source found = null;
-        for (int pass = 0; pass < 3 && found == null; pass++) { // presentation first, then lyrics, then media
-            for (com.jamc.worship.model.Source s : scene.getSources()) {
-                var c = s.getConfig();
-                boolean match = switch (pass) {
-                    case 0 -> s.getType() == com.jamc.worship.model.SourceType.PRESENTATION && c.presentationId != null;
-                    case 1 -> s.getType() == com.jamc.worship.model.SourceType.LYRICS && c.songId != null;
-                    default -> (s.getType() == com.jamc.worship.model.SourceType.IMAGE
-                            || s.getType() == com.jamc.worship.model.SourceType.VIDEO
-                            || s.getType() == com.jamc.worship.model.SourceType.AUDIO) && c.mediaId != null;
-                };
-                if (match && s.isVisible()) {
-                    found = s;
-                    break;
-                }
-            }
-        }
+        com.jamc.worship.model.Source found = sceneLibrarySource(scene);
         if (found == null) {
             return; // nothing from a library in this scene: the Library stays as it is
         }
@@ -3695,6 +3757,70 @@ public class MainFrame extends JFrame {
                 }
             }
         }
+    }
+
+    /**
+     * A scene clicked in the Scenes list: what it shows from the Library opens below at once, as if picked there
+     * (a PowerPoint scene: Presentations with its slides; a song: its lyrics cards; a picture / video / sound: MEDIA
+     * PREVIEW). A scene with nothing from a Library leaves it as it is. Preview and Program are not touched by this.
+     */
+    private void openSceneSourcesInLibrary(Scene scene) {
+        com.jamc.worship.model.Source found = scene == null ? null : sceneLibrarySource(scene);
+        if (found == null) {
+            return;
+        }
+        var c = found.getConfig();
+        switch (found.getType()) {
+            case PRESENTATION -> {
+                sidebar.selectCategory(Sidebar.Category.PRESENTATIONS);
+                presentationLibrary.select(c.presentationId);
+            }
+            case LYRICS -> {
+                sidebar.selectCategory(Sidebar.Category.SONGS);
+                songLibrary.setFavoritesOnly(false);
+                songLibrary.showSong(c.songId);
+            }
+            case IMAGE -> {
+                sidebar.selectCategory(Sidebar.Category.IMAGES);
+                imageLibrary.select(c.mediaId);
+            }
+            case AUDIO -> {
+                sidebar.selectCategory(Sidebar.Category.AUDIO);
+                audioLibrary.select(c.mediaId);
+            }
+            default -> {
+                sidebar.selectCategory(Sidebar.Category.VIDEOS);
+                boolean background = context.mediaService().load(c.mediaId)
+                        .map(m -> m.getCategory() == MediaCategory.BACKGROUND).orElse(false);
+                if (background) {
+                    videoTabs.selectBackground(c.mediaId);
+                } else {
+                    videoTabs.selectVideo(c.mediaId);
+                }
+            }
+        }
+    }
+
+    /** The scene's visible source from a Library: a presentation first, then a song, then a picture / video / sound. */
+    private static com.jamc.worship.model.Source sceneLibrarySource(Scene scene) {
+        com.jamc.worship.model.Source found = null;
+        for (int pass = 0; pass < 3 && found == null; pass++) { // presentation first, then lyrics, then media
+            for (com.jamc.worship.model.Source s : scene.getSources()) {
+                var c = s.getConfig();
+                boolean match = switch (pass) {
+                    case 0 -> s.getType() == com.jamc.worship.model.SourceType.PRESENTATION && c.presentationId != null;
+                    case 1 -> s.getType() == com.jamc.worship.model.SourceType.LYRICS && c.songId != null;
+                    default -> (s.getType() == com.jamc.worship.model.SourceType.IMAGE
+                            || s.getType() == com.jamc.worship.model.SourceType.VIDEO
+                            || s.getType() == com.jamc.worship.model.SourceType.AUDIO) && c.mediaId != null;
+                };
+                if (match && s.isVisible()) {
+                    found = s;
+                    break;
+                }
+            }
+        }
+        return found;
     }
 
     /** Shows this category's library list (and marks it in the sidebar) without switching the workspace. */
@@ -4152,6 +4278,7 @@ public class MainFrame extends JFrame {
     /** A scene card was clicked: Preview (safe default), or Program at once in Direct Switch mode. */
     private void sceneClicked(Scene scene) {
         selectedScene = null; // the selection was acted on (double-click, PREVIEW, or this TAKE)
+        openSceneSourcesInLibrary(scene); // what the scene shows from the Library opens below
         if (directSceneSwitch()) {
             sendSceneToProgram(scene);
             return;
@@ -4260,6 +4387,7 @@ public class MainFrame extends JFrame {
         @Override
         public void sceneSelected(Scene scene) {
             selectedScene = scene;
+            openSceneSourcesInLibrary(scene); // e.g. a PowerPoint scene: its presentation's slides show below at once
             if (!studioMode()) {
                 // Studio Mode off: the card keeps its white ring until the TAKE key puts it live
                 statusBar.showMessage("Scene \"" + scene.getName() + "\" selected. Press " + takeKeyName()
@@ -5250,7 +5378,8 @@ public class MainFrame extends JFrame {
             Rectangle b = getBounds();
             config.set(AppConfig.KEY_WINDOW_BOUNDS, b.x + "," + b.y + "," + b.width + "," + b.height);
         }
-        splits.forEach((key, split) -> config.set("ui.split." + key, String.valueOf(split.getDividerLocation())));
+        splits.forEach((key, split) -> config.set("ui.split." + key, String.valueOf(
+                split.getDividerLocation())));
         config.save();
     }
 
@@ -5322,6 +5451,15 @@ public class MainFrame extends JFrame {
         healthSampler.stop();
         saveEverything();
         exitWatchdog(-1);
+        // everything is saved: the windows go at once, so a slow release (VLC, cameras, Chromium) is never a frozen
+        // window on screen
+        for (java.awt.Window w : java.awt.Window.getWindows()) {
+            try {
+                w.setVisible(false);
+            } catch (RuntimeException e) {
+                log.debug("Window not hidden at exit", e);
+            }
+        }
         releaseResources();
         dispose();
         exitProcess(-1);

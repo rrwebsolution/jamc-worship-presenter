@@ -39,6 +39,26 @@ import java.util.List;
  */
 public class PresentationDetailPanel extends JPanel {
 
+    /** ✕ at the right end of the header: clears what this panel and the cards beside it show (the box stays). */
+    private final javax.swing.JButton clearButton = com.jamc.worship.ui.Ui.toolButton("x",
+            "Clear (nothing selected). Preview and Program are not touched.");
+    private Runnable clearAction = () -> { };
+
+    {
+        clearButton.addActionListener(e -> clearAction.run());
+    }
+
+    public void setClearAction(Runnable action) {
+        clearAction = action == null ? () -> { } : action;
+    }
+
+    /** A Previous / Next arrow halfway down the side of the slide. */
+    private static JPanel centeredVertically(JComponent c) {
+        JPanel p = Ui.transparent(new java.awt.GridBagLayout());
+        p.add(c);
+        return p;
+    }
+
     /** Operator actions; slide indices are 0-based. */
     public interface Actions {
         void select(int index);
@@ -107,16 +127,28 @@ public class PresentationDetailPanel extends JPanel {
         selectedView.setEmptyMessage("Click a slide thumbnail");
         selectedView.setPreferredSize(new Dimension(320, 180));
 
-        // a grid that shrinks with the column, so every action stays visible however narrow it is
-        JPanel buttons = Ui.transparent(new java.awt.GridLayout(0, 2, 6, 6));
-        for (JComponent c : List.of(previous, next, preview, take, addToService)) {
+        // SEND TO PREVIEW · TAKE / LIVE · ADD TO SERVICE side by side in one row (equal widths that shrink with the
+        // column); Previous / Next sit left and right of the slide instead
+        JPanel buttons = Ui.transparent(new java.awt.GridLayout(1, 3, 6, 0));
+        for (JComponent c : List.of(preview, take, addToService)) {
             buttons.add(c);
+        }
+        for (JButton b : List.of(previous, next)) {
+            b.setText(null); // just the arrow beside the slide
+            b.setIcon(com.jamc.worship.ui.theme.Icons.get(b == previous ? "chevron-left" : "chevron-right",
+                    com.jamc.worship.ui.theme.Icons.MEDIUM));
+            b.setMargin(new java.awt.Insets(18, 6, 18, 6));
         }
         JPanel titles = Ui.transparent(new BorderLayout(0, 2));
         titles.add(title, BorderLayout.NORTH);
         titles.add(meta, BorderLayout.SOUTH);
         JPanel header = Ui.transparent(new BorderLayout(0, 10));
-        header.add(titles, BorderLayout.NORTH);
+        JPanel titleRow = Ui.transparent(new BorderLayout(8, 0));
+        titleRow.add(titles, BorderLayout.CENTER);
+        JPanel clearBox = Ui.transparent(new BorderLayout());
+        clearBox.add(clearButton, BorderLayout.NORTH);
+        titleRow.add(clearBox, BorderLayout.EAST);
+        header.add(titleRow, BorderLayout.NORTH);
         header.add(buttons, BorderLayout.SOUTH);
         header.setBorder(BorderFactory.createCompoundBorder(Ui.line(false, false, true, false),
                 BorderFactory.createEmptyBorder(12, 16, 10, 12)));
@@ -134,9 +166,11 @@ public class PresentationDetailPanel extends JPanel {
 
         // only the selected page, large: the pages themselves are the one horizontal strip beside this panel
         // (no second slide grid here)
-        JPanel monitor = Ui.transparent(new BorderLayout());
-        monitor.setBorder(BorderFactory.createEmptyBorder(10, 16, 12, 16));
+        JPanel monitor = Ui.transparent(new BorderLayout(8, 0));
+        monitor.setBorder(BorderFactory.createEmptyBorder(10, 8, 12, 8));
         monitor.add(selectedView, BorderLayout.CENTER);
+        monitor.add(centeredVertically(previous), BorderLayout.WEST); // ‹ left of the slide
+        monitor.add(centeredVertically(next), BorderLayout.EAST);     // › right of the slide
 
         JPanel passage = Ui.transparent(new BorderLayout());
         passage.add(north, BorderLayout.NORTH);

@@ -45,6 +45,22 @@ class UpdateCheckerTest {
     }
 
     @Test
+    void aLaptopThatSkippedVersionsSeesAllItsChanges() throws Exception {
+        String json = """
+                [{"tag_name":"v0.1.23","body":"<!-- whats-new:start -->\\n- d\\n<!-- whats-new:end -->"},
+                 {"tag_name":"v0.1.22","body":"<!-- whats-new:start -->\\n- c\\n<!-- whats-new:end -->"},
+                 {"tag_name":"v0.1.21","body":"<!-- whats-new:start -->\\n- b\\n<!-- whats-new:end -->"},
+                 {"tag_name":"v0.1.20","body":"<!-- whats-new:start -->\\n- a\\n<!-- whats-new:end -->"},
+                 {"tag_name":"v0.1.24","draft":true,"body":"<!-- whats-new:start -->\\n- x\\n<!-- whats-new:end -->"}]
+                """;
+        // installed 0.1.20, newest 0.1.22: what it is missing (not 0.1.20, not the newer 0.1.23, never a draft)
+        assertEquals("# Version 0.1.22\n\n- c\n\n# Version 0.1.21\n\n- b", UpdateChecker.combine(json, "0.1.20", "0.1.22"));
+        assertEquals("- d", UpdateChecker.combine(json, "0.1.22", "0.1.23"), "one version: no heading");
+        assertEquals("- c", UpdateChecker.combine(json, "older", "0.1.22"), "unknown previous version: just this one");
+        assertEquals("<h2>Version 0.1.22</h2>", WhatsNew.toHtml("# Version 0.1.22"));
+    }
+
+    @Test
     void whatsNewIsShownOnlyAfterAnUpdate() {
         assertTrue(WhatsNew.justUpdated("0.1.19", "0.1.20"));
         assertFalse(WhatsNew.justUpdated(null, "0.1.20"), "first install: nothing changed for this operator");

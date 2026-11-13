@@ -254,6 +254,11 @@ public class MediaLibraryPanel extends JPanel {
         typeFilter.setSelectedItem(filter);
     }
 
+    /** Nothing selected (MEDIA PREVIEW ✕). */
+    public void clearSelection() {
+        list.clearSelection();
+    }
+
     public void select(long id) {
         for (int i = 0; i < model.size(); i++) {
             if (Objects.equals(model.get(i).getId(), id)) {

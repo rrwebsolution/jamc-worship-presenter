@@ -253,6 +253,11 @@ public class PresentationLibraryPanel extends JPanel {
         addToServiceHandler = h;
     }
 
+    /** Nothing selected (the ✕ on the slide cards): the cards and details beside them empty. */
+    public void clearSelection() {
+        list.clearSelection();
+    }
+
     public void setStatusHandler(Consumer<String> h) {
         statusHandler = h;
     }

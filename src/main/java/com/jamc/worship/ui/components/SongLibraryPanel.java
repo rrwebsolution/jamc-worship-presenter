@@ -266,6 +266,11 @@ public class SongLibraryPanel extends JPanel {
         this.addToServiceHandler = handler;
     }
 
+    /** Nothing selected (the ✕ on the slide cards): the cards and details beside them empty. */
+    public void clearSelection() {
+        list.clearSelection();
+    }
+
     public void setStatusHandler(Consumer<String> handler) {
         this.statusHandler = handler;
     }

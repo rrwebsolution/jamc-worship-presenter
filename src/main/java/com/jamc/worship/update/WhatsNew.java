@@ -21,6 +21,8 @@ public final class WhatsNew {
 
     /** The last version this computer ran: a different version at startup means it was just updated. */
     public static final String KEY_LAST_RUN_VERSION = "update.lastRunVersion";
+    /** The version this computer had before its last update: What's New lists every change since then. */
+    public static final String KEY_PREVIOUS_VERSION = "update.previousVersion";
 
     private WhatsNew() {
     }
@@ -82,6 +84,8 @@ public final class WhatsNew {
                     inList = true;
                 }
                 out.append("<li>").append(inline(line.substring(2).strip())).append("</li>");
+            } else if (line.startsWith("# ")) {
+                out.append("<h2>").append(inline(line.substring(2).strip())).append("</h2>"); // a version
             } else if (line.startsWith("#")) {
                 out.append("<h3>").append(inline(line.replaceFirst("^#+\\s*", ""))).append("</h3>");
             } else {

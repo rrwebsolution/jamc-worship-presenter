@@ -27,8 +27,14 @@ public final class UpdateChecker {
     public static final String RELEASES_API = "https://api.github.com/repos/rrwebsolution/jamc-worship-presenter/releases/latest";
     public static final String RELEASES_PAGE = "https://github.com/rrwebsolution/jamc-worship-presenter/releases/latest";
 
+    /** Every published release (newest first), for the changes of all the versions a computer skipped. */
+    public static final String RELEASES_LIST_API = "https://api.github.com/repos/rrwebsolution/jamc-worship-presenter/releases?per_page=100";
+
     /** A published version and its Windows installer; {@code notes} is its "What's new" (may be empty). */
     public record Release(String version, String installerUrl, String installerName, long size, String notes) {
+        public Release withNotes(String newNotes) {
+            return new Release(version, installerUrl, installerName, size, newNotes);
+        }
     }
 
     /** Settings → General: look for a new version when the app starts. */
@@ -56,6 +62,49 @@ public final class UpdateChecker {
             throw new IOException("GitHub answered " + res.statusCode());
         }
         return parse(res.body());
+    }
+
+    /**
+     * The "What's new" of every version after {@code after} up to and including {@code upTo}, newest first, each under
+     * a "# Version x" heading. So a laptop that skipped versions sees all it is missing (update dialog) or all it just
+     * got (What's New after the update), not only the newest release. {@code after} null or not a version: only
+     * {@code upTo}. Empty when GitHub has no notes for them.
+     */
+    public String notesBetween(String after, String upTo) throws IOException, InterruptedException {
+        HttpRequest req = HttpRequest.newBuilder(URI.create(RELEASES_LIST_API)).timeout(Duration.ofSeconds(10))
+                .header("Accept", "application/vnd.github+json").header("User-Agent", "LiveCat-Multimedia").GET().build();
+        HttpResponse<String> res = http.send(req, HttpResponse.BodyHandlers.ofString());
+        if (res.statusCode() != 200) {
+            throw new IOException("GitHub answered " + res.statusCode());
+        }
+        return combine(res.body(), after, upTo);
+    }
+
+    static String combine(String json, String after, String upTo) throws IOException {
+        boolean known = after != null && after.matches("\\d+(\\.\\d+)*.*");
+        record Notes(String version, String text) { }
+        java.util.List<Notes> found = new java.util.ArrayList<>();
+        for (JsonNode r : new ObjectMapper().readTree(json)) {
+            if (r.path("draft").asBoolean(false) || r.path("prerelease").asBoolean(false)) {
+                continue;
+            }
+            String tag = r.path("tag_name").asText("");
+            String v = tag.startsWith("v") || tag.startsWith("V") ? tag.substring(1) : tag;
+            boolean inRange = known ? isNewer(v, after) && !isNewer(v, upTo) : v.equals(upTo);
+            String text = WhatsNew.fromReleaseBody(r.path("body").asText(""));
+            if (inRange && !text.isBlank()) {
+                found.add(new Notes(v, text));
+            }
+        }
+        found.sort((a, b) -> isNewer(a.version(), b.version()) ? -1 : isNewer(b.version(), a.version()) ? 1 : 0);
+        if (found.size() == 1) {
+            return found.get(0).text(); // one version: no extra heading needed
+        }
+        StringBuilder out = new StringBuilder();
+        for (Notes n : found) {
+            out.append("# Version ").append(n.version()).append("\n\n").append(n.text()).append("\n\n");
+        }
+        return out.toString().strip();
     }
 
     static Optional<Release> parse(String json) throws IOException {

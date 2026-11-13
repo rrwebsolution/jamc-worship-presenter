@@ -162,6 +162,11 @@ public class SlideDeckLibraryPanel extends JPanel {
         this.beforeDelete = beforeDelete;
     }
 
+    /** Nothing selected (the ✕ on the slide cards): the cards and details beside them empty. */
+    public void clearSelection() {
+        list.clearSelection();
+    }
+
     public void setStatusHandler(Consumer<String> h) {
         statusHandler = h;
     }
