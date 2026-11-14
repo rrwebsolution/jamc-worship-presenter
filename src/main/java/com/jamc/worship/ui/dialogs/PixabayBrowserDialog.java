@@ -607,9 +607,12 @@ public final class PixabayBrowserDialog extends JDialog {
             JPanel text = Ui.transparent(new GridLayout(0, 1, 0, 1));
             text.add(name);
             text.add(by);
-            JPanel buttons = Ui.transparent(new GridLayout(3, 1, 0, 4)); // stacked: every label always readable
-            buttons.add(use);
-            buttons.add(toVideos);
+            // two side by side on top (Use as Background · Add to Videos), Download alone underneath
+            JPanel top = Ui.transparent(new GridLayout(1, 2, 4, 0));
+            top.add(use);
+            top.add(toVideos);
+            JPanel buttons = Ui.transparent(new GridLayout(2, 1, 0, 4));
+            buttons.add(top);
             buttons.add(download);
             JPanel south = Ui.transparent(new BorderLayout(0, 6));
             south.add(text, BorderLayout.NORTH);
@@ -652,8 +655,9 @@ public final class PixabayBrowserDialog extends JDialog {
             boolean hovered = hover.isHovered(this);
             // corner badges: preview state (top left), length and size (bottom)
             g.setFont(getFont().deriveFont(Font.BOLD, 11f));
-            String state = hovered ? (frame != null ? "● PREVIEW" : "LOADING…") : "▶ HOVER";
-            badge(g, state, bx + 6, by + 6, hovered ? new Color(0xDC2626) : new Color(0, 0, 0, 150));
+            if (hovered) { // no "▶ HOVER" hint on a resting card (user, 2026-11-14)
+                badge(g, frame != null ? "● PREVIEW" : "LOADING…", bx + 6, by + 6, new Color(0xDC2626));
+            }
             String len = video.durationText();
             if (!len.isEmpty()) {
                 int tw = g.getFontMetrics().stringWidth(len) + 10;

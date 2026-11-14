@@ -9,6 +9,7 @@ import com.jamc.worship.ui.components.TransportControls;
 import com.jamc.worship.ui.components.YouTubeMonitor;
 import com.jamc.worship.ui.components.YouTubeSearchPanel;
 import com.jamc.worship.ui.theme.Palette;
+import com.jamc.worship.youtube.YouTubeDownloader;
 import com.jamc.worship.youtube.YouTubePlayer;
 import com.jamc.worship.youtube.YouTubeVideo;
 
@@ -30,14 +31,16 @@ import java.awt.Window;
 import java.awt.event.KeyEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.nio.file.Path;
 import java.util.Optional;
 
 /**
  * Library → Videos → Import from YouTube ("YOUTUBE VIDEO LIBRARY"): search YouTube, select a video,
  * see its VIDEO DETAILS, and ADD TO VIDEO LIBRARY. A selected video plays here at once (AUTOPLAY); when it
  * ends, YouTube's own up-next videos follow (its Mix), unless LOOP is on; it keeps playing while the dialog is
- * minimized. The library item only
- * references the YouTube video (nothing is downloaded); it plays through the embedded YouTube player.
+ * minimized. ADD TO VIDEO LIBRARY only references the YouTube video; it plays through the embedded YouTube player.
+ * DOWNLOAD saves it on this computer as an .mp4 (yt-dlp) and adds it to Library → Videos → Local, so it plays
+ * offline. A download carries on if this window is closed.
  * This never creates lyrics.
  */
 public final class YouTubeVideoImportDialog extends JDialog {
@@ -51,6 +54,10 @@ public final class YouTubeVideoImportDialog extends JDialog {
     private final JLabel message = Ui.label(" ", Palette::secondaryText, "small");
     private final JButton preview = Ui.button("PLAY / PREVIEW", "play");
     private final JButton add = Ui.primaryButton("ADD TO VIDEO LIBRARY", "plus");
+    private final JButton download = Ui.button("DOWNLOAD", "arrow-down");
+    private final YouTubeDownloader downloader;
+    /** Videos being downloaded now (by id), with their latest progress line; survives closing this window. */
+    private static final java.util.Map<String, String> DOWNLOADING = new java.util.concurrent.ConcurrentHashMap<>();
     private final CardLayout cards = new CardLayout();
     private final JPanel detail = Ui.transparent(cards);
     private final YouTubeSearchPanel search;
@@ -63,6 +70,7 @@ public final class YouTubeVideoImportDialog extends JDialog {
     private YouTubeVideoImportDialog(Window owner, MediaService media, AppConfig config) {
         super(owner, "YouTube Video Library", ModalityType.APPLICATION_MODAL);
         this.media = media;
+        this.downloader = new YouTubeDownloader(config);
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
         addWindowListener(new WindowAdapter() {
             @Override
@@ -80,7 +88,7 @@ public final class YouTubeVideoImportDialog extends JDialog {
 
         JPanel root = Ui.panel(new BorderLayout(), Palette::panelBackground);
         JPanel header = Ui.header(Ui.label("Import from YouTube", Palette::text, "h3"),
-                Ui.small("Adds a YouTube video to Library → Videos as a reference. Nothing is downloaded; it plays from YouTube and needs the internet."));
+                Ui.small("ADD TO VIDEO LIBRARY keeps a link (plays from YouTube, needs the internet). DOWNLOAD saves it on this computer to play offline."));
         header.setBorder(BorderFactory.createCompoundBorder(Ui.line(false, false, true, false),
                 BorderFactory.createEmptyBorder(12, 16, 10, 16)));
         root.add(header, BorderLayout.NORTH);
@@ -123,6 +131,10 @@ public final class YouTubeVideoImportDialog extends JDialog {
         preview.addActionListener(e -> togglePreview());
         add.setToolTipText("Add a reference to this YouTube video to Library → Videos");
         add.addActionListener(e -> addToLibrary());
+        download.setToolTipText("<html>Save this video on this computer (.mp4): it goes to Videos → Local (plays offline)<br>"
+                + "and Videos → YouTube (the online link) at the same time.<br>"
+                + "It then plays offline. HD (up to 1080p) when FFmpeg is installed. Only download videos you may use.</html>");
+        download.addActionListener(e -> downloadVideo());
 
         JLabel kind = Ui.label("YouTube Video", Palette::danger, "semibold");
         JPanel info = Ui.transparent(new GridLayout(0, 1, 0, 2));
@@ -131,9 +143,10 @@ public final class YouTubeVideoImportDialog extends JDialog {
         info.add(channel);
         info.add(duration);
 
-        JPanel buttons = Ui.transparent(new GridLayout(1, 2, 8, 0));
+        JPanel buttons = Ui.transparent(new GridLayout(1, 3, 8, 0));
         buttons.add(preview);
         buttons.add(add);
+        buttons.add(download);
         JPanel south = Ui.transparent(new BorderLayout(0, 8));
         south.add(transport, BorderLayout.NORTH);
         south.add(info, BorderLayout.CENTER);
@@ -168,6 +181,7 @@ public final class YouTubeVideoImportDialog extends JDialog {
         monitor.show(v, null);
         transport.setVisible(false);
         cards.show(detail, "video");
+        showDownloadState();
         BackgroundTask.run("Check library", () -> media.findYouTube(v.id()), existing -> {
             if (existing.isPresent() && v == video) {
                 message.setText("Already in Library → Videos as \"" + existing.get().getName() + "\".");
@@ -258,6 +272,7 @@ public final class YouTubeVideoImportDialog extends JDialog {
         channel.setText(video.channel().isBlank() ? " " : "Channel: " + video.channel());
         duration.setText("Duration: shown once it plays");
         add.setEnabled(true);
+        showDownloadState();
         message.setForeground(Palette.secondaryText());
         message.setText("Up next from YouTube.");
         monitor.show(video, player);
@@ -287,6 +302,66 @@ public final class YouTubeVideoImportDialog extends JDialog {
             add.setEnabled(true);
             message.setForeground(Palette.danger());
             message.setText(err.getMessage());
+        });
+    }
+
+    /** DOWNLOAD, a progress line while it downloads, or ✓ DOWNLOADED when the saved copy is on this computer. */
+    private void showDownloadState() {
+        YouTubeVideo v = video;
+        if (v == null) {
+            return;
+        }
+        String progress = DOWNLOADING.get(v.id());
+        if (progress != null) {
+            download.setEnabled(false);
+            download.setText(progress);
+        } else if (downloader.existing(v.id()) != null) {
+            download.setEnabled(true); // pressing it again only puts the saved copy back in Local (if it was removed)
+            download.setText("✓ DOWNLOADED");
+        } else {
+            download.setEnabled(true);
+            download.setText("DOWNLOAD");
+        }
+    }
+
+    private void downloadVideo() {
+        YouTubeVideo v = video;
+        if (v == null || DOWNLOADING.putIfAbsent(v.id(), "Starting…") != null) {
+            return;
+        }
+        showDownloadState();
+        message.setForeground(Palette.secondaryText());
+        message.setText("Downloading \"" + v.title() + "\"… You can keep browsing or close this window.");
+        Long knownLength = v.durationMs() != null ? v.durationMs()
+                : player != null && player.length() > 0 ? player.length() : null;
+        BackgroundTask.run("Download YouTube video", () -> {
+            Path file = downloader.existing(v.id());
+            YouTubeDownloader.Result r = file != null ? new YouTubeDownloader.Result(file, null, null, null)
+                    : downloader.download(v.id(), line -> {
+                        DOWNLOADING.put(v.id(), line);
+                        javax.swing.SwingUtilities.invokeLater(this::showDownloadState);
+                    });
+            Long length = r.durationMs() != null ? r.durationMs() : knownLength;
+            // both at once: the YouTube link (YouTube tab, ONLINE) and the saved copy (Local tab, DOWNLOADED, offline)
+            media.addYouTube(v.durationMs() == null && length != null
+                    ? new YouTubeVideo(v.id(), v.title(), v.channel(), length, v.thumbnailUrl()) : v);
+            return media.addDownloaded(r.file(), v.title(), v.channel(), r.width(), r.height(), length);
+        }, item -> {
+            DOWNLOADING.remove(v.id());
+            added = item;
+            showDownloadState();
+            if (isDisplayable()) {
+                message.setForeground(Palette.live());
+                message.setText("<html>✓ Downloaded \"" + item.getName() + "\": in Videos → Local (plays offline) "
+                        + "and Videos → YouTube (online).</html>");
+            }
+        }, err -> {
+            DOWNLOADING.remove(v.id());
+            showDownloadState();
+            if (isDisplayable()) {
+                message.setForeground(Palette.danger());
+                message.setText(err.getMessage());
+            }
         });
     }
 

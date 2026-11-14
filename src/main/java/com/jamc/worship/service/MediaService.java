@@ -194,7 +194,7 @@ public class MediaService {
         m.setSourceType(MediaSourceType.LOCAL);
         m.setChannelName(creator); // credit: "by X via Pixabay"
         MediaItem saved = repository.insert(m);
-        log.info("Downloaded Pixabay video '{}' is a local video ({})", saved.getName(), stored);
+        log.info("Downloaded video '{}' is a local video ({})", saved.getName(), stored);
         changeListeners.forEach(Runnable::run);
         return saved;
     }
@@ -271,6 +271,24 @@ public class MediaService {
         }
         Path p = Path.of(storedPath);
         return p.isAbsolute() ? p : paths.root().resolve(p);
+    }
+
+    /** Where YouTube DOWNLOAD saves its .mp4 copies. */
+    public Path youTubeDownloadsDir() {
+        return paths.dataDir().resolve("youtube").resolve("videos");
+    }
+
+    /** A local video file that YouTube DOWNLOAD saved (data/youtube/videos): shown with a DOWNLOADED badge in Local. */
+    public boolean isDownloadedYouTube(MediaItem item) {
+        if (item == null || item.getKind() != MediaKind.VIDEO || item.isYouTube() || item.isPixabay()
+                || item.getPath() == null || com.jamc.worship.media.OnlineMedia.isUrl(item.getPath())) {
+            return false;
+        }
+        try {
+            return resolve(item).toAbsolutePath().normalize().startsWith(youTubeDownloadsDir().toAbsolutePath().normalize());
+        } catch (RuntimeException e) {
+            return false; // a stored path Windows does not accept
+        }
     }
 
     /** The file is on this computer; an online (Pixabay) video always counts as there (its player reports failures). */

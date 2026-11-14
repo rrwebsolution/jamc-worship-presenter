@@ -45,7 +45,7 @@ public class VideoLibraryPanel extends JPanel {
 
         allTab = tab("All", "Every video, local files first", () -> showVideos(MediaLibraryPanel.VIDEOS_ALL));
         allTab.setSelected(true);
-        localTab = tab("Local", "Video files on this computer (downloaded Pixabay videos too)",
+        localTab = tab("Local", "Video files on this computer (downloaded Pixabay and YouTube videos too)",
                 () -> showVideos(MediaLibraryPanel.VIDEOS_LOCAL));
         tab("YouTube", "Videos that play from YouTube", () -> showVideos(MediaLibraryPanel.VIDEOS_YOUTUBE));
         tab("Pixabay", "Pixabay videos (they stream from Pixabay; + → Pixabay Worship Backgrounds… to find more)",

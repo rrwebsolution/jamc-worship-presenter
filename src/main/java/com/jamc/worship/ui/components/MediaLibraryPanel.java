@@ -98,6 +98,37 @@ public class MediaLibraryPanel extends JPanel {
     private Consumer<String> statusHandler = s -> { };
     private long seq;
     private boolean suppress;
+    /** The item open in Media Preview (blue border); null when none. */
+    private Long openId;
+
+    /** Media Preview now shows this item (null: nothing): its tile gets the blue border. */
+    public void setOpenItem(MediaItem m) {
+        Long id = m == null ? null : m.getId();
+        if (!Objects.equals(id, openId)) {
+            openId = id;
+            list.repaint();
+        }
+    }
+
+    private boolean isOpen(MediaItem m) {
+        return m != null && openId != null && openId.equals(m.getId());
+    }
+
+    /**
+     * Blue: open in Media Preview. White: clicked (selected) but not open, because a video plays there and it only
+     * opens on a double-click. No hover effect (user, 2026-11-14).
+     */
+    private void paintStateBorder(Graphics2D g2, MediaItem m, boolean selected, int w, int h) {
+        if (isOpen(m)) {
+            g2.setColor(Palette.accent());
+            g2.setStroke(new java.awt.BasicStroke(3f));
+            g2.drawRect(1, 1, w - 3, h - 3);
+        } else if (selected) {
+            g2.setColor(Color.WHITE);
+            g2.setStroke(new java.awt.BasicStroke(2f));
+            g2.drawRect(1, 1, w - 2, h - 2);
+        }
+    }
 
     /**
      * @param categories      categories shown (empty = all with a type filter)
@@ -180,10 +211,26 @@ public class MediaLibraryPanel extends JPanel {
             }
 
             @Override
+            public void mouseClicked(MouseEvent e) {
+                int i = list.locationToIndex(e.getPoint());
+                if (e.getClickCount() == 2 && javax.swing.SwingUtilities.isLeftMouseButton(e) && i >= 0
+                        && list.getCellBounds(i, i).contains(e.getPoint())) {
+                    MediaItem m = model.get(i);
+                    openListeners.forEach(l -> l.accept(m)); // double-click: open it in Media Preview, even over a playing video
+                }
+            }
+
+            @Override
             public void mouseReleased(MouseEvent e) {
                 popup(e);
             }
         });
+        Ui.bindKey(list, KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, 0), "open", () -> {
+            MediaItem m = list.getSelectedValue();
+            if (m != null) {
+                openListeners.forEach(l -> l.accept(m));
+            }
+        }, WHEN_FOCUSED);
         Ui.bindKey(list, KeyStroke.getKeyStroke(KeyEvent.VK_DELETE, 0), "delete", this::deleteSelected, WHEN_FOCUSED);
         Ui.bindKey(list, KeyStroke.getKeyStroke(KeyEvent.VK_F2, 0), "rename", this::renameSelected, WHEN_FOCUSED);
         list.setDragEnabled(true);
@@ -228,13 +275,20 @@ public class MediaLibraryPanel extends JPanel {
         bar.setBorder(BorderFactory.createCompoundBorder(Ui.line(true, false, false, false),
                 BorderFactory.createEmptyBorder(6, 6, 6, 8)));
         bar.add(left, BorderLayout.WEST);
-        bar.add(Ui.small("Click to inspect in Media Preview"), BorderLayout.EAST);
+        bar.add(Ui.small("Click: Media Preview · Double-click while a video plays"), BorderLayout.EAST);
         add(bar, BorderLayout.SOUTH);
         updateButtons();
     }
 
     public void addSelectionListener(Consumer<MediaItem> l) {
         selectionListeners.add(l);
+    }
+
+    private final List<Consumer<MediaItem>> openListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Told on a double-click (or Enter) on an item: open it in Media Preview even while another video plays there. */
+    public void addOpenListener(Consumer<MediaItem> l) {
+        openListeners.add(l);
     }
 
     public void setAddToServiceHandler(Consumer<ServiceItem> h) {
@@ -702,6 +756,8 @@ public class MediaLibraryPanel extends JPanel {
         }
         if (item.isYouTube()) {
             paintYouTubeBadges(g2, width, height, YouTubeLibrary.availability(item.getYoutubeVideoId()));
+        } else if (media.isDownloadedYouTube(item)) {
+            paintDownloadedBadges(g2, width, height);
         } else if (item.getKind() == MediaKind.VIDEO) {
             paintVideoBadge(g2, height);
         }
@@ -730,6 +786,27 @@ public class MediaLibraryPanel extends JPanel {
         g2.drawString(status, width - sw + 10, 3 + fm.getAscent());
     }
 
+    /** A YouTube video saved on this computer (DOWNLOAD): "YOUTUBE" in the corner and a green DOWNLOADED (plays offline). */
+    static void paintDownloadedBadges(Graphics2D g2, int width, int height) {
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+        java.awt.Font f = g2.getFont().deriveFont(java.awt.Font.BOLD, 8.5f);
+        var fm = g2.getFontMetrics(f);
+        int h = fm.getHeight();
+        g2.setFont(f);
+        int w = fm.stringWidth("YOUTUBE") + 8;
+        g2.setColor(new Color(0xDC2626));
+        g2.fillRoundRect(3, height - h - 3, w, h, 6, 6);
+        g2.setColor(Color.WHITE);
+        g2.drawString("YOUTUBE", 7, height - h - 3 + fm.getAscent());
+        String status = "DOWNLOADED";
+        int sw = fm.stringWidth(status) + 8;
+        g2.setColor(new Color(0x16A34A));
+        g2.fillRoundRect(width - sw - 3, 3, sw, h, 6, 6);
+        g2.setColor(Color.WHITE);
+        g2.drawString(status, width - sw + 1, 3 + fm.getAscent());
+    }
+
     static Color availabilityColor(YouTubeClient.Availability a) {
         return switch (a) {
             case ONLINE -> new Color(0x22C55E);
@@ -755,11 +832,7 @@ public class MediaLibraryPanel extends JPanel {
                 protected void paintComponent(Graphics g) {
                     Graphics2D g2 = (Graphics2D) g.create();
                     paintThumb(g2, this, item, getWidth(), getHeight());
-                    if (selected) {
-                        g2.setColor(Palette.accent());
-                        g2.setStroke(new java.awt.BasicStroke(3f));
-                        g2.drawRect(1, 1, getWidth() - 3, getHeight() - 3);
-                    }
+                    paintStateBorder(g2, item, selected, getWidth(), getHeight());
                     g2.dispose();
                 }
             };
@@ -776,12 +849,14 @@ public class MediaLibraryPanel extends JPanel {
             item = m;
             selected = isSelected;
             name.setText((m.isFavorite() ? "★ " : "") + m.getName());
-            name.setForeground(isSelected ? Palette.accent() : Palette.text());
+            name.setForeground(isOpen(m) ? Palette.accent() : Palette.text());
             List<String> tip = new ArrayList<>();
             tip.add(BackgroundPresets.isPreset(m) ? BackgroundPresets.describe(m) : m.isYouTube()
                     ? "YouTube video" + (m.getChannelName() == null || m.getChannelName().isBlank() ? "" : " · " + m.getChannelName())
                     : m.isPixabay() ? "Pixabay video (streams; needs internet)"
                     + (m.getChannelName() == null || m.getChannelName().isBlank() ? "" : " · by " + m.getChannelName() + " via Pixabay")
+                    : media.isDownloadedYouTube(m) ? "YouTube video, downloaded (plays offline)"
+                    + (m.getChannelName() == null || m.getChannelName().isBlank() ? "" : " · " + m.getChannelName())
                     : m.getKind().name().toLowerCase());
             if (m.getWidth() != null) {
                 tip.add(m.getWidth() + "×" + m.getHeight());
@@ -800,6 +875,7 @@ public class MediaLibraryPanel extends JPanel {
         private final JLabel name = new JLabel();
         private final JLabel info = new JLabel();
         private MediaItem item;
+        private boolean selected;
 
         MediaRenderer() {
             super(new BorderLayout(10, 0));
@@ -809,6 +885,7 @@ public class MediaLibraryPanel extends JPanel {
                 protected void paintComponent(Graphics g) {
                     Graphics2D g2 = (Graphics2D) g.create();
                     paintThumb(g2, this, item, getWidth(), getHeight());
+                    paintStateBorder(g2, item, selected, getWidth(), getHeight());
                     g2.dispose();
                 }
             };
@@ -827,6 +904,7 @@ public class MediaLibraryPanel extends JPanel {
         public Component getListCellRendererComponent(JList<? extends MediaItem> l, MediaItem m, int index, boolean selected,
                                                       boolean focused) {
             item = m;
+            this.selected = selected;
             name.setText((m.isFavorite() ? "★ " : "") + m.getName());
             List<String> parts = new ArrayList<>();
             if (BackgroundPresets.isPreset(m)) {
@@ -866,6 +944,22 @@ public class MediaLibraryPanel extends JPanel {
                 info.setText(String.join("  ·  ", parts));
                 name.setForeground(selected ? l.getSelectionForeground() : Palette.text());
                 info.setForeground(selected ? new Color(255, 255, 255, 200) : Palette.secondaryText());
+                setBackground(selected ? l.getSelectionBackground() : l.getBackground());
+                setOpaque(selected);
+                return this;
+            }
+            if (media.isDownloadedYouTube(m)) {
+                parts.add("YouTube");
+                if (m.getChannelName() != null && !m.getChannelName().isBlank()) {
+                    parts.add(m.getChannelName());
+                }
+                if (m.getDurationMs() != null) {
+                    parts.add(TransportControls.format(m.getDurationMs()));
+                }
+                parts.add("DOWNLOADED · plays offline");
+                info.setText(String.join("  ·  ", parts));
+                name.setForeground(selected ? l.getSelectionForeground() : Palette.text());
+                info.setForeground(selected ? new Color(255, 255, 255, 200) : new Color(0x16A34A));
                 setBackground(selected ? l.getSelectionBackground() : l.getBackground());
                 setOpaque(selected);
                 return this;

@@ -268,8 +268,30 @@ public class MediaOutputPanel extends JPanel {
         }
     }
 
+    /**
+     * A video is playing here now (local file or YouTube). Then a single click in the library or a tab change does not
+     * replace it (user, 2026-11-14): only a double-click opens another item here.
+     */
+    public boolean isPlayingVideo() {
+        return item != null && ((item.isYouTube() && youtubePlayer != null && youtubePlayer.isPlaying())
+                || (!item.isYouTube() && item.getKind() == MediaKind.VIDEO && previewPlayer != null && previewPlayer.isPlaying()));
+    }
+
+    /** The item shown here now (null when empty). */
+    public MediaItem shown() {
+        return item;
+    }
+
+    private final java.util.List<java.util.function.Consumer<MediaItem>> shownListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /** Told whenever the item shown here changes (null: empty); the library marks it with a blue border. */
+    public void addShownListener(java.util.function.Consumer<MediaItem> l) {
+        shownListeners.add(l);
+    }
+
     /** Shows the selected library item for inspection; nothing is sent anywhere. */
     public void show(MediaItem m) {
+        shownListeners.forEach(l -> l.accept(m));
         boolean toProgram = actions.sendsToProgram(m);
         sendToPreview.setText(toProgram ? "SEND TO PROGRAM" : "SEND TO PREVIEW");
         sendToPreview.setToolTipText(toProgram ? "Put this on Preview and Program at once."

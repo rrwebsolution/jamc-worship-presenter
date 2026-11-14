@@ -1420,10 +1420,19 @@ public class MainFrame extends JFrame {
 
         mediaDetail.setClearHandler(() -> List.of(mediaLibrary, videoLibrary, imageLibrary, audioLibrary, backgroundLibrary)
                 .forEach(MediaLibraryPanel::clearSelection));
+        // blue border = open in Media Preview; white = chosen / under the mouse but not open (double-click opens it)
+        mediaDetail.addShownListener(m -> List.of(mediaLibrary, videoLibrary, imageLibrary, audioLibrary, backgroundLibrary)
+                .forEach(lib -> lib.setOpenItem(m)));
         for (MediaLibraryPanel lib : List.of(mediaLibrary, videoLibrary, imageLibrary, audioLibrary, backgroundLibrary)) {
             lib.setStatusHandler(statusBar::showMessage);
             lib.setAddToServiceHandler(schedule::addItem);
-            lib.addSelectionListener(mediaDetail::show);
+            lib.addSelectionListener(this::inspectFromLibrary);
+            lib.addOpenListener(m -> {
+                mediaDetail.show(m); // double-click / Enter: always opens it, even over a playing video
+                if (m != null && showingSceneItem() && !isSceneLibraryItem(m.getId()) && isMedia(activeCategory)) {
+                    leaveItemWorkspace();
+                }
+            });
             lib.addSelectionListener(m -> {
                 if (m != null && showingSceneItem() && !isSceneLibraryItem(m.getId()) && isMedia(activeCategory)) {
                     leaveItemWorkspace(); // other media chosen in the Library: it replaces the scene in the workspace
@@ -1433,7 +1442,7 @@ public class MainFrame extends JFrame {
         videoTabs.setSwitchListener(lib -> {
             if (activeCategory == Sidebar.Category.VIDEOS) {
                 lib.refresh(null);
-                mediaDetail.show(lib.selected()); // this tab's own selection, as when changing category
+                inspectFromLibrary(lib.selected()); // this tab's own selection, unless a video is playing in Media Preview
             }
         });
 
@@ -1771,6 +1780,22 @@ public class MainFrame extends JFrame {
             case DECK -> deckLibrary.clearSelection();
             default -> { }
         }
+    }
+
+    /**
+     * A single click (or a Videos tab change) in a media library: shows the item in Media Preview, unless a video is
+     * playing there. A playing video keeps playing (user, 2026-11-14); a double-click or Enter opens the other item.
+     */
+    private void inspectFromLibrary(MediaItem m) {
+        MediaItem shown = mediaDetail.shown();
+        if (mediaDetail.isPlayingVideo() && (m == null || shown == null || !Objects.equals(m.getId(), shown.getId()))) {
+            if (m != null) {
+                statusBar.showMessage("\"" + shown.getName() + "\" keeps playing in Media Preview. Double-click \""
+                        + m.getName() + "\" to open it there.");
+            }
+            return;
+        }
+        mediaDetail.show(m);
     }
 
     /**
