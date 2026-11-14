@@ -67,7 +67,6 @@ public class ScenesHomePanel extends JPanel {
     private final JPanel body = Ui.transparent(cards);
     private final JPanel grid = Ui.transparent(new GridLayout(0, 4, 12, 12));
     private final JLabel editorTitle = Ui.label("SCENE", Palette::text, "h3");
-    private final JPanel liveHolder = Ui.transparent(new BorderLayout());
     private final List<Tile> tiles = new ArrayList<>();
     private final Compositor compositor = new Compositor(Rendering.renderer(), true);
 
@@ -149,68 +148,14 @@ public class ScenesHomePanel extends JPanel {
 
         body.add(home, HOME);
         body.add(editorPage, EDITOR);
-        liveHolder.setBorder(Ui.line(true, false, false, false));
-        liveHolder.setPreferredSize(new Dimension(10, liveHeight));
-        // PREVIEW · TAKE · PROGRAM under the scenes: drag the divider to make them taller or shorter (remembered)
-        body.setMinimumSize(new Dimension(0, 160));
-        liveHolder.setMinimumSize(new Dimension(0, 150));
-        liveSplit = new javax.swing.JSplitPane(javax.swing.JSplitPane.VERTICAL_SPLIT, body, liveHolder);
-        liveSplit.setResizeWeight(1.0); // a bigger window gives the room to the scenes; the monitors keep their height
-        liveSplit.setContinuousLayout(true);
-        liveSplit.setBorder(null);
-        liveSplit.setToolTipText(null);
-        add(liveSplit, BorderLayout.CENTER);
-        liveSplit.addComponentListener(new ComponentAdapter() {
-            @Override
-            public void componentResized(ComponentEvent e) {
-                placeDivider(); // the saved height, once the page has a size (and when the window changes size)
-            }
-        });
-        liveSplit.addPropertyChangeListener(javax.swing.JSplitPane.DIVIDER_LOCATION_PROPERTY, e -> {
-            if (!placing && liveSplit.getHeight() > 0) {
-                liveHeight = Math.max(150, liveSplit.getHeight() - liveSplit.getDividerLocation() - liveSplit.getDividerSize());
-                liveHeightSaver.accept(liveHeight);
-            }
-        });
+        // the scenes fill the whole page: no Preview · TAKE · Program under them (user choice)
+        add(body, BorderLayout.CENTER);
 
         new Timer(1500, e -> {
             if (isShowing() && !editorShown) {
                 grid.repaint(); // camera thumbnails stay current
             }
         }).start();
-    }
-
-    /** Where Preview · TAKE · Program are placed while this page is open. */
-    public JPanel liveHolder() {
-        return liveHolder;
-    }
-
-    private javax.swing.JSplitPane liveSplit;
-    /** Height of the Preview · TAKE · Program area (the operator drags the divider; remembered). */
-    private int liveHeight = 300;
-    private java.util.function.IntConsumer liveHeightSaver = h -> { };
-    private boolean placing;
-
-    /** The remembered height of Preview · Program on this page, and where a new one is saved. */
-    public void setLiveHeight(int height, java.util.function.IntConsumer saver) {
-        liveHeight = Math.max(150, height);
-        liveHeightSaver = saver == null ? h -> { } : saver;
-        placeDivider();
-    }
-
-    private void placeDivider() {
-        if (liveSplit == null || liveSplit.getHeight() <= 0) {
-            return;
-        }
-        // never so tall that the scenes disappear, never smaller than the monitors need
-        int max = Math.max(150, liveSplit.getHeight() - liveSplit.getDividerSize() - 160);
-        int h = Math.clamp(liveHeight, 150, max);
-        placing = true;
-        try {
-            liveSplit.setDividerLocation(liveSplit.getHeight() - liveSplit.getDividerSize() - h);
-        } finally {
-            placing = false;
-        }
     }
 
     /** A click on a tile only selects it; these buttons send the selected scene to Preview or Program. */

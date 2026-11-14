@@ -151,8 +151,6 @@ public class MainFrame extends JFrame {
     private static final String KEY_SCENES_LIST_VIEW = "ui.scenesListView";
     /** Settings → which transitions the drop-down next to TAKE offers ("CUT,FADE,WIPE_LEFT"). */
     private static final String KEY_SHOWN_TRANSITIONS = "ui.transitions.shown";
-    /** Scenes page: height of Preview · TAKE · Program under the scenes (draggable divider). */
-    private static final String KEY_SCENES_LIVE_HEIGHT = "ui.scenes.liveHeight";
     private static final String KEY_PREVIEW_SCENE = "scenes.previewScene";
     private static final String KEY_PREVIEW_FIRST = "live.previewFirst";
     private static final String KEY_LYRICS_CLICK_LIVE_RESET = "live.songClickGoesLive.reset2";
@@ -885,9 +883,6 @@ public class MainFrame extends JFrame {
         // SCENE: the homepage (scene cards; one scene open with its sources and + ADD SOURCE)
         scenesHome = new com.jamc.worship.ui.components.ScenesHomePanel(sceneHost, region(scenesPanel), s -> scenesPanel.edit(s.getId()));
         scenesHome.setLeaveEditor(scenesPanel::confirmLeave); // unsaved scene changes: Save / Discard / Cancel
-        // Preview · Program under the scenes: the height the operator dragged it to (saved with the window state)
-        scenesHome.setLiveHeight(parseInt(context.config().get(KEY_SCENES_LIVE_HEIGHT, "300"), 300),
-                h -> context.config().set(KEY_SCENES_LIVE_HEIGHT, String.valueOf(h)));
         scenesPanel.setCameraNames(cameraNames);
         scenesPanel.setSongs(context.songService());
         scenesPanel.setSlideshows(slideshows);
@@ -4994,7 +4989,6 @@ public class MainFrame extends JFrame {
         }
         currentPage = page;
         // leaving the Scenes page does not touch Preview: a saved scene shows only at TAKE
-        placeLiveDock(page == TopBar.Page.SCENE);
         switch (page) {
             case SCENE -> pageCards.show(pages, page.name());
             case LIBRARY -> pageCards.show(pages, PAGE_WORKSPACE);
@@ -5013,30 +5007,6 @@ public class MainFrame extends JFrame {
             default -> pageCards.show(pages, page.name());
         }
     }
-
-    /**
-     * Preview · TAKE · Program is one component: under the scene on the SCENE page, beside the library list
-     * everywhere else. Moving it never touches what Preview or Program show.
-     */
-    private void placeLiveDock(boolean scenePage) {
-        if (scenePage) {
-            if (livePanel.getParent() != scenesHome.liveHolder()) {
-                libraryDivider = librarySplit.getDividerLocation();
-                scenesHome.liveHolder().add(livePanel, BorderLayout.CENTER);
-                scenesHome.liveHolder().revalidate();
-                librarySplit.setRightComponent(new JPanel()); // placeholder while the monitors are on the SCENE page
-            }
-        } else if (livePanel.getParent() == scenesHome.liveHolder()) {
-            scenesHome.liveHolder().remove(livePanel);
-            librarySplit.setRightComponent(livePanel);
-            if (libraryDivider > 0) {
-                librarySplit.setDividerLocation(libraryDivider);
-            }
-            librarySplit.revalidate();
-        }
-    }
-
-    private int libraryDivider = -1;
 
     private static final String KEY_LIBRARY_CATEGORY = "ui.library.category";
 
