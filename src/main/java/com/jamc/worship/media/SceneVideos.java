@@ -102,8 +102,14 @@ public final class SceneVideos {
     /**
      * Identifies one source's video across the copies of a scene (Preview, Program, editor) and across saves
      * (the database gives sources new ids on every save, so the id would restart a live video after an edit).
+     * The layer's permanent uid when it has one, so renaming the layer never starts another player (with the
+     * name in the key every letter typed in the editor's Name box opened a new VLC player: CPU at 100%).
      */
     public static String key(Source s) {
+        String uid = s.getConfig().uid;
+        if (uid != null) {
+            return s.getConfig().path + "#uid:" + uid;
+        }
         return s.getConfig().path + "#" + s.getName();
     }
 

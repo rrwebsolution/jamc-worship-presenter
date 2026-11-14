@@ -674,7 +674,23 @@ public class ScenesPanel extends JPanel {
         redoButton.setEnabled(editing != null && !redoStack.isEmpty());
     }
 
+    /**
+     * Video / audio / slideshow layers get a permanent uid: their player is found by it, so renaming the layer never
+     * opens another player (the name was in the key: every letter typed started a new VLC player, CPU at 100%).
+     */
+    private static void giveMediaUids(List<Source> sources) {
+        for (Source s : sources) {
+            SourceType t = s.getType();
+            if ((t == SourceType.VIDEO || t == SourceType.AUDIO || t == SourceType.SLIDESHOW) && s.getConfig().uid == null) {
+                s.getConfig().uid = java.util.UUID.randomUUID().toString();
+            }
+        }
+    }
+
     private void showEditing() {
+        if (editing != null) {
+            giveMediaUids(editing.getSources()); // before the history: an older scene is not "unsaved" just for this
+        }
         if (!restoringHistory) {
             resetHistory(); // another scene, the saved version again, or a reload
         }
@@ -704,6 +720,7 @@ public class ScenesPanel extends JPanel {
         for (int i = 0; i < sourceModel.size(); i++) {
             list.add(sourceModel.get(i));
         }
+        giveMediaUids(list); // a video / audio layer just added
         editing.setSources(list);
         preview.repaint();
         // only the draft changes: Preview and Program keep their own copies until SAVE → Preview → TAKE
