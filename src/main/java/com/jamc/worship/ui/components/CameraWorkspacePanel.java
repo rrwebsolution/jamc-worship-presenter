@@ -940,7 +940,7 @@ public class CameraWorkspacePanel extends JPanel {
             Color sub = selected ? new Color(255, 255, 255, 190) : Palette.secondaryText();
             // CAM n tag
             String tag = names.tag(cam);
-            g2.setFont(base.deriveFont(Font.BOLD, 10f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.BOLD, 10f));
             FontMetrics tm = g2.getFontMetrics();
             int tagW = tm.stringWidth(tag == null ? "CAM" : tag) + 10;
             g2.setColor(selected ? new Color(255, 255, 255, 50) : Palette.secondaryBackground());
@@ -951,7 +951,7 @@ public class CameraWorkspacePanel extends JPanel {
             CameraStatus st = statusOf(cam);
             boolean isOff = isOff(cam);
             String stText = isOff ? "OFF" : st.label();
-            g2.setFont(base.deriveFont(Font.BOLD, 9.5f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.BOLD, 9.5f));
             FontMetrics bm = g2.getFontMetrics();
             int bw = bm.stringWidth(stText) + 12;
             int bx = w - bw - 12;
@@ -961,10 +961,10 @@ public class CameraWorkspacePanel extends JPanel {
             g2.drawString(stText, bx + 6, 10 + (18 + bm.getAscent() - bm.getDescent()) / 2);
             // nickname, device, format · audio
             int x = 12 + tagW + 8;
-            g2.setFont(base.deriveFont(Font.BOLD, 12.5f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.BOLD, 12.5f));
             g2.setColor(text);
             g2.drawString(clip(g2, names.label(cam).toUpperCase(java.util.Locale.ROOT), bx - x - 6), x, 24);
-            g2.setFont(base.deriveFont(Font.PLAIN, 11f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.PLAIN, 11f));
             g2.setColor(sub);
             g2.drawString(clip(g2, cam, w - 24), 12, 44);
             String fmt = formatText(cam);
@@ -1275,7 +1275,7 @@ public class CameraWorkspacePanel extends JPanel {
         g.setColor(new Color(255, 255, 255, 120));
         g.drawRoundRect(b.x, b.y, b.width - 1, b.height - 1, 10, 10);
         String text = turnOn ? "TURN ON" : "TURN OFF";
-        g.setFont((getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont()).deriveFont(Font.BOLD, 10.5f));
+        g.setFont(com.jamc.worship.ui.FontCache.derive(getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont(), Font.BOLD, 10.5f));
         FontMetrics fm = g.getFontMetrics();
         g.setColor(Color.WHITE);
         g.drawString(text, b.x + (b.width - fm.stringWidth(text)) / 2, b.y + (b.height + fm.getAscent() - fm.getDescent()) / 2);
@@ -1304,15 +1304,15 @@ public class CameraWorkspacePanel extends JPanel {
                 : st == CameraStatus.INITIALIZING ? new Color(0xFBBF24) : new Color(0xF87171);
         Font base = getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont();
         float big = Math.max(14f, Math.min(40f, r.height / 7f)) * scale;
-        g2.setFont(base.deriveFont(Font.BOLD, big));
+        g2.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.BOLD, big));
         FontMetrics sm = g2.getFontMetrics();
-        g2.setFont(base.deriveFont(Font.PLAIN, Math.max(11f, big * 0.45f)));
+        g2.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.PLAIN, Math.max(11f, big * 0.45f)));
         FontMetrics nm = g2.getFontMetrics();
         String name = names.label(cam);
         int top = r.y + (r.height - sm.getHeight() - nm.getHeight()) / 2;
         g2.setColor(new Color(0x94A3B8));
         g2.drawString(name, r.x + (r.width - nm.stringWidth(name)) / 2, top + nm.getAscent());
-        g2.setFont(base.deriveFont(Font.BOLD, big));
+        g2.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.BOLD, big));
         g2.setColor(color);
         String label = "● " + state;
         g2.drawString(label, r.x + (r.width - sm.stringWidth(label)) / 2, top + nm.getHeight() + sm.getAscent());
@@ -1320,7 +1320,7 @@ public class CameraWorkspacePanel extends JPanel {
                 : st == CameraStatus.INITIALIZING && !MediaEngine.get().isAvailable() ? "The camera needs VLC"
                 : st == CameraStatus.INITIALIZING ? "Connecting to the camera…" : null;
         if (why != null) {
-            g2.setFont(base.deriveFont(Font.PLAIN, 11f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.PLAIN, 11f));
             FontMetrics wm = g2.getFontMetrics();
             g2.setColor(new Color(0x94A3B8));
             g2.drawString(why, r.x + Math.max(6, (r.width - wm.stringWidth(why)) / 2), top + nm.getHeight() + sm.getHeight() + wm.getAscent() + 4);
@@ -1329,7 +1329,7 @@ public class CameraWorkspacePanel extends JPanel {
 
     private void centered(Graphics2D g2, Rectangle r, String msg, float size, Color color) {
         g2.setColor(color);
-        g2.setFont((getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont()).deriveFont(Font.PLAIN, size));
+        g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont(), Font.PLAIN, size));
         FontMetrics fm = g2.getFontMetrics();
         g2.drawString(msg, r.x + (r.width - fm.stringWidth(msg)) / 2, r.y + r.height / 2);
     }
@@ -1339,7 +1339,7 @@ public class CameraWorkspacePanel extends JPanel {
     }
 
     private Rectangle badge(Graphics2D g2, int x, int y, String text, Color fill, Color textColor) {
-        g2.setFont((getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont()).deriveFont(Font.BOLD, 9.5f));
+        g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont(), Font.BOLD, 9.5f));
         FontMetrics fm = g2.getFontMetrics();
         Rectangle r = new Rectangle(x, y, fm.stringWidth(text) + 12, fm.getHeight() + 4);
         g2.setColor(fill);
@@ -1354,7 +1354,7 @@ public class CameraWorkspacePanel extends JPanel {
     }
 
     private Rectangle badgeRight(Graphics2D g2, int right, int y, String text, Color fill, Color textColor) {
-        g2.setFont((getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont()).deriveFont(Font.BOLD, 9.5f));
+        g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont() == null ? new Font("Segoe UI", Font.PLAIN, 12) : getFont(), Font.BOLD, 9.5f));
         int w = g2.getFontMetrics().stringWidth(text) + 12;
         return badge(g2, right - w, y, text, fill, textColor);
     }

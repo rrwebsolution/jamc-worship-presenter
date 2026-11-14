@@ -503,7 +503,7 @@ public class ScenesDock extends JPanel {
                         w - (isLive || isNext ? 9 : 3), getHeight() - (isLive || isNext ? 9 : 3), 8, 8);
             }
 
-            g.setFont(getFont().deriveFont(Font.BOLD, 11.5f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 11.5f));
             FontMetrics fm = g.getFontMetrics();
             // Grid: the name under the picture. List: the name beside it, centered in the row
             int nameX = listView ? tw + 12 : 6;
@@ -522,7 +522,7 @@ public class ScenesDock extends JPanel {
             g.drawString(name, nameX + 18, y + fm.getAscent());
 
             // status in words as well as color; both when Preview and Program use the same scene
-            g.setFont(getFont().deriveFont(Font.BOLD, 9f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 9f));
             FontMetrics bm = g.getFontMetrics();
             int bx = listView ? nameX : 8;
             int by = listView ? Math.min(getHeight() - bm.getHeight() - 4, y + fm.getHeight() + 2) : 8;

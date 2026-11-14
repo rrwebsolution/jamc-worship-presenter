@@ -710,7 +710,7 @@ public final class Compositor {
         int y = rect.y + rect.height / 2;
         g2.drawString(label, rect.x + (rect.width - fm.stringWidth(label)) / 2, y);
         if (hint != null) {
-            g2.setFont(g2.getFont().deriveFont(Font.PLAIN, g2.getFont().getSize2D() * 0.6f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(g2.getFont(), Font.PLAIN, g2.getFont().getSize2D() * 0.6f));
             FontMetrics hm = g2.getFontMetrics();
             g2.setColor(new Color(0x94A3B8));
             g2.drawString(hint, rect.x + (rect.width - hm.stringWidth(hint)) / 2, y + hm.getHeight() + 4);

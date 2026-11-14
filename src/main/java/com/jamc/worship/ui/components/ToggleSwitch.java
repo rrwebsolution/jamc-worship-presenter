@@ -52,7 +52,7 @@ public class ToggleSwitch extends JToggleButton {
 
     private Font labelFont() {
         Font f = getFont();
-        return f == null ? new Font("Segoe UI", Font.BOLD, 12) : f.deriveFont(Font.BOLD);
+        return f == null ? new Font("Segoe UI", Font.BOLD, 12) : com.jamc.worship.ui.FontCache.derive(f, Font.BOLD);
     }
 
     @Override

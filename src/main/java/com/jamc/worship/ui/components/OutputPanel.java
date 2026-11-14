@@ -269,12 +269,12 @@ public class OutputPanel extends JPanel {
                 g2.drawRoundRect(x, y, w, h, 10, 10);
 
                 g2.setColor(Palette.text());
-                g2.setFont(getFont().deriveFont(Font.BOLD, Math.max(14f, h / 3.5f)));
+                g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, Math.max(14f, h / 3.5f)));
                 FontMetrics fm = g2.getFontMetrics();
                 String n = String.valueOf(d.number());
                 g2.drawString(n, x + (w - fm.stringWidth(n)) / 2, y + h / 2 + fm.getAscent() / 3);
 
-                g2.setFont(getFont().deriveFont(Font.PLAIN, 11f));
+                g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 11f));
                 fm = g2.getFontMetrics();
                 String caption = target ? (output.isOpen() ? "PROJECTOR · LIVE" : "PROJECTOR")
                         : isOperator ? "Operator screen" : d.pixelWidth() + "×" + d.pixelHeight();

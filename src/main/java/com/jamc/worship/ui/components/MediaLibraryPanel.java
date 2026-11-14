@@ -691,7 +691,7 @@ public class MediaLibraryPanel extends JPanel {
     static void paintVideoBadge(Graphics2D g2, int height) {
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        java.awt.Font f = g2.getFont().deriveFont(java.awt.Font.BOLD, 8.5f);
+        java.awt.Font f = com.jamc.worship.ui.FontCache.derive(g2.getFont(), java.awt.Font.BOLD, 8.5f);
         var fm = g2.getFontMetrics(f);
         int w = fm.stringWidth("VIDEO") + 8;
         int h = fm.getHeight();
@@ -767,7 +767,7 @@ public class MediaLibraryPanel extends JPanel {
     static void paintYouTubeBadges(Graphics2D g2, int width, int height, YouTubeClient.Availability availability) {
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        java.awt.Font f = g2.getFont().deriveFont(java.awt.Font.BOLD, 8.5f);
+        java.awt.Font f = com.jamc.worship.ui.FontCache.derive(g2.getFont(), java.awt.Font.BOLD, 8.5f);
         var fm = g2.getFontMetrics(f);
         int w = fm.stringWidth("YOUTUBE") + 8;
         int h = fm.getHeight();
@@ -790,7 +790,7 @@ public class MediaLibraryPanel extends JPanel {
     static void paintDownloadedBadges(Graphics2D g2, int width, int height) {
         g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-        java.awt.Font f = g2.getFont().deriveFont(java.awt.Font.BOLD, 8.5f);
+        java.awt.Font f = com.jamc.worship.ui.FontCache.derive(g2.getFont(), java.awt.Font.BOLD, 8.5f);
         var fm = g2.getFontMetrics(f);
         int h = fm.getHeight();
         g2.setFont(f);

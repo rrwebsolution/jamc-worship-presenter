@@ -765,7 +765,7 @@ public class LiveDock extends JPanel {
             g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
             ProgramOutput p = program();
             ProgramMonitor.pill(g, this, "▶ PREVIEW · NEXT", Palette.accent(), r.x + 6, r.y + 6, false);
-            FontMetrics lf = g.getFontMetrics(getFont().deriveFont(Font.BOLD, 9f));
+            FontMetrics lf = g.getFontMetrics(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 9f));
             int bottom = r.y + r.height - lf.getHeight() - 8;
             if (previewNote != null) {
                 // a long YouTube / file name must stay inside the monitor
@@ -778,7 +778,7 @@ public class LiveDock extends JPanel {
                 ProgramMonitor.pill(g, this, "LYRICS CLEARED", Palette.danger(), r.x + 6, bottom, true);
             }
             if (p.content() == null) {
-                g.setFont(getFont().deriveFont(Font.PLAIN, 11f));
+                g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 11f));
                 FontMetrics fm = g.getFontMetrics();
                 String s = "Select a slide to prepare it here";
                 g.setColor(Palette.mutedText());
@@ -821,14 +821,14 @@ public class LiveDock extends JPanel {
                 // the audience sees black; say so plainly and name what returns when Black is switched off
                 g.setColor(new Color(0, 0, 0, 170));
                 g.fillRect(r.x, r.y, r.width, r.height);
-                Font big = getFont().deriveFont(Font.BOLD, Math.max(11f, r.height / 11f));
+                Font big = com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, Math.max(11f, r.height / 11f));
                 g.setFont(big);
                 FontMetrics bm = g.getFontMetrics();
                 String s = "BLACK OUTPUT ACTIVE";
                 g.setColor(Palette.danger());
                 g.drawString(s, r.x + (r.width - bm.stringWidth(s)) / 2, r.y + r.height / 2);
                 if (p.content() != null) {
-                    g.setFont(getFont().deriveFont(Font.PLAIN, 10f));
+                    g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 10f));
                     FontMetrics sm = g.getFontMetrics();
                     String under = "Returns to: " + p.content().slide().getLabel();
                     g.setColor(new Color(255, 255, 255, 190));
@@ -844,7 +844,7 @@ public class LiveDock extends JPanel {
             if (p.isBackgroundHidden()) flags.add("BG OFF");
             if (!outputOpen) flags.add("NOT ON A DISPLAY");
             int x = r.x + 6;
-            Font f = getFont().deriveFont(Font.BOLD, 9f);
+            Font f = com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 9f);
             FontMetrics fm = g.getFontMetrics(f);
             for (String flag : flags) {
                 pill(g, this, flag, Palette.danger(), x, r.y + r.height - fm.getHeight() - 8, true);
@@ -863,7 +863,7 @@ public class LiveDock extends JPanel {
             if (p.content() == null || p.content().title() == null) {
                 return;
             }
-            g.setFont(c.getFont().deriveFont(Font.PLAIN, 10f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(c.getFont(), Font.PLAIN, 10f));
             FontMetrics tfm = g.getFontMetrics();
             String title = fit(p.content().title() + " · " + p.content().slide().getLabel(), tfm, r.width / 2);
             g.setColor(new Color(255, 255, 255, 170));
@@ -883,7 +883,7 @@ public class LiveDock extends JPanel {
         }
 
         static void pill(Graphics2D g, JComponent c, String text, Color color, int x, int y, boolean small) {
-            Font f = c.getFont().deriveFont(Font.BOLD, small ? 9f : 10f);
+            Font f = com.jamc.worship.ui.FontCache.derive(c.getFont(), Font.BOLD, small ? 9f : 10f);
             FontMetrics fm = g.getFontMetrics(f);
             int w = fm.stringWidth(text) + 12;
             int h = fm.getHeight() + 2;

@@ -92,14 +92,14 @@ public class YouTubeMonitor extends JComponent {
         if (message != null) {
             g2.setColor(new Color(0, 0, 0, 170));
             g2.fillRect(x, y + h - 34, w, 34);
-            g2.setFont(getFont().deriveFont(Font.PLAIN, 12f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 12f));
             g2.setColor(player != null && player.hasError() ? new Color(0xFCA5A5) : Color.WHITE);
             FontMetrics fm = g2.getFontMetrics();
             String m = fit(message, fm, w - 20);
             g2.drawString(m, x + (w - fm.stringWidth(m)) / 2, y + h - 17 + fm.getAscent() / 2 - 1);
         }
         if (badge != null) {
-            g2.setFont(getFont().deriveFont(Font.BOLD, 9.5f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 9.5f));
             FontMetrics fm = g2.getFontMetrics();
             int bw = fm.stringWidth(badge) + 12;
             g2.setColor(new Color(0xDC2626));

@@ -2020,7 +2020,7 @@ public class ScenesPanel extends JPanel {
             g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
             var videos = sceneVideos();
             int[] playing = videos == null ? null : videos.playingIndex(config.uid);
-            java.awt.Font bold = getFont().deriveFont(java.awt.Font.BOLD, 12f);
+            java.awt.Font bold = com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, 12f);
             java.awt.Font small = getFont().deriveFont(10f);
             for (int i = 0; i < config.videoPaths.size(); i++) {
                 int y = i * ROW;
@@ -3917,7 +3917,7 @@ public class ScenesPanel extends JPanel {
             g.drawOval(cx - 4, cy - 4, 8, 8);
             if (onX || onY) {
                 String text = onX && onY ? "CENTERED" : onX ? "CENTERED LEFT–RIGHT" : "CENTERED TOP–BOTTOM";
-                g.setFont(getFont().deriveFont(java.awt.Font.BOLD, 9.5f));
+                g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, 9.5f));
                 java.awt.FontMetrics fm = g.getFontMetrics();
                 int tw = fm.stringWidth(text) + 10;
                 g.setColor(new Color(0, 0, 0, 170));
@@ -3962,7 +3962,7 @@ public class ScenesPanel extends JPanel {
                 boolean onProgram = program.scene() != null && Objects.equals(program.scene().getId(), editing.getId());
                 String badge = "SCENE EDITOR" + (dirty ? " · UNSAVED" : "")
                         + (onProgram ? (dirty ? " · ON PROGRAM: SAVE TO UPDATE IT" : " · ON PROGRAM") : "");
-                g3.setFont(getFont().deriveFont(java.awt.Font.BOLD, 9.5f));
+                g3.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, 9.5f));
                 java.awt.FontMetrics bm = g3.getFontMetrics();
                 int bw = bm.stringWidth(badge) + 12;
                 int bx = r.x + r.width - bw - 6; // top right: the selected layer's name tag uses the top left
@@ -3986,7 +3986,7 @@ public class ScenesPanel extends JPanel {
                     g3.setColor(Palette.accent());
                     g3.drawRect(hs[i].x - HANDLE / 2 - 1, hs[i].y - HANDLE / 2 - 1, HANDLE + 1, HANDLE + 1);
                 }
-                g3.setFont(getFont().deriveFont(java.awt.Font.BOLD, 10f));
+                g3.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, 10f));
                 String label = sel.getName();
                 java.awt.FontMetrics fm = g3.getFontMetrics();
                 int ly = Math.max(r.y + fm.getAscent() + 2, b.y - 4);

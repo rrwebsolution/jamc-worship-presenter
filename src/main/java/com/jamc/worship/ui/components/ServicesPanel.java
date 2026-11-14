@@ -265,7 +265,7 @@ public class ServicesPanel extends JPanel {
                 return;
             }
             int centerY = Math.max(70, getHeight() / 2 - 12);
-            Font titleFont = getFont().deriveFont(Font.BOLD, getFont().getSize2D() + 1f);
+            Font titleFont = com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, getFont().getSize2D() + 1f);
             g.setFont(titleFont);
             FontMetrics titleMetrics = g.getFontMetrics();
             g.setColor(Palette.text());

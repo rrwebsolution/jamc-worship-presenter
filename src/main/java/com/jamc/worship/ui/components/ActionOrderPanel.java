@@ -786,7 +786,7 @@ public class ActionOrderPanel extends JPanel {
         }
 
         private Font textFont() {
-            return getFont().deriveFont(Font.PLAIN, 14f);
+            return com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 14f);
         }
 
         /** Width left for the words in a card of a list {@code listWidth} wide. */
@@ -838,7 +838,7 @@ public class ActionOrderPanel extends JPanel {
                     }
                 }
             }
-            g.setFont(getFont().deriveFont(Font.BOLD, 19f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 19f));
             FontMetrics nm = g.getFontMetrics();
             String num = String.format("%02d", index + 1);
             g.setColor(live ? Palette.danger() : st == State.DONE ? Palette.secondaryText() : Palette.text());
@@ -851,7 +851,7 @@ public class ActionOrderPanel extends JPanel {
             // middle: section pill, then the words or a page picture
             int lx = barX + 16;
             int right = x + w - ACTION_W * 2 - STATE_W;
-            Font small = getFont().deriveFont(Font.BOLD, 10.5f);
+            Font small = com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 10.5f);
             g.setFont(small);
             FontMetrics sm = g.getFontMetrics();
             String label = fit(sectionLabel(index), sm, right - lx - 16);
@@ -909,7 +909,7 @@ public class ActionOrderPanel extends JPanel {
                 g.setColor(live || preview ? Color.WHITE : pc);
                 g.drawString(pill, ppx + 9, midY - 8);
             }
-            g.setFont(getFont().deriveFont(Font.PLAIN, 12f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 12f));
             FontMetrics nm2 = g.getFontMetrics();
             String n = "Slide " + (index + 1);
             g.setColor(Palette.secondaryText());

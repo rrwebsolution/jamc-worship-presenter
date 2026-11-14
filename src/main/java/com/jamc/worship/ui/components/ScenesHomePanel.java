@@ -317,7 +317,7 @@ public class ScenesHomePanel extends JPanel {
             }
 
             int y = th + 14;
-            g.setFont(getFont().deriveFont(Font.BOLD, 13f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 13f));
             FontMetrics fm = g.getFontMetrics();
             Icons.get(icon(scene), 15, () -> isLive ? Palette.live() : Palette.secondaryText())
                     .paintIcon(this, g, 10, y + (fm.getHeight() - 15) / 2);
@@ -331,11 +331,11 @@ public class ScenesHomePanel extends JPanel {
             }
             g.drawString(name, 32, y + fm.getAscent());
             int n = scene.getSources().size();
-            g.setFont(getFont().deriveFont(Font.PLAIN, 11f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 11f));
             g.setColor(Palette.secondaryText());
             g.drawString(n + (n == 1 ? " source" : " sources"), 32, y + fm.getHeight() + g.getFontMetrics().getAscent());
 
-            g.setFont(getFont().deriveFont(Font.BOLD, 9.5f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 9.5f));
             FontMetrics bm = g.getFontMetrics();
             int bx = 14;
             if (isLive) {
@@ -345,7 +345,7 @@ public class ScenesHomePanel extends JPanel {
                 badge(g, bm, "▶ PREVIEW", Palette.accent(), bx);
             }
             if (Objects.equals(host.defaultSceneId(), scene.getId())) {
-                g.setFont(getFont().deriveFont(Font.BOLD, 13f));
+                g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 13f));
                 g.setColor(new Color(0xF59E0B));
                 g.drawString("★", w - 24, y + fm.getAscent());
             }

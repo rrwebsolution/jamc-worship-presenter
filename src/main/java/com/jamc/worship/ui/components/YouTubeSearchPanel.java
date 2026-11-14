@@ -333,7 +333,7 @@ public class YouTubeSearchPanel extends JPanel {
         }
         if (v != null && v.durationMs() != null) {
             String d = TransportControls.format(v.durationMs());
-            g.setFont(c.getFont().deriveFont(Font.BOLD, 10f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(c.getFont(), Font.BOLD, 10f));
             FontMetrics fm = g.getFontMetrics();
             int bw = fm.stringWidth(d) + 8;
             g.setColor(new Color(0, 0, 0, 200));

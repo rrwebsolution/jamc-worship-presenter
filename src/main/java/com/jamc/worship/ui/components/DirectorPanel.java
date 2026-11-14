@@ -684,7 +684,7 @@ public final class DirectorPanel extends JPanel {
     private static JLabel tag(String text, Color color) {
         JLabel l = new JLabel(text);
         l.setForeground(color);
-        l.setFont(l.getFont().deriveFont(Font.BOLD, 11f));
+        l.setFont(com.jamc.worship.ui.FontCache.derive(l.getFont(), Font.BOLD, 11f));
         return l;
     }
 
@@ -1949,7 +1949,7 @@ public final class DirectorPanel extends JPanel {
                 CameraStatus cs = st.camera() == null ? null : cameras.status(st.camera());
                 centered(g, pic, st.camera() == null ? "No camera found" : st.camera(), cs == null ? "STARTING" : cs.label());
             }
-            Font small = getFont().deriveFont(Font.BOLD, 11f);
+            Font small = com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 11f);
             g.setFont(small);
             // stage zones
             if (editZones.isSelected()) {
@@ -2045,7 +2045,7 @@ public final class DirectorPanel extends JPanel {
                 CameraStatus cs = cam == null ? null : cameras.status(cam);
                 centered(g, pic, cam == null ? "No camera" : cam, cs == null ? "STARTING" : cs.label());
             }
-            g.setFont(getFont().deriveFont(Font.BOLD, 11f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 11f));
             g.setStroke(new BasicStroke(3f));
             g.setColor(Color.WHITE);
             g.drawRect(pic.x + 1, pic.y + 1, pic.width - 3, pic.height - 3);
@@ -2092,7 +2092,7 @@ public final class DirectorPanel extends JPanel {
         }
 
         private void centered(Graphics2D g, Rectangle r, String title, String detail) {
-            g.setFont(getFont().deriveFont(Font.BOLD, 16f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 16f));
             FontMetrics fm = g.getFontMetrics();
             g.setColor(new Color(0xCBD5E1));
             g.drawString(title, r.x + (r.width - fm.stringWidth(title)) / 2, r.y + r.height / 2 - 4);
@@ -2238,7 +2238,7 @@ public final class DirectorPanel extends JPanel {
             g.setColor(ring);
             g.setStroke(new BasicStroke(live || pv || chosen ? 3f : 1f));
             g.drawRoundRect(t.x, t.y, t.width, t.height, 6, 6);
-            Font f = getFont().deriveFont(Font.BOLD, 11f);
+            Font f = com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 11f);
             g.setFont(f);
             FontMetrics fm = g.getFontMetrics();
             if (index < 5) {

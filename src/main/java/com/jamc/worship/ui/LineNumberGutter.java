@@ -83,7 +83,7 @@ public final class LineNumberGutter extends JComponent {
     }
 
     private Font numberFont() {
-        return area.getFont().deriveFont(Font.PLAIN, Math.max(10f, area.getFont().getSize2D() - 2f));
+        return com.jamc.worship.ui.FontCache.derive(area.getFont(), Font.PLAIN, Math.max(10f, area.getFont().getSize2D() - 2f));
     }
 
     @Override

@@ -144,7 +144,7 @@ public class SlidePreviewCanvas extends JComponent {
     }
 
     private void paintCentered(Graphics2D g2, Rectangle r, String text) {
-        Font font = getFont().deriveFont(Font.PLAIN, Math.max(11f, r.height * 0.045f));
+        Font font = com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, Math.max(11f, r.height * 0.045f));
         FontMetrics fm = g2.getFontMetrics(font);
         g2.setFont(font);
         g2.setColor(Palette.mutedText());
@@ -152,7 +152,7 @@ public class SlidePreviewCanvas extends JComponent {
     }
 
     private void paintBadge(Graphics2D g2, Rectangle r) {
-        Font f = getFont().deriveFont(Font.BOLD, compact ? 9f : 10f);
+        Font f = com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, compact ? 9f : 10f);
         FontMetrics fm = g2.getFontMetrics(f);
         int padX = 6;
         int w = fm.stringWidth(badge) + padX * 2;

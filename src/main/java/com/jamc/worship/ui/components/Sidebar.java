@@ -270,7 +270,7 @@ public class Sidebar extends JPanel {
             this.selected = selected;
             if (selected) {
                 l.setForeground(Color.WHITE);
-                l.setFont(l.getFont().deriveFont(java.awt.Font.BOLD));
+                l.setFont(com.jamc.worship.ui.FontCache.derive(l.getFont(), java.awt.Font.BOLD));
             } else {
                 l.setForeground(upcoming.test(item) ? Palette.secondaryText() : Palette.text());
             }

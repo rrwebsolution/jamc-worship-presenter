@@ -627,7 +627,7 @@ public class MediaOutputPanel extends JPanel {
                 paintAudioCard(g2, m, x, y, w, h);
             } else if (m != null) {
                 g2.setColor(Palette.mutedText());
-                g2.setFont(getFont().deriveFont(Font.PLAIN, 14f));
+                g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 14f));
                 String msg = !exists ? "File missing" : hub.available() || m.getKind() == MediaKind.IMAGE ? "Loading…" : "Video preview needs VLC";
                 g2.drawString(msg, x + (w - g2.getFontMetrics().stringWidth(msg)) / 2, y + h / 2);
             }
@@ -655,7 +655,7 @@ public class MediaOutputPanel extends JPanel {
                         : engine.status() + (engine.progress() >= 0 ? "  " + Math.round(engine.progress()) + "%" : "");
             }
             if (msg != null) {
-                g2.setFont(getFont().deriveFont(Font.PLAIN, 11.5f));
+                g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 11.5f));
                 FontMetrics fm = g2.getFontMetrics();
                 g2.setColor(new Color(0, 0, 0, 175));
                 g2.fillRect(x, y + h - fm.getHeight() - 22, w, fm.getHeight() + 8);
@@ -675,11 +675,11 @@ public class MediaOutputPanel extends JPanel {
             g2.setColor(new Color(0x0B1220));
             g2.fillRect(x, y, w, h);
             g2.setColor(Palette.secondaryText());
-            g2.setFont(getFont().deriveFont(Font.PLAIN, Math.max(24f, h / 5f)));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, Math.max(24f, h / 5f)));
             FontMetrics fm = g2.getFontMetrics();
             g2.drawString("♪", x + (w - fm.stringWidth("♪")) / 2, y + h / 2 - fm.getDescent());
             g2.setColor(Color.WHITE);
-            g2.setFont(getFont().deriveFont(Font.BOLD, Math.max(13f, h / 14f)));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, Math.max(13f, h / 14f)));
             fm = g2.getFontMetrics();
             String name = m.getName();
             g2.drawString(name, x + (w - fm.stringWidth(name)) / 2, y + h / 2 + fm.getAscent() + 6);
@@ -696,7 +696,7 @@ public class MediaOutputPanel extends JPanel {
                 g2.setColor(Palette.accent());
                 g2.fillRoundRect(barX, barY, (int) (barW * Math.min(1.0, pos / (double) len)), 4, 4, 4);
             }
-            g2.setFont(getFont().deriveFont(Font.PLAIN, 11f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 11f));
             g2.setColor(Palette.secondaryText());
             fm = g2.getFontMetrics();
             g2.drawString(TransportControls.format(pos), barX, barY + 6 + fm.getAscent());
@@ -706,7 +706,7 @@ public class MediaOutputPanel extends JPanel {
 
         /** "MEDIA PREVIEW" (never mistaken for the main Preview), plus "BACKGROUND ACTIVE" when this is the live background. */
         private void paintBadge(Graphics2D g2, int x, int y, MediaItem m) {
-            g2.setFont(getFont().deriveFont(Font.BOLD, 9.5f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 9.5f));
             FontMetrics fm = g2.getFontMetrics();
             String text = "MEDIA PREVIEW";
             int bw = fm.stringWidth(text) + 12;

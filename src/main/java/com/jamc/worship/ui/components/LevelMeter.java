@@ -67,7 +67,7 @@ public class LevelMeter extends JComponent implements MixerMeters.Meter {
         int mid = h / 2;
         if (message != null) {
             g.setColor(Palette.mutedText());
-            g.setFont(getFont().deriveFont(Font.PLAIN, Math.max(10f, getFont().getSize2D() - 2)));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, Math.max(10f, getFont().getSize2D() - 2)));
             var fm = g.getFontMetrics();
             g.drawString(message, Math.max(6, (w - fm.stringWidth(message)) / 2), mid + fm.getAscent() / 2 - 1);
             g.dispose();

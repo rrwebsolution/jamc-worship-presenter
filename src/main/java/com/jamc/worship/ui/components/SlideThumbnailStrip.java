@@ -922,11 +922,11 @@ public class SlideThumbnailStrip extends JPanel {
         }
 
         private java.awt.Font sectionFont() {
-            return getFont().deriveFont(java.awt.Font.BOLD, 10.5f);
+            return com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, 10.5f);
         }
 
         private java.awt.Font lyricsFont() {
-            return getFont().deriveFont(java.awt.Font.BOLD, LYRICS_PT);
+            return com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, LYRICS_PT);
         }
 
         /** The words in the presentation letter case when Settings asks for it. */
@@ -976,7 +976,7 @@ public class SlideThumbnailStrip extends JPanel {
 
             // the card's NUMBER on the left side (1, 2, 3… as in the order), with a thin line after it
             String number = index >= 0 ? String.valueOf(index + 1) : "";
-            g2.setFont(getFont().deriveFont(java.awt.Font.BOLD, 15f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, 15f));
             var nfm = g2.getFontMetrics();
             g2.setColor(live ? Palette.danger() : preview ? Palette.accent() : Palette.secondaryText());
             g2.drawString(number, (GUTTER - nfm.stringWidth(number)) / 2 + 2, (h - nfm.getHeight()) / 2 + nfm.getAscent());
@@ -1039,7 +1039,7 @@ public class SlideThumbnailStrip extends JPanel {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g2.setFont(getFont().deriveFont(java.awt.Font.BOLD, 11f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, 11f));
             var fm = g2.getFontMetrics();
             int baseline = fm.getAscent() + 1;
             g2.setColor(Palette.mutedText());

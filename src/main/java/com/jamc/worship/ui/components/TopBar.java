@@ -201,7 +201,7 @@ public class TopBar extends JPanel {
             this.text = text;
             this.color = color;
             this.dot = dot;
-            setFont(new JLabel().getFont().deriveFont(Font.BOLD, 11f));
+            setFont(com.jamc.worship.ui.FontCache.derive(new JLabel().getFont(), Font.BOLD, 11f));
         }
 
         void update(String text, Supplier<Color> color) {

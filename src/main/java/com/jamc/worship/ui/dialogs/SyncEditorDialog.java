@@ -340,7 +340,7 @@ public final class SyncEditorDialog extends JDialog {
             public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean focus, int row, int col) {
                 Component c = super.getTableCellRendererComponent(t, v, sel, focus, row, col);
                 boolean now = row < cards.size() && cards.get(row).getCardKey().equals(currentKey);
-                c.setFont(c.getFont().deriveFont(now ? Font.BOLD : Font.PLAIN));
+                c.setFont(com.jamc.worship.ui.FontCache.derive(c.getFont(), now ? Font.BOLD : Font.PLAIN));
                 if (now && !sel) {
                     c.setForeground(Palette.live());
                 } else if (!sel) {
@@ -629,7 +629,7 @@ public final class SyncEditorDialog extends JDialog {
             } else {
                 String text = textOf(currentKey);
                 g2.setColor(text == null ? Palette.mutedText() : Color.WHITE);
-                g2.setFont(getFont().deriveFont(Font.BOLD, Math.max(14f, h / 12f)));
+                g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, Math.max(14f, h / 12f)));
                 String[] lines = (text == null ? (video == null ? reference.label() + "  ·  " + TransportControls.format(transport.time())
                         : "Loading…") : text).split("\n");
                 var fm = g2.getFontMetrics();
@@ -638,7 +638,7 @@ public final class SyncEditorDialog extends JDialog {
                     g2.drawString(lines[i], x + (w - fm.stringWidth(lines[i])) / 2, y + (h - total) / 2 + i * fm.getHeight() + fm.getAscent());
                 }
             }
-            g2.setFont(getFont().deriveFont(Font.BOLD, 10f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 10f));
             g2.setColor(new Color(0, 0, 0, 170));
             g2.fillRoundRect(x + 6, y + 6, 150, 18, 10, 10);
             g2.setColor(Color.WHITE);

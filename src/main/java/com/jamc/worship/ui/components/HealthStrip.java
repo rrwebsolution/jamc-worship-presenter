@@ -78,7 +78,7 @@ public class HealthStrip extends JPanel {
         for (Metric m : order) {
             add(m);
         }
-        health.setFont(health.getFont().deriveFont(Font.BOLD));
+        health.setFont(com.jamc.worship.ui.FontCache.derive(health.getFont(), Font.BOLD));
         health.setToolTipText("Production health. Click for the details and recent alerts.");
         more.setToolTipText("More readings: click for the details");
         for (Metric m : new Metric[]{health, more}) {
@@ -144,7 +144,8 @@ public class HealthStrip extends JPanel {
             ram.set("RAM N/A", Palette::mutedText, "Memory use is not reported on this computer.");
         } else {
             boolean high = r.issues().stream().anyMatch(i -> i.key().equals("ram"));
-            ram.set(String.format(Locale.ROOT, "RAM %.1f GB", s.ramUsed() / GB), high ? Palette::warning : Palette::text,
+            // the whole PC (Chrome and other programs count too); LiveCat's own memory is in the tooltip
+            ram.set(String.format(Locale.ROOT, "PC RAM %.1f GB", s.ramUsed() / GB), high ? Palette::warning : Palette::text,
                     html(String.format(Locale.ROOT, "In use on this computer: %.1f of %.1f GB (%.0f%%)",
                                     s.ramUsed() / GB, s.ramTotal() / GB, 100.0 * s.ramUsed() / s.ramTotal()),
                             s.heapUsed() < 0 ? null : String.format(Locale.ROOT, "LiveCat (Java): %.0f MB of %s",
@@ -467,7 +468,7 @@ public class HealthStrip extends JPanel {
             JLabel title = new JLabel("Production Health: " + r.level().label());
             title.setIcon(Icons.get(health.iconName, 16, tone(r.level())));
             title.setForeground(tone(r.level()).get());
-            title.setFont(title.getFont().deriveFont(Font.BOLD, title.getFont().getSize2D() + 1f));
+            title.setFont(com.jamc.worship.ui.FontCache.derive(title.getFont(), Font.BOLD, title.getFont().getSize2D() + 1f));
             full(title);
             if (r.issues().isEmpty()) {
                 full(Ui.small(r.level() == Level.UNKNOWN ? "Waiting for the first readings…" : "No problems right now."));
@@ -590,7 +591,7 @@ public class HealthStrip extends JPanel {
 
         private void heading(String text) {
             JLabel l = Ui.label(text.toUpperCase(Locale.ROOT), Palette::accent, "small");
-            l.setFont(l.getFont().deriveFont(Font.BOLD));
+            l.setFont(com.jamc.worship.ui.FontCache.derive(l.getFont(), Font.BOLD));
             GridBagConstraints c = constraints(0, 2);
             c.insets = new Insets(12, 0, 3, 0);
             add(l, c);

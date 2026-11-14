@@ -366,7 +366,7 @@ public class PresentationDetailPanel extends JPanel {
         protected void paintComponent(Graphics g) {
             Graphics2D g2 = (Graphics2D) g.create();
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g2.setFont(getFont().deriveFont(java.awt.Font.BOLD, 11f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), java.awt.Font.BOLD, 11f));
             var fm = g2.getFontMetrics();
             int baseline = fm.getAscent() + 1;
             g2.setColor(Palette.mutedText());

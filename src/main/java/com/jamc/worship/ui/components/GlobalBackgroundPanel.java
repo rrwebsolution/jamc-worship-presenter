@@ -365,7 +365,7 @@ public class GlobalBackgroundPanel extends JPanel {
 
         @Override
         public Dimension getPreferredSize() {
-            FontMetrics fm = getFontMetrics(getFont().deriveFont(Font.BOLD, 10f));
+            FontMetrics fm = getFontMetrics(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 10f));
             return new Dimension(fm.stringWidth(text()) + 26, 20);
         }
 
@@ -380,7 +380,7 @@ public class GlobalBackgroundPanel extends JPanel {
             g2.fillRoundRect(0, 0, getWidth(), h, h, h);
             g2.setColor(c);
             g2.fillOval(8, h / 2 - 4, 8, 8);
-            g2.setFont(getFont().deriveFont(Font.BOLD, 10f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 10f));
             FontMetrics fm = g2.getFontMetrics();
             g2.setColor(Palette.text());
             g2.drawString(text(), 20, (h - fm.getHeight()) / 2 + fm.getAscent());
@@ -426,7 +426,7 @@ public class GlobalBackgroundPanel extends JPanel {
             g2.fillRect(r.x, r.y, r.width, r.height);
             boolean drawn = manager.paint(g2, r);
             g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-            g2.setFont(getFont().deriveFont(Font.BOLD, 9.5f));
+            g2.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 9.5f));
             if (manager.isActive()) {
                 String badge = "GLOBAL BACKGROUND";
                 FontMetrics fm = g2.getFontMetrics();

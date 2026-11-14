@@ -654,7 +654,7 @@ public final class PixabayBrowserDialog extends JDialog {
             }
             boolean hovered = hover.isHovered(this);
             // corner badges: preview state (top left), length and size (bottom)
-            g.setFont(getFont().deriveFont(Font.BOLD, 11f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 11f));
             if (hovered) { // no "▶ HOVER" hint on a resting card (user, 2026-11-14)
                 badge(g, frame != null ? "● PREVIEW" : "LOADING…", bx + 6, by + 6, new Color(0xDC2626));
             }

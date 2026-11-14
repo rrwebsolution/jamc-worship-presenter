@@ -58,7 +58,7 @@ final class StudioModePreview extends JComponent {
             g.setColor(new Color(0x16A34A));
             g.fillRoundRect(tx, y + mh / 2 - 9, takeW, 18, 8, 8);
             g.setColor(Color.WHITE);
-            g.setFont(base.deriveFont(Font.BOLD, 9f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.BOLD, 9f));
             FontMetrics fm = g.getFontMetrics();
             g.drawString("TAKE", tx + (takeW - fm.stringWidth("TAKE")) / 2, y + mh / 2 + fm.getAscent() / 2 - 1);
             monitor(g, new Rectangle(tx + takeW + 4, y, mw, mh), "PROGRAM", Palette.live(), base);
@@ -78,7 +78,7 @@ final class StudioModePreview extends JComponent {
         g.setColor(color);
         g.setStroke(new BasicStroke(2f));
         g.drawRoundRect(r.x, r.y, r.width, r.height, 6, 6);
-        g.setFont(base.deriveFont(Font.BOLD, 8.5f));
+        g.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.BOLD, 8.5f));
         FontMetrics fm = g.getFontMetrics();
         int bw = fm.stringWidth(label) + 8;
         g.fillRoundRect(r.x + 4, r.y + 4, bw, fm.getHeight(), 6, 6);
@@ -92,7 +92,7 @@ final class StudioModePreview extends JComponent {
     }
 
     private static void caption(Graphics2D g, String text, Font base, int w, int h) {
-        g.setFont(base.deriveFont(Font.PLAIN, 10.5f));
+        g.setFont(com.jamc.worship.ui.FontCache.derive(base, Font.PLAIN, 10.5f));
         FontMetrics fm = g.getFontMetrics();
         g.setColor(Palette.secondaryText());
         g.drawString(text, (w - fm.stringWidth(text)) / 2, h - 8);

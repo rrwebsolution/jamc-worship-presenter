@@ -92,7 +92,7 @@ public class VuMeter extends JComponent implements MixerMeters.Meter {
             g.fillRect(x, py, BAR, 2);
         }
         // scale: 0, -6 … -60
-        Font f = getFont().deriveFont(Font.PLAIN, 9f);
+        Font f = com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 9f);
         g.setFont(f);
         FontMetrics fm = g.getFontMetrics();
         int step = h < 110 ? 12 : 6;
@@ -105,7 +105,7 @@ public class VuMeter extends JComponent implements MixerMeters.Meter {
         }
         if (message != null) {
             g.setColor(Palette.mutedText());
-            g.setFont(getFont().deriveFont(Font.PLAIN, 9f));
+            g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 9f));
             FontMetrics mf = g.getFontMetrics();
             String text = message;
             g.rotate(-Math.PI / 2);
