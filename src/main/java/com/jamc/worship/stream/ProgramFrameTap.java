@@ -107,10 +107,12 @@ public final class ProgramFrameTap {
     private void tick() {
         lastTick = System.nanoTime();
         Graphics2D g = frame.createGraphics();
+        AvSync.beginFrame();
         try {
             canvas.paint(g);
         } finally {
             g.dispose();
+            AvSync.endFrame(System.nanoTime());
         }
         int[] data = ((DataBufferInt) frame.getRaster().getDataBuffer()).getData();
         for (Sink s : sinks) {

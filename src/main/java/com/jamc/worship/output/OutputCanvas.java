@@ -92,9 +92,8 @@ public class OutputCanvas extends JComponent {
     private final Runnable styleApplied = this::repaint;
 
     /**
-     * This surface is the live Program picture that goes out (stream, recording, OBS window, Program monitor): song
-     * lyrics use the Program lyrics style (e.g. the lower third). The projector and Preview never call this, so the
-     * room keeps the full-screen lyrics.
+     * This surface is a picture that goes out (stream, recording, OBS window, Program monitor, TV / projector): song
+     * lyrics use the scene's Lyrics layout and the Program lyrics style (e.g. the lower third).
      */
     public OutputCanvas useProgramLyricsStyle() {
         programLyricsStyle = true;

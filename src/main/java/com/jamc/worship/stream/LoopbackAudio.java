@@ -233,15 +233,33 @@ public final class LoopbackAudio implements AutoCloseable {
                 int whole = total - total % FRAME_BYTES; // only whole sample frames can be mixed
                 OutputStream out = target;
                 if (out != null) {
-                    int frames = whole / FRAME_BYTES;
-                    long due = (System.nanoTime() - connectedNanos) / 1_000 * RATE / 1_000_000;
-                    if (keepsTime(sent, frames, due)) {
-                        silenceInvalid(buf, whole);
+                    silenceInvalid(buf, whole);
+                    // a late picture (a busy PC painting Program late): this sound waits for it, changed at quiet moments
+                    int offset = 0;
+                    long change = sync.change(quietFloat(buf, whole), System.nanoTime());
+                    if (change > 0) {
+                        byte[] silence = new byte[(int) change * FRAME_BYTES];
+                        out.write(silence);
+                        sent += change;
+                        sync.applied(change);
+                    } else if (change < 0) {
+                        int skip = (int) Math.min(-change, whole / FRAME_BYTES);
+                        offset = skip * FRAME_BYTES;
+                        sync.applied(-skip);
+                    }
+                    int frames = (whole - offset) / FRAME_BYTES;
+                    long due = (System.nanoTime() - connectedNanos) / 1_000 * RATE / 1_000_000 + sync.frames();
+                    if (frames == 0) {
+                        // all of it left out to bring the sound earlier
+                    } else if (keepsTime(sent, frames, due)) {
+                        if (offset > 0) {
+                            System.arraycopy(buf, offset, buf, 0, whole - offset);
+                        }
                         LiveInputs.Mixer mixer = inputs;
                         if (mixer != null) {
                             mixer.mix(buf, frames);
                         }
-                        out.write(buf, 0, whole);
+                        out.write(buf, 0, frames * FRAME_BYTES);
                         sent += frames;
                     } else if (droppedFrames == 0) {
                         droppedFrames = frames;
@@ -265,6 +283,20 @@ public final class LoopbackAudio implements AutoCloseable {
      * silence and then also delivers what Windows had kept back, so without this the sound stays late for the whole
      * recording or stream (measured: 142 ms in one run, 11 ms in the next).
      */
+    private final SyncShift sync = new SyncShift(RATE, AvSync::pictureLagMs);
+
+    /** True when this chunk of stereo float sound is quiet (below about -30 dB): a delay change there is not heard. */
+    static boolean quietFloat(byte[] buf, int length) {
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.wrap(buf, 0, length).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        for (int i = 0; i + 3 < length; i += 4) {
+            float v = b.getFloat(i);
+            if (v > 0.03f || v < -0.03f) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static boolean keepsTime(long sent, long frames, long due) {
         return sent + frames - due <= RATE * AHEAD_MS / 1000;
     }

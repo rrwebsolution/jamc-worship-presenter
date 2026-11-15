@@ -190,6 +190,7 @@ public final class VideoPlayer implements VideoPlayback {
     }
 
     public BufferedImage currentFrame() {
+        com.jamc.worship.stream.AvSync.noteFrame(lastFrameNanos); // how late this picture is in a recording
         return front;
     }
 

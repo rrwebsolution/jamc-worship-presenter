@@ -100,12 +100,50 @@ final class MicAudio implements AutoCloseable {
 
     private void send(byte[] buf, int length) throws IOException {
         synchronized (lock) {
-            if (target == null || dropBecauseAhead(written, length / FRAME_BYTES, dueFrames())) {
+            if (target == null) {
                 return;
             }
-            target.write(buf, 0, length);
-            written += length / FRAME_BYTES;
+            int offset = 0;
+            // the picture is late (camera caching, a busy PC): the voice waits for it, changed at quiet moments
+            long change = sync.change(quiet(buf, length), System.nanoTime());
+            if (change > 0) {
+                writeSilence(change);
+                sync.applied(change);
+            } else if (change < 0) {
+                int skip = (int) Math.min(-change, length / FRAME_BYTES);
+                offset = skip * FRAME_BYTES;
+                sync.applied(-skip);
+            }
+            int frames = (length - offset) / FRAME_BYTES;
+            if (frames == 0 || dropBecauseAhead(written, frames, dueFrames() + sync.frames())) {
+                return;
+            }
+            target.write(buf, offset, length - offset);
+            written += frames;
         }
+    }
+
+    private final SyncShift sync = new SyncShift(RATE, AvSync::micDelayMs);
+
+    private void writeSilence(long frames) throws IOException {
+        byte[] silence = new byte[RATE / 10 * FRAME_BYTES];
+        while (frames > 0) {
+            int n = (int) Math.min(frames, silence.length / FRAME_BYTES);
+            target.write(silence, 0, n * FRAME_BYTES);
+            written += n;
+            frames -= n;
+        }
+    }
+
+    /** True when this chunk of 16-bit sound is quiet (below about -30 dB): a delay change there is not heard. */
+    static boolean quiet(byte[] buf, int length) {
+        for (int i = 0; i + 1 < length; i += 2) {
+            int v = (short) ((buf[i] & 0xFF) | (buf[i + 1] << 8));
+            if (v > 1000 || v < -1000) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** Keeps the sound on time with silence whenever the device has fallen behind. */
@@ -115,7 +153,7 @@ final class MicAudio implements AutoCloseable {
             while (!closed) {
                 synchronized (lock) {
                     if (target != null) {
-                        long missing = silenceNeeded(written, dueFrames());
+                        long missing = silenceNeeded(written, dueFrames() + sync.frames());
                         while (missing > 0) {
                             int frames = (int) Math.min(missing, silence.length / FRAME_BYTES);
                             target.write(silence, 0, frames * FRAME_BYTES);

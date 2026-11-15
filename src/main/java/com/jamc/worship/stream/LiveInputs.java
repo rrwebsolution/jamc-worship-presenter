@@ -28,10 +28,13 @@ final class LiveInputs {
     private static final int RATE = 48000;
     private static final int CHANNELS = 2;
     private static final int RING_FRAMES = RATE * 2;
-    /** Kept in hand: with a 20 ms buffer the longest wait for a device measured 43 ms. Every ms here makes the sound later. */
-    static final int LEAD_FRAMES = RATE * 60 / 1000;
+    /**
+     * Kept in hand: with a 20 ms buffer the longest wait for a device measured 43 ms (60 ms), plus 100 ms so the voice
+     * waits for the camera picture, which VLC holds back 150 ms ({@code live-caching}) before the app sees it.
+     */
+    static final int LEAD_FRAMES = RATE * 160 / 1000;
     /** More behind than this (the clocks of two devices drift): jump back to {@link #LEAD_FRAMES}. */
-    static final int MAX_BEHIND_FRAMES = RATE * 140 / 1000;
+    static final int MAX_BEHIND_FRAMES = RATE * 240 / 1000;
 
     private final Map<String, Feed> feeds = new ConcurrentHashMap<>();
     private Map<String, Double> gains = Map.of();

@@ -95,7 +95,8 @@ public class PresentationWindow extends JFrame {
 
         JPanel root = new JPanel(new BorderLayout());
         root.setBackground(Color.BLACK);
-        canvas = preview ? new OutputCanvas(program, false, true) : new OutputCanvas(program);
+        // the scene's Lyrics layout (lower third / bars / full) on the TV and projector too, as on Program and the stream
+        canvas = (preview ? new OutputCanvas(program, false, true) : new OutputCanvas(program)).useProgramLyricsStyle();
         // the pointer still moves freely between the screens; it only shows over the picture as configured
         canvas.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
             @Override
