@@ -72,6 +72,7 @@ class MixerChannelsTest {
     void theEncoderPutsChannelFiltersBeforeTheLevelAndMasterFiltersAfterTheMix() throws Exception {
         AppConfig config = new AppConfig(new AppPaths(tempDir.resolve("home")));
         MixerChannels.install(config);
+        MixerChannels.get().channel(MixerChannels.MIC).syncMs = 0; // no default sync offset in this check
         MixerChannels.get().channel(MixerChannels.MIC).filters.add(AudioFilter.of(AudioFilter.Type.NOISE_SUPPRESSION));
         MixerChannels.get().channel(MixerChannels.MASTER).filters.add(AudioFilter.of(AudioFilter.Type.LIMITER));
         MixerChannels.get().changed();

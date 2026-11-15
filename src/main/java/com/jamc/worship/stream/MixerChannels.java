@@ -62,6 +62,8 @@ public final class MixerChannels {
     public static final class State {
         public Map<String, Channel> channels = new LinkedHashMap<>();
         public Options options = new Options();
+        /** True once the microphone got its default sync offset (so an offset set back to 0 stays 0). */
+        public boolean micSyncDefault;
     }
 
     private static volatile MixerChannels instance = new MixerChannels(null);
@@ -84,6 +86,31 @@ public final class MixerChannels {
                     log.warn("Audio Mixer settings could not be read; starting fresh", e);
                 }
             }
+            giveMicDefaultSync();
+        }
+    }
+
+    /**
+     * The voice waits for the camera by default: the camera picture (an Iriun phone over Wi-Fi, a USB camera) reaches
+     * the recording about 600 ms after the sound; the app already delays the microphone about 120 ms ({@link AvSync}),
+     * so the MICROPHONE channel starts with this sync offset (Properties). Measured on the church setup 2026-11-15.
+     */
+    static final int DEFAULT_MIC_SYNC_MS = 450;
+
+    private void giveMicDefaultSync() {
+        if (state.micSyncDefault) {
+            return;
+        }
+        Channel mic = state.channels.computeIfAbsent(MIC, k -> new Channel());
+        if (mic.syncMs == 0) {
+            mic.syncMs = DEFAULT_MIC_SYNC_MS;
+        }
+        state.micSyncDefault = true;
+        try {
+            config.set(KEY, JSON.writeValueAsString(state));
+            config.save();
+        } catch (Exception e) {
+            log.warn("Audio Mixer settings could not be saved", e);
         }
     }
 
