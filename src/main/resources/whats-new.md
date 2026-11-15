@@ -17,3 +17,6 @@
 
 ## TV and projector
 - The **lower third / bars** lyrics now show on the TV and projector too, when the scene's Lyrics layout is Lower third or Centered bars.
+
+## Smoother camera
+- A camera on **Auto** that gives fewer than 20 pictures a second at 1080p (an Iriun phone over WiFi, a busy laptop) now switches by itself to **1280×720 at 30 fps** after 15 seconds, for a smooth picture. A size you choose in Camera settings is never changed.

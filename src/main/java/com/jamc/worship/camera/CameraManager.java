@@ -148,6 +148,8 @@ public final class CameraManager {
         long fpsFrames;
         long fpsAt;
         int fps;
+        /** Since when an Auto camera at 1080p gives too few pictures (0 = it does not). */
+        long slowSince;
         /** The next format ({@link #attempt}) opens once the previous feed has closed (or after a time limit). */
         boolean reopenPending;
         long reopenSince;
@@ -730,7 +732,11 @@ public final class CameraManager {
         if (restarting.contains(cam) || isClosing(cam)) {
             return null; // opened on a later frame request, once the old feed has let go of the device
         }
-        List<Format> tries = fallback && !Ndi.isNdi(cam) ? candidates(requested.get(cam), working.get(cam)) : List.of(new Format(null, 0));
+        Format req = requested.get(cam);
+        boolean auto = req == null || (req.size() == null && req.fps() == 0);
+        List<Format> tries = !fallback || Ndi.isNdi(cam) ? List.of(new Format(null, 0))
+                : auto && reduced.contains(cam) ? REDUCED // 1080p was too slow on this PC
+                : candidates(req, working.get(cam));
         try {
             Session s = new Session(opener.apply(cam, tries.getFirst()), tries, now);
             s.lastUsed = now;
@@ -937,6 +943,17 @@ public final class CameraManager {
                     s.lastFrameAt = now; // pictures are flowing even when nothing painted them
                     s.gotFrame = true;
                 }
+                if (tooSlowAt1080(cam, s, now)) {
+                    // an Iriun phone over WiFi or a busy laptop gave about 15 choppy pictures a second at 1080p
+                    // (measured on a posted service recording); 720p at 30 is smooth and plenty for the picture
+                    reduced.add(cam);
+                    working.remove(cam);
+                    release(cam, s.feed);
+                    it.remove();
+                    changed = true;
+                    log.info("Camera {} gave only {} pictures a second at 1920x1080 (Auto): now 1280x720 at 30 fps", cam, s.fps);
+                    continue;
+                }
             }
         }
         logSmoothness(now);
@@ -949,6 +966,34 @@ public final class CameraManager {
         if (changed) {
             fire();
         }
+    }
+
+    /** Fewer pictures a second than this at 1080p (Auto), for {@link #SLOW_MS}: the camera goes to 720p at 30. */
+    static final int SLOW_FPS = 20;
+    static final long SLOW_MS = 15_000;
+    static final List<Format> REDUCED = List.of(new Format("1280x720", 30), new Format("1280x720", 0), new Format(null, 0));
+    /** Auto cameras moved to 720p this run because 1080p was too slow. */
+    private final Set<String> reduced = new HashSet<>();
+
+    /** An Auto camera at 1080p giving fewer than {@link #SLOW_FPS} pictures a second (a size the operator chose is kept). */
+    static boolean slowAt1080(boolean auto, Format f, int fps) {
+        return auto && "1920x1080".equals(f.size()) && fps > 0 && fps < SLOW_FPS;
+    }
+
+    /** True once an Auto camera has given too few pictures at 1080p for long enough. */
+    private boolean tooSlowAt1080(String cam, Session s, long now) {
+        Format req = requested.get(cam);
+        boolean auto = req == null || (req.size() == null && req.fps() == 0);
+        Format f = s.formats.get(s.attempt);
+        boolean slow = fallback && !reduced.contains(cam) && !Ndi.isNdi(cam) && s.gotFrame && slowAt1080(auto, f, s.fps);
+        if (!slow) {
+            s.slowSince = 0;
+            return false;
+        }
+        if (s.slowSince == 0) {
+            s.slowSince = now;
+        }
+        return now - s.slowSince >= SLOW_MS;
     }
 
     private long lastSmoothnessLog;
