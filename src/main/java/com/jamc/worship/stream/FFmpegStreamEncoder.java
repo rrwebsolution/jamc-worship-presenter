@@ -58,7 +58,15 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
     private final AtomicReference<int[]> newest = new AtomicReference<>();
     private volatile Thread writer;
     private final List<MicAudio> micInputs = new ArrayList<>();
+    /**
+     * Pictures lost to the viewer: no buffer free, slots skipped because FFmpeg could not take frames in time, and
+     * freezes (no new picture for {@link #FREEZE_SLOTS}+ slots in a row, e.g. the Swing thread stalled).
+     */
     private final AtomicLong dropped = new AtomicLong();
+    /** Extra pictures above the frame rate, skipped on purpose (log only, never a drop). */
+    private final AtomicLong surplus = new AtomicLong();
+    /** A still picture is re-sent at least every 1.5 slots, so 3 repeats in a row means the picture really froze. */
+    private static final int FREEZE_SLOTS = 3;
     private final Deque<String> lastErrors = new ArrayDeque<>();
     private volatile Process process;
     private volatile boolean stopping;
@@ -206,7 +214,10 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
         System.arraycopy(rgb, 0, buf, 0, rgb.length);
         int[] replaced = newest.getAndSet(buf);
         if (replaced != null) {
-            dropped.incrementAndGet();
+            // not a loss: the tap sends up to ~1.4x the frame rate (two videos at different moments), and the file /
+            // stream takes exactly fps per second, so the extra pictures are skipped on purpose. Counting them as
+            // dropped made DROP red and Health critical on every PC while the video itself was smooth.
+            surplus.incrementAndGet();
             free.offer(replaced);
         }
         LockSupport.unpark(writer);
@@ -264,6 +275,7 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             int[] current = null;
             long first = 0;
             long slot = 0;
+            int repeats = 0;
             while (!stopping) {
                 if (current == null) { // the clock starts with the first frame
                     current = newest.getAndSet(null);
@@ -293,9 +305,16 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
                     free.offer(current);
                     current = latest;
                     toNv12(current, width, height, bytes);
+                    repeats = 0;
+                } else if (++repeats >= FREEZE_SLOTS) {
+                    dropped.addAndGet(repeats == FREEZE_SLOTS ? FREEZE_SLOTS : 1); // a visible freeze
                 }
                 out.write(bytes);
-                slot = Math.max(slot + 1, (System.nanoTime() - first + period / 2) / period);
+                long next = Math.max(slot + 1, (System.nanoTime() - first + period / 2) / period);
+                if (next > slot + 1) {
+                    dropped.addAndGet(next - slot - 1); // FFmpeg took too long: these slots are lost
+                }
+                slot = next;
             }
         } catch (IOException e) {
             if (!stopping) {
@@ -342,9 +361,9 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             return;
         }
         if (lastHealth != 0) {
-            log.info("Livestream health: {} frames in {} s, fps {}, frames dropped {} (ffmpeg {}, replaced {})",
+            log.info("Livestream health: {} frames in {} s, fps {}, frames dropped {} (ffmpeg {}, app {}), extra skipped {}",
                     p.frame - lastHealthFrame, (now - lastHealth) / 1_000_000_000L, p.fps,
-                    dropped.get() + p.dropFrames, p.dropFrames, dropped.get());
+                    dropped.get() + p.dropFrames, p.dropFrames, dropped.get(), surplus.get());
         }
         lastHealth = now;
         lastHealthFrame = p.frame;

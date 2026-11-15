@@ -438,6 +438,7 @@ public final class StreamManager {
             onError.accept("Recording stopped: " + error);
         } else if (file != null) {
             log.info("Recording saved: {}", file.getFileName());
+            finishRecording(file);
         }
         fire();
     }
@@ -823,8 +824,15 @@ public final class StreamManager {
             onError.accept("Shot recording stopped: " + error);
         } else if (r != null) {
             log.info("Shot recording saved: {}", r.file().getFileName());
+            finishRecording(r.file());
         }
         fire();
+    }
+
+    /** The saved (fragmented, crash-safe) file becomes a normal MP4 that Windows Media Player and editors play. */
+    private void finishRecording(Path file) {
+        FFmpeg.Capabilities caps = capabilities;
+        RecordingFinisher.finishLater(caps == null ? null : caps.executable(), file, null);
     }
 
     /** Stops everything (application exit). */
