@@ -322,6 +322,10 @@ public final class StreamManager {
             SwingUtilities.invokeLater(() -> {
                 capabilities = result;
                 probing = false;
+                if (!oldRecordingsChecked && result.executable() != null) {
+                    oldRecordingsChecked = true;
+                    RecordingFinisher.finishOldLater(result.executable(), recordingsDir(), this::inUse);
+                }
                 fire();
                 List<Runnable> waiting = new ArrayList<>(afterProbe);
                 afterProbe.clear();
@@ -830,6 +834,15 @@ public final class StreamManager {
     }
 
     /** The saved (fragmented, crash-safe) file becomes a normal MP4 that Windows Media Player and editors play. */
+    private volatile boolean oldRecordingsChecked;
+
+    /** True for a file a recording is writing now (never converted under it). */
+    private boolean inUse(Path f) {
+        Path main = recording.file();
+        ShotRecording shot = shotRecording;
+        return (main != null && main.equals(f)) || (shot != null && f.equals(shot.file()));
+    }
+
     private void finishRecording(Path file) {
         FFmpeg.Capabilities caps = capabilities;
         RecordingFinisher.finishLater(caps == null ? null : caps.executable(), file, null);

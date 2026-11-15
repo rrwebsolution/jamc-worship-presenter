@@ -37,6 +37,69 @@ public final class RecordingFinisher {
         });
     }
 
+    /**
+     * Fixes recordings made before this finishing step existed (or cut off by a crash): every fragmented MP4 in
+     * {@code folder} that was last written over two minutes ago and is not {@code skip} becomes a normal MP4.
+     */
+    public static void finishOldLater(Path ffmpeg, Path folder, java.util.function.Predicate<Path> skip) {
+        if (ffmpeg == null || folder == null || !Files.isDirectory(folder)) {
+            return;
+        }
+        Thread.ofVirtual().name("recording-finish-old").start(() -> {
+            long cutoff = System.currentTimeMillis() - 120_000;
+            try (var files = Files.list(folder)) {
+                for (Path f : files.toList()) {
+                    String n = f.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+                    if (!n.endsWith(".mp4") || n.endsWith(".finishing.mp4") || (skip != null && skip.test(f))) {
+                        continue;
+                    }
+                    if (Files.getLastModifiedTime(f).toMillis() < cutoff && isFragmented(f)) {
+                        finish(ffmpeg, f);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Could not check old recordings in {}: {}", folder, e.toString());
+            }
+        });
+    }
+
+    /** True when the MP4 has top-level fragment boxes ({@code moof}), i.e. it was written in pieces. */
+    static boolean isFragmented(Path file) {
+        try (var ch = java.nio.channels.FileChannel.open(file, java.nio.file.StandardOpenOption.READ)) {
+            long size = ch.size();
+            long pos = 0;
+            java.nio.ByteBuffer head = java.nio.ByteBuffer.allocate(16);
+            for (int boxes = 0; pos + 8 <= size && boxes < 10_000; boxes++) {
+                head.clear();
+                ch.read(head, pos);
+                if (head.position() < 8) {
+                    return false;
+                }
+                long len = Integer.toUnsignedLong(head.getInt(0));
+                String type = new String(new byte[]{head.get(4), head.get(5), head.get(6), head.get(7)},
+                        java.nio.charset.StandardCharsets.ISO_8859_1);
+                if ("moof".equals(type)) {
+                    return true;
+                }
+                if (len == 1) {
+                    if (head.position() < 16) {
+                        return false;
+                    }
+                    len = head.getLong(8);
+                } else if (len == 0) {
+                    return false; // last box runs to the end of the file
+                }
+                if (len < 8) {
+                    return false;
+                }
+                pos += len;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+        return false;
+    }
+
     /** True when the file is now a regular MP4; false leaves the original untouched. */
     public static boolean finish(Path ffmpeg, Path file) {
         if (ffmpeg == null || file == null || !Files.isRegularFile(file)) {
