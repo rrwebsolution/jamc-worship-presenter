@@ -61,7 +61,7 @@ class HealthStripTest {
                 }
             }
             assertTrue(text(parts[0]).startsWith("CPU 28%"));
-            assertEquals("RAM 2.4 GB", text(parts[1]));
+            assertEquals("PC RAM 2.4 GB", text(parts[1]));
             assertEquals("60 FPS", text(parts[2]));
             assertEquals("5.8 Mbps", text(parts[3]));
             assertEquals("Drop 0.0%", text(parts[4]));
