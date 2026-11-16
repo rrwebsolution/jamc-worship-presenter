@@ -81,8 +81,13 @@ jobs:
           app="appimage/LiveCat Multimedia.app"
           # macOS asks before a camera or microphone is used, and only when the app says why
           plist="$app/Contents/Info.plist"
-          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'LiveCat shows your cameras in scenes, recordings and the livestream.'" "$plist"
-          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'LiveCat records and streams your microphones.'" "$plist"
+          # jpackage may already have put a key in: change it then, add it otherwise
+          setkey() {
+            /usr/libexec/PlistBuddy -c "Set :$1 '$2'" "$plist" 2>/dev/null \
+              || /usr/libexec/PlistBuddy -c "Add :$1 string '$2'" "$plist"
+          }
+          setkey NSCameraUsageDescription "LiveCat shows your cameras in scenes, recordings and the livestream."
+          setkey NSMicrophoneUsageDescription "LiveCat records and streams your microphones."
           # changing Info.plist breaks jpackage's signature: sign again (ad hoc, no Apple Developer account)
           codesign --force --deep --sign - "$app"
           jpackage --type dmg --dest dist --app-image "$app" \
