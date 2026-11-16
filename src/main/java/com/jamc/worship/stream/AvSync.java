@@ -18,7 +18,8 @@ public final class AvSync {
     static final long MAX_LAG_MS = 1000;
     /**
      * Extra delay for a microphone read straight from Windows (MicAudio): the camera picture spends VLC's
-     * live-caching (150 ms) plus about a frame in the driver before the app sees it; the microphone about 50 ms.
+     * live-caching (150 ms) plus about a frame in the driver before the app sees it; the microphone about 50 ms. Only with
+     * the VLC camera engine.
      */
     static final long MIC_EXTRA_MS = 120;
 
@@ -80,6 +81,7 @@ public final class AvSync {
 
     /** Delay for a microphone read straight from Windows. */
     static long micDelayMs() {
-        return MIC_EXTRA_MS + lagMs;
+        // the Direct camera engine (FFmpeg) has no VLC caching: the picture is about as quick as the microphone
+        return (com.jamc.worship.camera.CameraManager.directEngine() ? 0 : MIC_EXTRA_MS) + lagMs;
     }
 }

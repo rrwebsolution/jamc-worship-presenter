@@ -322,6 +322,9 @@ public final class StreamManager {
             SwingUtilities.invokeLater(() -> {
                 capabilities = result;
                 probing = false;
+                if (result.executable() != null) {
+                    com.jamc.worship.camera.CameraManager.setFFmpeg(result.executable()); // Direct camera engine
+                }
                 if (!oldRecordingsChecked && result.executable() != null) {
                     oldRecordingsChecked = true;
                     RecordingFinisher.finishOldLater(result.executable(), recordingsDir(), this::inUse);

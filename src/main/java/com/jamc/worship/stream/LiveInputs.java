@@ -35,6 +35,9 @@ final class LiveInputs {
     static final int LEAD_FRAMES = RATE * 160 / 1000;
     /** More behind than this (the clocks of two devices drift): jump back to {@link #LEAD_FRAMES}. */
     static final int MAX_BEHIND_FRAMES = RATE * 240 / 1000;
+    /** With the Direct camera engine: only the device wait (no VLC camera delay). */
+    static final int DIRECT_LEAD_FRAMES = RATE * 60 / 1000;
+    static final int DIRECT_MAX_BEHIND_FRAMES = RATE * 140 / 1000;
 
     private final Map<String, Feed> feeds = new ConcurrentHashMap<>();
     private Map<String, Double> gains = Map.of();
@@ -97,7 +100,9 @@ final class LiveInputs {
             positions.keySet().retainAll(feeds.values());
             for (Feed feed : feeds.values()) {
                 long[] pos = positions.computeIfAbsent(feed, f -> new long[]{-1});
-                pos[0] = next(pos[0], feed.written);
+                pos[0] = com.jamc.worship.camera.CameraManager.directEngine()
+                        ? next(pos[0], feed.written, DIRECT_LEAD_FRAMES, DIRECT_MAX_BEHIND_FRAMES) // no VLC camera delay to wait for
+                        : next(pos[0], feed.written);
                 if (pos[0] < 0) {
                     continue; // collecting the lead
                 }
@@ -125,10 +130,14 @@ final class LiveInputs {
 
     /** Where to read next: -1 until {@link #LEAD_FRAMES} are in hand, back to that lead when too far behind. */
     static long next(long position, long written) {
+        return next(position, written, LEAD_FRAMES, MAX_BEHIND_FRAMES);
+    }
+
+    static long next(long position, long written, int lead, int maxBehind) {
         if (position < 0) {
-            return written >= LEAD_FRAMES ? written - LEAD_FRAMES : -1;
+            return written >= lead ? written - lead : -1;
         }
-        return written - position > MAX_BEHIND_FRAMES ? written - LEAD_FRAMES : position;
+        return written - position > maxBehind ? written - lead : position;
     }
 
     private static final class Feed {

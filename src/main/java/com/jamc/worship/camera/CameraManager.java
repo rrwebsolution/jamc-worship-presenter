@@ -210,7 +210,9 @@ public final class CameraManager {
     private boolean watching;
 
     public CameraManager() {
-        this((String name, Format format) -> Ndi.isNdi(name) ? (Feed) Ndi.open(name) : Feed.of(openDirectShow(name, format)),
+        this((String name, Format format) -> Ndi.isNdi(name) ? (Feed) Ndi.open(name)
+                        : DirectCamera.usesDirect(name) ? DirectCamera.open(name, format) // Camera engine: Direct (FFmpeg)
+                        : Feed.of(openDirectShow(name, format)),
                 () -> withNdi(detectWindows()), () -> MediaEngine.get().isAvailable(), true, true);
     }
 
@@ -561,6 +563,31 @@ public final class CameraManager {
         if (s != null) {
             release(name, s.feed); // reopened with the new format on the next frame request
             log.info("Camera {} restarting at {} / {} fps", name, size == null ? "Auto" : size, fps == 0 ? "default" : fps);
+        }
+    }
+
+    /** The camera engine (Settings key {@code camera.engine}): true = Direct (FFmpeg, like OBS), false = VLC. */
+    public static void useDirectEngine(boolean on) {
+        DirectCamera.setEnabled(on);
+    }
+
+    public static boolean directEngine() {
+        return DirectCamera.enabled();
+    }
+
+    public static final String KEY_ENGINE = DirectCamera.KEY_ENGINE;
+
+    /** The FFmpeg used by the Direct camera engine. */
+    public static void setFFmpeg(java.nio.file.Path exe) {
+        DirectCamera.setFFmpeg(exe);
+    }
+
+    /** Opens every running camera again (after the camera engine changed). EDT only. */
+    public void reopenAll() {
+        for (String cam : List.copyOf(sessions.keySet())) {
+            if (!Ndi.isNdi(cam)) {
+                refresh(cam);
+            }
         }
     }
 

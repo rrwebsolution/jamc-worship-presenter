@@ -242,7 +242,8 @@ public class YouTubeSearchPanel extends JPanel {
         JLabel help = new JLabel("<html><body style='width:380px'>Searching YouTube uses the <b>YouTube Data API v3</b> with "
                 + "the church's own API key (create one free in the Google Cloud console: APIs &amp; Services → "
                 + "enable \"YouTube Data API v3\" → Credentials → Create API key).<br><br>"
-                + "The key is stored only on this computer. Pasting YouTube links works without a key.</body></html>");
+                + "The key is stored only on this computer. Pasting YouTube links works without a key.<br><br>"
+                + com.jamc.worship.ui.OwnerContact.html() + "</body></html>");
         JPanel p = new JPanel(new BorderLayout(0, 10));
         p.add(help, BorderLayout.NORTH);
         p.add(field, BorderLayout.CENTER);

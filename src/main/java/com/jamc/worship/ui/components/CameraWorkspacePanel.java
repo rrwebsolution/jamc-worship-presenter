@@ -116,6 +116,9 @@ public class CameraWorkspacePanel extends JPanel {
     private final JComboBox<Object> fps = new JComboBox<>();
     private final JLabel capsNote = Ui.label(" ", Palette::mutedText, "small");
     private final JComboBox<String> audioInput = new JComboBox<>();
+    private static final String ENGINE_VLC = "VLC";
+    private static final String ENGINE_DIRECT = "Direct (FFmpeg, faster)";
+    private final JComboBox<String> engine = new JComboBox<>(new String[]{ENGINE_VLC, ENGINE_DIRECT});
     private final JCheckBox keepAspect = new JCheckBox("Maintain aspect ratio", true);
     private final JCheckBox mirror = new JCheckBox("Mirror");
     private final JComboBox<FitMode> fit = new JComboBox<>(new FitMode[]{FitMode.FILL, FitMode.FIT});
@@ -149,6 +152,13 @@ public class CameraWorkspacePanel extends JPanel {
         this.config = config;
         this.actions = actions;
         setOpaque(false);
+        // camera engine, before any camera opens: Direct = FFmpeg reads the camera like OBS (no VLC delay)
+        CameraManager.setFFmpeg(com.jamc.worship.stream.FFmpeg.locate(
+                config.get(com.jamc.worship.stream.StreamManager.KEY_FFMPEG_PATH, null)));
+        boolean direct = !"VLC".equals(config.get(CameraManager.KEY_ENGINE, "DIRECT")); // Direct unless VLC was chosen
+        CameraManager.useDirectEngine(direct);
+        engine.setSelectedItem(direct ? ENGINE_DIRECT : ENGINE_VLC);
+        engine.addActionListener(e -> engineChanged());
         buildLibraryPanel();
 
         JLabel badge = Ui.label("CAMERA", Palette::secondaryText, "semibold");
@@ -526,6 +536,10 @@ public class CameraWorkspacePanel extends JPanel {
         audioInput.setToolTipText("The microphone / HDMI audio that belongs to this camera. Camera audio is heard only "
                 + "where a scene's camera source switches AUDIO on (off by default).");
         row(p, g, "Audio input", audioInput);
+        engine.setToolTipText("<html>How every camera is read. <b>Direct</b>: FFmpeg reads the camera straight away, like "
+                + "OBS (about 150 ms less delay, so the voice matches sooner).<br><b>VLC</b>: the earlier way. Changing it "
+                + "restarts the cameras.</html>");
+        row(p, g, "Engine", engine);
         row(p, g, "", keepAspect);
         row(p, g, "", mirror);
         row(p, g, "Fit", fit);
@@ -725,6 +739,22 @@ public class CameraWorkspacePanel extends JPanel {
         applyFormat(cam);
         statusHandler.accept(names.full(cam) + ": " + (s.isEmpty() ? "best resolution" : s) + ", "
                 + (r.isEmpty() ? "default frame rate" : r + " fps") + ".");
+    }
+
+    private void engineChanged() {
+        boolean direct = ENGINE_DIRECT.equals(engine.getSelectedItem());
+        if (direct == CameraManager.directEngine()) {
+            return;
+        }
+        config.set(CameraManager.KEY_ENGINE, direct ? "DIRECT" : "VLC");
+        config.save();
+        CameraManager.useDirectEngine(direct);
+        if (direct && !CameraManager.directEngine()) {
+            statusHandler.accept("Direct camera engine needs FFmpeg (Settings → Stream). Cameras stay on VLC.");
+            return;
+        }
+        cameras.reopenAll();
+        statusHandler.accept("Camera engine: " + (direct ? "Direct (FFmpeg)" : "VLC") + ". Cameras restarting.");
     }
 
     private void applyFormat(String cam) {

@@ -1297,6 +1297,7 @@ public class SettingsPanel extends JPanel {
             text.add(flow(Ui.label("Pixabay Videos API", Palette::text, "semibold"),
                     Ui.label(hasKey ? "● Key saved and checked (hidden)" : "○ No key yet", hasKey ? Palette::live : Palette::mutedText, "small")));
             text.add(Ui.small("Free key: sign in at pixabay.com, open pixabay.com/api/docs and copy \"Your API key\"."));
+            text.add(com.jamc.worship.ui.OwnerContact.label());
             JPanel row = Ui.transparent(new BorderLayout(10, 0));
             row.add(text, BorderLayout.CENTER);
             row.add(flow(setKey, removeKey), BorderLayout.EAST);
@@ -1340,7 +1341,10 @@ public class SettingsPanel extends JPanel {
             JButton setKey = Ui.button(hasKey ? "Change Key…" : "Set Key…", null);
             setKey.addActionListener(e -> {
                 javax.swing.JPasswordField field = new javax.swing.JPasswordField(32);
-                if (JOptionPane.showConfirmDialog(this, field, "YouTube Data API key", JOptionPane.OK_CANCEL_OPTION,
+                JPanel ask = new JPanel(new BorderLayout(0, 8));
+                ask.add(field, BorderLayout.CENTER);
+                ask.add(com.jamc.worship.ui.OwnerContact.label(), BorderLayout.SOUTH);
+                if (JOptionPane.showConfirmDialog(this, ask, "YouTube Data API key", JOptionPane.OK_CANCEL_OPTION,
                         JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION && field.getPassword().length > 0) {
                     cfg.set(com.jamc.worship.youtube.YouTubeClient.KEY_API_KEY, new String(field.getPassword()).strip());
                     cfg.save();

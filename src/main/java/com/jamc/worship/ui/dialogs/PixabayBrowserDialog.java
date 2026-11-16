@@ -350,7 +350,10 @@ public final class PixabayBrowserDialog extends JDialog {
         }));
         JPanel row = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
         row.add(set);
-        box.add(row, BorderLayout.SOUTH);
+        JPanel south = Ui.transparent(new BorderLayout(0, 8));
+        south.add(row, BorderLayout.NORTH);
+        south.add(com.jamc.worship.ui.OwnerContact.label(), BorderLayout.SOUTH);
+        box.add(south, BorderLayout.SOUTH);
         status.add(box, BorderLayout.CENTER);
         status.revalidate();
         status.repaint();
@@ -366,6 +369,7 @@ public final class PixabayBrowserDialog extends JDialog {
         JPanel p = Ui.transparent(new BorderLayout(0, 6));
         p.add(new JLabel("Pixabay API key (pixabay.com/api/docs → \"Your API key\"):"), BorderLayout.NORTH);
         p.add(field, BorderLayout.CENTER);
+        p.add(com.jamc.worship.ui.OwnerContact.label(), BorderLayout.SOUTH);
         if (JOptionPane.showConfirmDialog(parent, p, "Pixabay API key", JOptionPane.OK_CANCEL_OPTION,
                 JOptionPane.PLAIN_MESSAGE) != JOptionPane.OK_OPTION || field.getPassword().length == 0) {
             return;

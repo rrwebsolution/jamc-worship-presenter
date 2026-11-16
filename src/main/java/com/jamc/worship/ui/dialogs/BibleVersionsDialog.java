@@ -68,7 +68,8 @@ public class BibleVersionsDialog extends JDialog {
         JLabel legal = Ui.label("<html><body style='width:640px'><b>Use only versions your church is licensed to use.</b> NLT, ESV, NIV, NASB and "
                 + "Ang Pulong Sa Dios are copyrighted by their publishers, so their text is not included. Connect each one "
                 + "with your own licensed API key, or import a Bible file you are permitted to use, and show the attribution "
-                + "the publisher requires. The King James Version is public domain and included.</html>", Palette::secondaryText, null);
+                + "the publisher requires. The King James Version is public domain and included.<br><br>"
+                + com.jamc.worship.ui.OwnerContact.html() + "</html>", Palette::secondaryText, null);
         root.add(legal, BorderLayout.NORTH);
 
         table.setRowHeight(28);

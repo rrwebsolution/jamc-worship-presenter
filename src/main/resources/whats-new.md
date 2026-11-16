@@ -23,3 +23,8 @@
 
 ## Shot recordings have sound
 - **Camera → AUTO DIRECTOR → RECORD THIS SHOT** files now have the same sound as the main recording, including Audio Input sources and camera audio from the scene (before, a shot file could be silent).
+
+## Faster camera (Direct engine)
+- Cameras are now read **straight away by FFmpeg**, like OBS, instead of through VLC (which held each camera picture back 150 ms). The picture is less late, so voice and camera match. This is the **default** on every PC: nothing to set up.
+- If a camera gives no picture this way, LiveCat opens it through VLC by itself. To use VLC for all cameras: **Camera → Engine → VLC**.
+- The MICROPHONE **Sync offset** stays 450 ms; with the faster camera that matches the 600 ms measured with VLC.
