@@ -35,6 +35,17 @@ public final class VirtualCameras {
         default String mainCamera() {
             return null;
         }
+
+        /** True when the Auto Director flips this camera left to right (its Mirror button). */
+        default boolean mirrored(String camera) {
+            return false;
+        }
+    }
+
+    /** True when the Auto Director's shots of this camera are flipped left to right. */
+    public static boolean mirrored(String camera) {
+        Source s = source;
+        return s != null && camera != null && s.mirrored(camera);
     }
 
     /** The Auto Director's main camera, or null when there is no director. */

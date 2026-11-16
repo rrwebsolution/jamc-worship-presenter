@@ -20,13 +20,17 @@ public record ProgramLyricsStyle(Mode mode, String fontFamily, int fontSize, boo
                                  String textColor, TextAlign align, String barColor, float barOpacity,
                                  float offsetX, float bottomMargin, int lineSpacing, int padV, int padH, int maxLines,
                                  float minBarWidth, float maxBarWidth, int cornerRadius, boolean outline, boolean shadow,
-                                 Fade fade, int fadeMs, boolean transparentOverlay) {
+                                 Fade fade, int fadeMs, boolean transparentOverlay,
+                                 boolean showPrevious, boolean showNext, int spotifySpacing, Easing easing,
+                                 LyricsBox box) {
 
     public enum Mode {
         OFF("Full lyrics (normal)"),
         LOWER_THIRD("Lower Third"),
         CENTERED("Centered bars"),
-        FULL_SCREEN("Full Screen (dimmed)");
+        FULL_SCREEN("Full Screen (dimmed)"),
+        /** The operator's own box (Lyrics Appearance → My layouts), carried in {@link #box()}. */
+        CUSTOM("Custom layout");
 
         private final String label;
 
@@ -42,11 +46,32 @@ public record ProgramLyricsStyle(Mode mode, String fontFamily, int fontSize, boo
 
     public enum Fade {
         SMOOTH_FADE("Smooth Fade"),
+        SPOTIFY("Spotify-Style Scroll"),
+        SLIDE_UP("Slide Up"),
+        SLIDE_DOWN("Slide Down"),
         CUT("Cut");
 
         private final String label;
 
         Fade(String label) {
+            this.label = label;
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    public enum Easing {
+        EASE_IN_OUT("Ease In & Out"),
+        EASE_IN("Ease In"),
+        EASE_OUT("Ease Out"),
+        LINEAR("Linear");
+
+        private final String label;
+
+        Easing(String label) {
             this.label = label;
         }
 
@@ -78,12 +103,31 @@ public record ProgramLyricsStyle(Mode mode, String fontFamily, int fontSize, boo
         cornerRadius = Math.clamp(cornerRadius, 0, 40);
         fade = fade == null ? Fade.SMOOTH_FADE : fade;
         fadeMs = Math.clamp(fadeMs, 0, 2000);
+        spotifySpacing = Math.clamp(spotifySpacing, 20, 400);
+        easing = easing == null ? Easing.EASE_IN_OUT : easing;
+        box = mode == Mode.CUSTOM ? box : null;
+        if (mode == Mode.CUSTOM && box == null) {
+            mode = Mode.LOWER_THIRD; // its layout was deleted: the usual lower third
+        }
+    }
+
+    /** Without a custom box (every layout except Custom). */
+    public ProgramLyricsStyle(Mode mode, String fontFamily, int fontSize, boolean bold, boolean uppercase,
+                              String textColor, TextAlign align, String barColor, float barOpacity,
+                              float offsetX, float bottomMargin, int lineSpacing, int padV, int padH, int maxLines,
+                              float minBarWidth, float maxBarWidth, int cornerRadius, boolean outline, boolean shadow,
+                              Fade fade, int fadeMs, boolean transparentOverlay,
+                              boolean showPrevious, boolean showNext, int spotifySpacing, Easing easing) {
+        this(mode, fontFamily, fontSize, bold, uppercase, textColor, align, barColor, barOpacity, offsetX, bottomMargin,
+                lineSpacing, padV, padH, maxLines, minBarWidth, maxBarWidth, cornerRadius, outline, shadow, fade, fadeMs,
+                transparentOverlay, showPrevious, showNext, spotifySpacing, easing, null);
     }
 
     /** The broadcast lower third of the reference picture: 42 px bold white capitals on 75 % black bars, 2 lines. */
     public static ProgramLyricsStyle defaults() {
         return new ProgramLyricsStyle(Mode.LOWER_THIRD, "Segoe UI", 42, true, true, "#FFFFFF", TextAlign.CENTER,
-                "#000000", 0.75f, 0f, 0.08f, 8, 12, 24, 2, 0.66f, 0.9f, 0, false, false, Fade.SMOOTH_FADE, 400, true);
+                "#000000", 0.75f, 0f, 0.08f, 8, 12, 24, 2, 0.66f, 0.9f, 0, false, false,
+                Fade.SMOOTH_FADE, 400, true, true, true, 170, Easing.EASE_IN_OUT);
     }
 
     public boolean active() {
@@ -99,7 +143,14 @@ public record ProgramLyricsStyle(Mode mode, String fontFamily, int fontSize, boo
     public ProgramLyricsStyle withMode(Mode m) {
         return new ProgramLyricsStyle(m, fontFamily, fontSize, bold, uppercase, textColor, align, barColor, barOpacity,
                 offsetX, bottomMargin, lineSpacing, padV, padH, maxLines, minBarWidth, maxBarWidth, cornerRadius, outline,
-                shadow, fade, fadeMs, transparentOverlay);
+                shadow, fade, fadeMs, transparentOverlay, showPrevious, showNext, spotifySpacing, easing, box);
+    }
+
+    /** The same look in the operator's own box (a Custom layout). */
+    public ProgramLyricsStyle withBox(LyricsBox b) {
+        return new ProgramLyricsStyle(Mode.CUSTOM, fontFamily, fontSize, bold, uppercase, textColor, align, barColor,
+                barOpacity, offsetX, bottomMargin, lineSpacing, padV, padH, maxLines, minBarWidth, maxBarWidth, cornerRadius,
+                outline, shadow, fade, fadeMs, transparentOverlay, showPrevious, showNext, spotifySpacing, easing, b);
     }
 
     // ------------------------------------------------------------------ the applied style (what the outputs draw)
@@ -181,7 +232,12 @@ public record ProgramLyricsStyle(Mode mode, String fontFamily, int fontSize, boo
                 cfg.getBoolean(p + "shadow", d.shadow()),
                 parseEnum(Fade.class, cfg.get(p + "fade", null), d.fade()),
                 i(cfg, p + "fadeMs", d.fadeMs()),
-                cfg.getBoolean(p + "transparentOverlay", d.transparentOverlay()));
+                cfg.getBoolean(p + "transparentOverlay", d.transparentOverlay()),
+                cfg.getBoolean(p + "showPrevious", d.showPrevious()),
+                cfg.getBoolean(p + "showNext", d.showNext()),
+                i(cfg, p + "spotifySpacing", d.spotifySpacing()),
+                parseEnum(Easing.class, cfg.get(p + "easing", null), d.easing()),
+                LyricsBox.parse(cfg.get(p + "box", null)));
     }
 
     static void write(AppConfig cfg, String p, ProgramLyricsStyle s) {
@@ -208,6 +264,11 @@ public record ProgramLyricsStyle(Mode mode, String fontFamily, int fontSize, boo
         cfg.set(p + "fade", s.fade().name());
         cfg.set(p + "fadeMs", String.valueOf(s.fadeMs()));
         cfg.set(p + "transparentOverlay", String.valueOf(s.transparentOverlay()));
+        cfg.set(p + "showPrevious", String.valueOf(s.showPrevious()));
+        cfg.set(p + "showNext", String.valueOf(s.showNext()));
+        cfg.set(p + "spotifySpacing", String.valueOf(s.spotifySpacing()));
+        cfg.set(p + "easing", s.easing().name());
+        cfg.set(p + "box", s.box() == null ? null : s.box().format());
     }
 
     private static String color(String v, String d) {

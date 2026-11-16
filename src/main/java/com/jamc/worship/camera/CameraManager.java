@@ -214,7 +214,7 @@ public final class CameraManager {
         this((String name, Format format) -> Ndi.isNdi(name) ? (Feed) Ndi.open(name)
                         : DirectCamera.usesDirect(name) ? DirectCamera.open(name, format) // Camera engine: Direct (FFmpeg)
                         : Feed.of(openDirectShow(name, format)),
-                () -> withNdi(detectWindows()), () -> MediaEngine.get().isAvailable(), true, true);
+                () -> withNdi(withoutWaitingIriun(detectWindows())), () -> MediaEngine.get().isAvailable(), true, true);
     }
 
     public CameraManager(CameraProvider provider) {
@@ -475,7 +475,7 @@ public final class CameraManager {
         }
         Session s = sessions.get(cam);
         if (s == null) {
-            return CameraStatus.READY;
+            return CameraStatus.STANDBY; // found, not running: opened when a live scene uses it
         }
         if (s.failed) {
             return CameraStatus.ERROR;
@@ -1145,6 +1145,12 @@ public final class CameraManager {
     }
 
     /** The detected devices plus the NDI sources on the network (none when NDI is not installed). */
+    /** Leaves out the Iriun cameras that have no phone (Iriun always installs four). */
+    private static Detection withoutWaitingIriun(Detection d) {
+        java.nio.file.Path ffmpeg = DirectCamera.ffmpeg() != null ? DirectCamera.ffmpeg() : com.jamc.worship.stream.FFmpeg.locate(null);
+        return new Detection(IriunProbe.withoutWaiting(ffmpeg, d.video()), d.audio());
+    }
+
     private static Detection withNdi(Detection d) {
         List<String> ndi = Ndi.sources();
         if (ndi.isEmpty()) {

@@ -15,6 +15,7 @@ import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GraphicsDevice;
 import java.awt.Image;
+import java.awt.Rectangle;
 import java.awt.RenderingHints;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -47,6 +48,8 @@ public final class OutputService {
     /** What the projector display shows: PROGRAM (default) or PREVIEW. */
     public static final String KEY_PROJECTOR_SOURCE = "output.source";
     private static final String WINDOW_PREFIX = "window:";
+    /** Where each windowed output was last (target=x,y,w,h;...), so it opens there again. */
+    static final String KEY_WINDOW_BOUNDS = "output.window.bounds";
 
     public enum Mode {
         FULLSCREEN("Fullscreen"), WINDOWED("Windowed");
@@ -164,6 +167,15 @@ public final class OutputService {
         return routes.values().stream().anyMatch(r -> r.window != null);
     }
 
+    /**
+     * True when an output window that stays on top (a fullscreen output) covers part of {@code area}: a window of the
+     * operator's opened there must stay on top too, or it is hidden behind the output.
+     */
+    public boolean coversOnTop(Rectangle area) {
+        return routes.values().stream().anyMatch(r -> r.window != null && r.window.isShowing() && r.window.isAlwaysOnTop()
+                && r.window.getBounds().intersects(area));
+    }
+
     public boolean isProjectorBlack() {
         return projectorBlack;
     }
@@ -238,10 +250,11 @@ public final class OutputService {
         String target = displayId == null ? WINDOW_PREFIX + source.name() : displayId;
         Route existing = routes.get(target);
         if (existing != null && existing.source == source && existing.window != null) {
+            bringToFront(existing);
             return true;
         }
         Mode useMode = displayId == null ? Mode.WINDOWED : Mode.FULLSCREEN;
-        DisplayManager.Display display = displayId == null ? displays.defaultOutput() : displays.find(displayId).orElse(null);
+        DisplayManager.Display display = displayId == null ? windowDisplay(target) : displays.find(displayId).orElse(null);
         if (display == null) {
             notifier.accept("That display is not connected.");
             return false;
@@ -305,7 +318,7 @@ public final class OutputService {
         Route r = projectorRoute();
         if (r != null && r.source != source) {
             r.source = source;
-            DisplayManager.Display d = r.windowTarget() ? targetDisplay() : displays.find(r.target).orElse(null);
+            DisplayManager.Display d = r.windowTarget() ? windowDisplay(r.target) : displays.find(r.target).orElse(null);
             dispose(r);
             if (d != null) {
                 show(r, d);
@@ -343,7 +356,7 @@ public final class OutputService {
                 continue;
             }
             Route r = new Route(s[0], source, s[0].startsWith(WINDOW_PREFIX) ? Mode.WINDOWED : Mode.FULLSCREEN);
-            DisplayManager.Display d = r.windowTarget() ? displays.defaultOutput() : displays.find(r.target).orElse(null);
+            DisplayManager.Display d = r.windowTarget() ? windowDisplay(r.target) : displays.find(r.target).orElse(null);
             routes.put(r.target, r);
             if (d == null) {
                 missing = true;
@@ -472,8 +485,193 @@ public final class OutputService {
                 () -> PresentationWindow.CursorMode.parse(config.get(AppConfig.KEY_PROJECTOR_CURSOR, null)));
         r.window.setFillScreen(() -> config.getBoolean(AppConfig.KEY_OUTPUT_FILL_SCREEN, true));
         r.window.setBlackedOut(projectorBlack);
+        Rectangle last = r.mode == Mode.WINDOWED ? onScreen(rememberedBounds().get(target)) : null;
+        if (last != null) {
+            r.window.setBounds(last); // where the operator had it last time
+        }
         r.window.setVisible(true);
         log.info("{} output opened: {} on {}", r.source, r.mode, display.label());
+        if (r.mode == Mode.WINDOWED) {
+            r.window.toFront(); // in view at once, above LiveCat
+            tileWindowed();
+        }
+    }
+
+    /** An open output clicked again: in view at once (un-minimized, in front). */
+    private static void bringToFront(Route r) {
+        if (r.mode != Mode.WINDOWED) {
+            return; // fullscreen outputs already stay on top
+        }
+        if ((r.window.getExtendedState() & java.awt.Frame.ICONIFIED) != 0) {
+            r.window.setExtendedState(r.window.getExtendedState() & ~java.awt.Frame.ICONIFIED);
+        }
+        r.window.toFront();
+    }
+
+    /**
+     * The screen a windowed output opens on: where it was last, else the screen LiveCat is on (the operator sees it
+     * at once), else the projector screen.
+     */
+    private DisplayManager.Display windowDisplay(String target) {
+        Rectangle last = onScreen(rememberedBounds().get(target));
+        if (last != null) {
+            DisplayManager.Display best = null;
+            long bestArea = 0;
+            for (DisplayManager.Display d : displays.displays()) {
+                Rectangle in = d.bounds().intersection(last);
+                long area = in.isEmpty() ? 0 : (long) in.width * in.height;
+                if (area > bestArea) {
+                    bestArea = area;
+                    best = d;
+                }
+            }
+            if (best != null) {
+                return best;
+            }
+        }
+        GraphicsDevice operator = operatorDevice.get();
+        DisplayManager.Display here = operator == null ? null : displays.forDevice(operator).orElse(null);
+        return here != null ? here : displays.defaultOutput();
+    }
+
+    /** {@code r} when enough of it (its title bar area) is on a connected screen, else null. */
+    private Rectangle onScreen(Rectangle r) {
+        if (r == null) {
+            return null;
+        }
+        Rectangle top = new Rectangle(r.x, r.y, r.width, Math.min(r.height, 40));
+        for (DisplayManager.Display d : displays.displays()) {
+            Rectangle in = d.bounds().intersection(top);
+            if (!in.isEmpty() && in.width >= Math.min(120, r.width)) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Rectangle> rememberedBounds() {
+        return parseBounds(config.get(KEY_WINDOW_BOUNDS, null));
+    }
+
+    private void rememberBounds(Route r) {
+        if (r.mode != Mode.WINDOWED || r.window == null || !r.window.isShowing()
+                || (r.window.getExtendedState() & (java.awt.Frame.ICONIFIED | java.awt.Frame.MAXIMIZED_BOTH)) != 0) {
+            return;
+        }
+        Map<String, Rectangle> all = rememberedBounds();
+        all.put(r.target, r.window.getBounds());
+        config.set(KEY_WINDOW_BOUNDS, formatBounds(all));
+        config.save();
+    }
+
+    static Map<String, Rectangle> parseBounds(String s) {
+        Map<String, Rectangle> out = new LinkedHashMap<>();
+        if (s == null || s.isBlank()) {
+            return out;
+        }
+        for (String part : s.split(";")) {
+            int eq = part.lastIndexOf('=');
+            if (eq <= 0) {
+                continue;
+            }
+            String[] n = part.substring(eq + 1).split(",");
+            if (n.length != 4) {
+                continue;
+            }
+            try {
+                Rectangle r = new Rectangle(Integer.parseInt(n[0].trim()), Integer.parseInt(n[1].trim()),
+                        Integer.parseInt(n[2].trim()), Integer.parseInt(n[3].trim()));
+                if (r.width >= 100 && r.height >= 60) {
+                    out.put(part.substring(0, eq), r);
+                }
+            } catch (NumberFormatException ignored) {
+                // a damaged entry: that window opens in the default place
+            }
+        }
+        return out;
+    }
+
+    static String formatBounds(Map<String, Rectangle> all) {
+        List<String> parts = new ArrayList<>();
+        all.forEach((k, r) -> parts.add(k + "=" + r.x + "," + r.y + "," + r.width + "," + r.height));
+        return String.join(";", parts);
+    }
+
+    /**
+     * Two or more windowed outputs on one screen are placed side by side, the same size, 16:9: each opened centered,
+     * so the second one covered the first exactly. One window alone keeps its place.
+     */
+    private void tileWindowed() {
+        Map<Rectangle, List<PresentationWindow>> byScreen = new LinkedHashMap<>();
+        for (Route r : routes.values()) {
+            if (r.mode == Mode.WINDOWED && r.window != null && r.window.isShowing()) {
+                Rectangle screen = r.window.getGraphicsConfiguration().getBounds();
+                byScreen.computeIfAbsent(screen, k -> new ArrayList<>()).add(r.window);
+            }
+        }
+        byScreen.forEach((screen, windows) -> {
+            if (windows.size() < 2 || !overlapping(windows)) {
+                return; // each where the operator put it
+            }
+            Rectangle area = usableArea(windows.getFirst().getGraphicsConfiguration(), screen);
+            for (Rectangle cell : tiles(area, windows.size(), windows.getFirst().getInsets())) {
+                windows.remove(0).setBounds(cell);
+            }
+        });
+    }
+
+    /** True when one window hides a good part of another (a quarter of the smaller one). */
+    private static boolean overlapping(List<PresentationWindow> windows) {
+        List<Rectangle> b = windows.stream().map(java.awt.Window::getBounds).toList();
+        return overlap(b);
+    }
+
+    static boolean overlap(List<Rectangle> b) {
+        for (int i = 0; i < b.size(); i++) {
+            for (int j = i + 1; j < b.size(); j++) {
+                Rectangle in = b.get(i).intersection(b.get(j));
+                if (in.isEmpty()) {
+                    continue;
+                }
+                long smaller = Math.min((long) b.get(i).width * b.get(i).height, (long) b.get(j).width * b.get(j).height);
+                if ((long) in.width * in.height * 4 >= smaller) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /** The screen without the taskbar. */
+    private static Rectangle usableArea(java.awt.GraphicsConfiguration gc, Rectangle screen) {
+        java.awt.Insets in = java.awt.Toolkit.getDefaultToolkit().getScreenInsets(gc);
+        return new Rectangle(screen.x + in.left, screen.y + in.top, screen.width - in.left - in.right,
+                screen.height - in.top - in.bottom);
+    }
+
+    /**
+     * {@code n} windows side by side across {@code area}, a small gap between them, each picture 16:9 (the window
+     * frame of {@code frame} added), vertically centered.
+     */
+    static List<Rectangle> tiles(Rectangle area, int n, java.awt.Insets frame) {
+        int gap = 12;
+        int fw = frame.left + frame.right;
+        int fh = frame.top + frame.bottom;
+        int w = (area.width - gap * (n + 1)) / n;
+        int pictureH = (int) Math.round((w - fw) * 9 / 16.0);
+        int h = pictureH + fh;
+        if (h > area.height - 2 * gap) { // a narrow, tall screen: fit the height instead
+            h = area.height - 2 * gap;
+            w = (int) Math.round((h - fh) * 16 / 9.0) + fw;
+        }
+        int total = n * w + (n - 1) * gap;
+        int x = area.x + (area.width - total) / 2;
+        int y = area.y + (area.height - h) / 2;
+        List<Rectangle> out = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            out.add(new Rectangle(x + i * (w + gap), y, w, h));
+        }
+        return out;
     }
 
     /** The operator closed one output window with its close button. */
@@ -488,6 +686,7 @@ public final class OutputService {
 
     private void dispose(Route r) {
         if (r.window != null) {
+            rememberBounds(r);
             r.window.dispose();
             r.window = null;
         }

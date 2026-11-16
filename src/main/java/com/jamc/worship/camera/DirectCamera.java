@@ -64,10 +64,15 @@ final class DirectCamera implements CameraManager.Feed {
         ffmpeg = exe;
     }
 
-    private DirectCamera(String name, Process process, boolean lastResort) {
+    /** FFmpeg sends the pictures here (local TCP): a Windows pipe carried only ~28 MB/s, 3 pictures a second at 1080p. */
+    private final java.net.ServerSocket server;
+    private volatile java.net.Socket socket;
+
+    private DirectCamera(String name, Process process, boolean lastResort, java.net.ServerSocket server) {
         this.name = name;
         this.process = process;
         this.lastResort = lastResort;
+        this.server = server;
     }
 
     /** True when this camera should be opened directly (Direct engine on, FFmpeg found, the camera not refused). */
@@ -92,10 +97,15 @@ final class DirectCamera implements CameraManager.Feed {
 
     /** Starts FFmpeg on the camera; pictures arrive on its own threads. */
     static DirectCamera open(String name, CameraManager.Format format) {
-        List<String> cmd = command(ffmpeg.toString(), name, format);
+        List<String> cmd = new ArrayList<>(command(ffmpeg.toString(), name, format));
+        boolean lastResort = format.size() == null && format.fps() == 0;
         try {
-            Process p = new ProcessBuilder(cmd).start();
-            DirectCamera c = new DirectCamera(name, p, format.size() == null && format.fps() == 0);
+            // measured with 1080p test pictures: a pipe gave 3.3 pictures a second, local TCP the full 30 (250 MB/s)
+            java.net.ServerSocket server = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress());
+            server.setSoTimeout(15_000);
+            cmd.set(cmd.size() - 1, "tcp://127.0.0.1:" + server.getLocalPort());
+            Process p = new ProcessBuilder(cmd).redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+            DirectCamera c = new DirectCamera(name, p, lastResort, server);
             Thread.ofPlatform().daemon().name("camera-log").start(c::logLoop);
             Thread.ofPlatform().daemon().name("camera-read").start(c::readLoop);
             log.info("Camera {} opened directly ({})", name, format.size() == null ? "driver default" : format.size()
@@ -103,7 +113,7 @@ final class DirectCamera implements CameraManager.Feed {
             return c;
         } catch (IOException e) {
             log.warn("Camera {} could not be opened directly: {}", name, e.getMessage());
-            DirectCamera c = new DirectCamera(name, null, format.size() == null && format.fps() == 0);
+            DirectCamera c = new DirectCamera(name, null, lastResort, null);
             c.noPicture();
             return c;
         }
@@ -205,7 +215,10 @@ final class DirectCamera implements CameraManager.Feed {
                 return;
             }
             byte[] bytes = new byte[w * h * 4];
-            try (InputStream in = process.getInputStream()) {
+            java.net.Socket s = server.accept(); // FFmpeg connects once it has the camera's first picture
+            s.setReceiveBufferSize(8 << 20);
+            socket = s;
+            try (InputStream in = new java.io.BufferedInputStream(s.getInputStream(), 1 << 20)) {
                 while (!released) {
                     int got = 0;
                     while (got < bytes.length) {
@@ -276,12 +289,24 @@ final class DirectCamera implements CameraManager.Feed {
         return g / 1_000_000;
     }
 
+    private static void closeQuietly(java.io.Closeable c) {
+        if (c != null) {
+            try {
+                c.close();
+            } catch (IOException ignored) {
+                // closing
+            }
+        }
+    }
+
     @Override
     public void release() {
         if (released) {
             return;
         }
         released = true;
+        closeQuietly(socket);
+        closeQuietly(server);
         if (process == null) {
             return;
         }

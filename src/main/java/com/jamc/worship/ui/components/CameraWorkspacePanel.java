@@ -223,7 +223,14 @@ public class CameraWorkspacePanel extends JPanel {
             fit.setEnabled(keepAspect.isSelected());
             saveOptions();
         });
-        mirror.addActionListener(e -> saveOptions());
+        mirror.setToolTipText("Flip this camera left to right: here, in the Auto Director and its shots (Preview, LIVE, "
+                + "RECORD THIS SHOT), and for SEND TO PREVIEW");
+        mirror.addActionListener(e -> {
+            if (!loading) {
+                com.jamc.worship.camera.CameraMirror.set(config, selectedCamera(), mirror.isSelected());
+                monitor.repaint();
+            }
+        });
         fit.addActionListener(e -> {
             if (!loading) saveOptions();
         });
@@ -245,7 +252,6 @@ public class CameraWorkspacePanel extends JPanel {
 
         loading = true;
         try {
-            mirror.setSelected(config.getBoolean(K_MIRROR, false));
             String f = config.get(K_FIT, "FILL");
             keepAspect.setSelected(!"STRETCH".equals(f));
             fit.setSelectedItem("FIT".equals(f) ? FitMode.FIT : FitMode.FILL);
@@ -325,13 +331,8 @@ public class CameraWorkspacePanel extends JPanel {
         } else {
             monitor.repaint();
         }
-        // cameras that are on stay connected while this page is open (their picture is not drawn), so the
-        // state is true: INITIALIZING while connecting, READY once pictures arrive, ERROR when it fails
-        for (String cam : cameras.cameras()) {
-            if (!off.contains(cam)) {
-                cameras.frame(cam);
-            }
-        }
+        // only the cameras a live scene uses run (Program, and Preview in Studio Mode): opening every camera here
+        // (several Iriun / NDI / virtual cameras) loaded the laptop; the others show STANDBY until a scene uses them
         updateStatus();
         deviceList.repaint();
     }
@@ -636,6 +637,13 @@ public class CameraWorkspacePanel extends JPanel {
             deviceList.setSelectedValue(cam, true);
             refillFormats(cam, cam == null ? null : cameras.capabilities(cam));
             selectAudioInput(cam);
+            // Mirror is per camera now (shared with the Auto Director): the old one-for-all tick goes to this camera
+            if (cam != null && config.getBoolean(K_MIRROR, false)) {
+                com.jamc.worship.camera.CameraMirror.set(config, cam, true);
+                config.set(K_MIRROR, "false");
+                config.save();
+            }
+            mirror.setSelected(com.jamc.worship.camera.CameraMirror.mirrored(config, cam));
         } finally {
             loading = false;
         }
@@ -818,7 +826,6 @@ public class CameraWorkspacePanel extends JPanel {
     }
 
     private void saveOptions() {
-        config.set(K_MIRROR, String.valueOf(mirror.isSelected()));
         config.set(K_FIT, currentFit().name());
         config.save();
         monitor.repaint();
@@ -851,8 +858,7 @@ public class CameraWorkspacePanel extends JPanel {
             off.add(cam);
             cameras.close(cam);
         } else {
-            off.remove(cam);
-            cameras.frame(cam); // connect now: INITIALIZING until its pictures arrive, then READY
+            off.remove(cam); // STANDBY: it opens when a live scene uses it
         }
         config.set(K_OFF, String.join("|", off));
         config.save();

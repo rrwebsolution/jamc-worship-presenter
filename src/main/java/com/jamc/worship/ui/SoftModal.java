@@ -33,6 +33,8 @@ import java.util.Map;
 public final class SoftModal {
 
     static final String KEY = "jamc.softModal";
+    /** Open soft-modal sessions, oldest first; used to stop two restored dialogs fighting for focus. */
+    private static final java.util.List<Session> sessions = new java.util.ArrayList<>();
 
     private SoftModal() {
     }
@@ -45,6 +47,7 @@ public final class SoftModal {
         }
         dialog.setModalityType(Dialog.ModalityType.MODELESS);
         Session session = new Session(dialog);
+        sessions.add(session);
         dialog.getRootPane().putClientProperty(KEY, session);
         SecondaryLoop loop = Toolkit.getDefaultToolkit().getSystemEventQueue().createSecondaryLoop();
         WindowAdapter closed = new WindowAdapter() {
@@ -69,6 +72,7 @@ public final class SoftModal {
             }
         } finally {
             session.setBlocking(false);
+            sessions.remove(session);
             dialog.removeWindowListener(closed);
             dialog.removeComponentListener(hidden);
             dialog.getRootPane().putClientProperty(KEY, null);
@@ -76,10 +80,11 @@ public final class SoftModal {
     }
 
     /** MINIMIZE / RESTORE: false lets the operator use the other windows while the dialog stays open. */
-    static void setBlocking(JDialog dialog, boolean blocking) {
+    static boolean setBlocking(JDialog dialog, boolean blocking) {
         if (dialog.getRootPane().getClientProperty(KEY) instanceof Session s) {
-            s.setBlocking(blocking);
+            return s.setBlocking(blocking);
         }
+        return false;
     }
 
     /** One dialog shown by {@link #showAndWait}, and the windows it blocks. */
@@ -96,9 +101,16 @@ public final class SoftModal {
             this.dialog = dialog;
         }
 
-        void setBlocking(boolean on) {
+        boolean setBlocking(boolean on) {
             if (on == blocking) {
-                return;
+                return true;
+            }
+            if (on) {
+                Session newer = blockingSessionAbove(this);
+                if (newer != null) {
+                    newer.bringBack();
+                    return false;
+                }
             }
             blocking = on;
             if (on) {
@@ -121,6 +133,19 @@ public final class SoftModal {
                 }
                 blocked.clear();
             }
+            return true;
+        }
+
+        /** A later, unrelated dialog has the operator's attention; an older minimized dialog must remain minimized. */
+        private static Session blockingSessionAbove(Session current) {
+            int at = sessions.indexOf(current);
+            for (int i = sessions.size() - 1; i > at; i--) {
+                Session s = sessions.get(i);
+                if (s.blocking && s.dialog.isShowing()) {
+                    return s;
+                }
+            }
+            return null;
         }
 
         private void block(Window w, RootPaneContainer rpc) {

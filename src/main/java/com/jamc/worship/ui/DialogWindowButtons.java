@@ -56,9 +56,9 @@ public final class DialogWindowButtons {
         if (close == null) {
             return false;
         }
-        d.getRootPane().putClientProperty(INSTALLED, Boolean.TRUE);
         d.setResizable(true);
         State state = new State(d, title);
+        d.getRootPane().putClientProperty(INSTALLED, state);
         Container row = close.getParent();
         int at = indexOf(row, close);
         state.minimize = button("TitlePane.iconifyIcon", "Minimize", close.getPreferredSize());
@@ -82,6 +82,13 @@ public final class DialogWindowButtons {
             }
         });
         return true;
+    }
+
+    /** Brings a dialog minimized with its Minimize button (taskbar or strip) back to its normal size. */
+    public static void showNormal(JDialog d) {
+        if (d.getRootPane().getClientProperty(INSTALLED) instanceof State state) {
+            state.showNormal();
+        }
     }
 
     /** OK / Cancel / Yes / No message boxes stay small and simple. */
@@ -147,6 +154,17 @@ public final class DialogWindowButtons {
         boolean onTaskbar;
         private final javax.swing.Timer taskbarWatch = new javax.swing.Timer(250, e -> watchTaskbar());
 
+        void showNormal() {
+            if (onTaskbar) {
+                taskbarWatch.stop();
+                onTaskbar = false;
+                TaskbarMinimize.reattach(dialog, true);
+            }
+            if (minimized) {
+                restore();
+            }
+        }
+
         void toggleMinimized() {
             if (minimized) {
                 restore();
@@ -178,10 +196,17 @@ public final class DialogWindowButtons {
                 return;
             }
             if (onTaskbar && !TaskbarMinimize.isMinimized(dialog)) {
+                TaskbarMinimize.reattach(dialog, true);
+                if (!SoftModal.setBlocking(dialog, true)) {
+                    // Another editor opened while this one was minimized. Keep this one on the taskbar until that
+                    // editor closes, instead of letting two soft-modal dialogs repeatedly pull focus from each other.
+                    if (TaskbarMinimize.minimize(dialog)) {
+                        onTaskbar = true;
+                        return;
+                    }
+                }
                 taskbarWatch.stop();
                 onTaskbar = false;
-                TaskbarMinimize.reattach(dialog, true);
-                SoftModal.setBlocking(dialog, true); // full size again: it has the operator's attention
                 dialog.toFront();
                 dialog.requestFocus();
             }

@@ -197,7 +197,7 @@ class ProgramLyricsStyleTest {
         var opaque = ProgramLyricsStyle.defaults();
         ProgramLyricsStyle.apply(cfg, new ProgramLyricsStyle(opaque.mode(), opaque.fontFamily(), opaque.fontSize(), true, true,
                 "#FFFFFF", opaque.align(), "#000000", 0.75f, 0, 0.08f, 8, 12, 24, 2, 0.66f, 0.9f, 0, false, false,
-                opaque.fade(), 400, false));
+                opaque.fade(), 400, false, true, true, 170, ProgramLyricsStyle.Easing.EASE_IN_OUT));
         assertEquals(new Color(0x2040C0), new Color(program().render(spec, 192, 108, false).getRGB(5, 5)),
                 "transparent overlay off: the song background is drawn again");
     }
@@ -206,7 +206,7 @@ class ProgramLyricsStyleTest {
     void editingADraftNeverChangesTheLiveProgramUntilApplied(@TempDir Path other) {
         ProgramLyricsStyle draft = new ProgramLyricsStyle(ProgramLyricsStyle.Mode.CENTERED, "Segoe UI", 60, true, false,
                 "#FFFF00", null, "#000000", 0.5f, 0, 0.1f, 8, 12, 24, 3, 0.5f, 0.9f, 8, true, true,
-                ProgramLyricsStyle.Fade.CUT, 0, true);
+                ProgramLyricsStyle.Fade.CUT, 0, true, true, false, 220, ProgramLyricsStyle.Easing.EASE_OUT);
         ProgramLyricsStyle.saveDraft(cfg, draft);
         assertEquals(ProgramLyricsStyle.defaults(), ProgramLyricsStyle.applied(), "Save Settings does not touch Program");
         assertEquals(draft, ProgramLyricsStyle.draft(cfg));

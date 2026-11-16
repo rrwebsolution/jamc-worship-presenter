@@ -107,6 +107,19 @@ class CameraManagerTest {
     }
 
     @Test
+    void aCameraNoSceneUsesStaysOnStandbyAndIsNotOpened() {
+        CameraManager m = manager();
+        m.detect();
+        onEdt(() -> {
+            m.keepOpen("program", List.of("CAM A"));
+            return null;
+        });
+        assertEquals(CameraStatus.STANDBY, onEdt(() -> m.status("CAM C")));
+        assertEquals(0, opens("CAM C"), "only the live camera runs");
+        assertEquals(1, opens("CAM A"));
+    }
+
+    @Test
     void previewAndProgramCamerasAreOpenedBeforeTheyAreShown() {
         CameraManager m = manager();
         m.detect();

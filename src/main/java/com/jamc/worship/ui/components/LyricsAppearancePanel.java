@@ -1,11 +1,15 @@
 package com.jamc.worship.ui.components;
 
 import com.jamc.worship.config.AppConfig;
+import com.jamc.worship.config.LyricsLayouts;
 import com.jamc.worship.config.ProgramLyricsStyle;
 import com.jamc.worship.config.ProgramLyricsStyle.Fade;
+import com.jamc.worship.config.ProgramLyricsStyle.Easing;
 import com.jamc.worship.config.ProgramLyricsStyle.Mode;
 import com.jamc.worship.model.TextAlign;
 import com.jamc.worship.output.LowerThirdLyrics;
+import com.jamc.worship.output.LyricsContext;
+import com.jamc.worship.config.LyricsTransitionSettings;
 import com.jamc.worship.render.Fonts;
 import com.jamc.worship.ui.Ui;
 import com.jamc.worship.ui.theme.Palette;
@@ -21,7 +25,6 @@ import javax.swing.JLabel;
 import javax.swing.JPanel;
 import javax.swing.JSlider;
 import javax.swing.JSpinner;
-import javax.swing.JTabbedPane;
 import javax.swing.SpinnerNumberModel;
 import java.awt.BorderLayout;
 import java.awt.Color;
@@ -48,7 +51,11 @@ public final class LyricsAppearancePanel extends JPanel {
     private static final String SAMPLE = "Worthy of ev'ry breath\nWe could ever breathe";
 
     private final AppConfig cfg;
-    private final JComboBox<Mode> mode = new JComboBox<>(new Mode[]{Mode.LOWER_THIRD, Mode.CENTERED, Mode.FULL_SCREEN});
+    /** Lower Third, Centered bars, Full Screen, then the operator's own layouts (My layouts). */
+    private final JComboBox<Object> mode = new JComboBox<>();
+    private final JButton newLayout = Ui.button("New Layout…", "plus");
+    private final JButton editLayout = Ui.button("Edit…", null);
+    private final JButton deleteLayout = Ui.button("Delete", null);
     private final JComboBox<String> family = new JComboBox<>();
     private final JSpinner size = new JSpinner(new SpinnerNumberModel(42, 16, 160, 1));
     private final JCheckBox bold = new JCheckBox("Bold");
@@ -70,6 +77,10 @@ public final class LyricsAppearancePanel extends JPanel {
     private final JCheckBox shadow = new JCheckBox("Text shadow");
     private final JComboBox<Fade> fade = new JComboBox<>(Fade.values());
     private final JSpinner fadeMs = new JSpinner(new SpinnerNumberModel(400, 0, 2000, 50));
+    private final JCheckBox showPrevious = new JCheckBox("Show previous lyrics");
+    private final JCheckBox showNext = new JCheckBox("Show next lyrics");
+    private final JSpinner spotifySpacing = new JSpinner(new SpinnerNumberModel(170, 20, 400, 10));
+    private final JComboBox<Easing> easing = new JComboBox<>(Easing.values());
     private final JCheckBox transparent = new JCheckBox("<html>Use Transparent Lyrics Overlay in Program<br><small>the camera / scene stays visible; the song's own background is not drawn</small></html>");
     private final JLabel status = Ui.label(" ", Palette::secondaryText, "small");
     private final Sample sample = new Sample();
@@ -79,23 +90,9 @@ public final class LyricsAppearancePanel extends JPanel {
         super(new BorderLayout());
         setOpaque(false);
         this.cfg = cfg;
-        JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("Full Lyrics", previewTab());
-        tabs.addTab("Lower Third / Bars", programTab());
-        tabs.setSelectedIndex(1);
-        add(tabs, BorderLayout.CENTER);
+        fillModes();
+        add(programTab(), BorderLayout.CENTER);
         load(ProgramLyricsStyle.draft(cfg));
-    }
-
-    private JComponent previewTab() {
-        JPanel p = Ui.transparent(new BorderLayout(0, 8));
-        p.setBorder(BorderFactory.createEmptyBorder(12, 4, 8, 4));
-        p.add(Ui.label("<html><b>Full lyrics</b> (the normal big words, with the background image or video and the "
-                + "Spotify-style transition when chosen) are set in <b>Lyrics Typography</b> and <b>Lyrics Transition</b> "
-                + "above on this page.<br><br>The <b>church projector always shows the full lyrics</b>. Scenes whose "
-                + "Lyrics layout is \"Full lyrics\" show them on Preview and Program too.</html>",
-                Palette::text, null), BorderLayout.NORTH);
-        return p;
     }
 
     private JComponent programTab() {
@@ -104,6 +101,8 @@ public final class LyricsAppearancePanel extends JPanel {
                 .toArray(String[]::new)));
         int r = 0;
         row(grid, r++, "Sample shows:", mode);
+        row(grid, r++, "My layouts:", flow(newLayout, editLayout, deleteLayout,
+                Ui.small("your own lyrics box: drag it anywhere on the picture")));
         row(grid, r++, "Font:", flow(family, size, Ui.small("px at 1080p")));
         row(grid, r++, "", flow(bold, uppercase, outline, shadow));
         row(grid, r++, "Text color / alignment:", flow(textColor, align));
@@ -114,7 +113,9 @@ public final class LyricsAppearancePanel extends JPanel {
         row(grid, r++, "Bottom margin (%):", bottomMargin);
         row(grid, r++, "Horizontal position:", flow(offsetX, Ui.small("left ◀ ▶ right")));
         row(grid, r++, "Maximum visible lines:", flow(maxLines, Ui.small("longer cards re-flow, then get smaller; never cut")));
-        row(grid, r++, "Change:", flow(fade, fadeMs, Ui.small("ms")));
+        row(grid, r++, "Lyrics transition:", flow(fade, fadeMs, Ui.small("ms")));
+        row(grid, r++, "Animation easing:", easing);
+        row(grid, r++, "Spotify-style setup:", Ui.small("Uses the same previous/next, opacity, vertical spacing and easing as Full Lyrics."));
         row(grid, r, "", transparent);
         for (JSlider s : new JSlider[]{barOpacity, offsetX, bottomMargin, minWidth, maxWidth}) {
             s.setPreferredSize(new Dimension(160, s.getPreferredSize().height));
@@ -162,21 +163,97 @@ public final class LyricsAppearancePanel extends JPanel {
                 BorderLayout.SOUTH);
         body.add(south, BorderLayout.SOUTH);
 
-        for (JComboBox<?> c : new JComboBox<?>[]{mode, family, align, fade}) {
+        for (JComboBox<?> c : new JComboBox<?>[]{mode, family, align, fade, easing}) {
             c.addActionListener(e -> changed());
         }
-        for (JSpinner s : new JSpinner[]{size, lineSpacing, padV, padH, maxLines, corner, fadeMs}) {
+        for (JSpinner s : new JSpinner[]{size, lineSpacing, padV, padH, maxLines, corner, fadeMs, spotifySpacing}) {
             s.addChangeListener(e -> changed());
         }
         for (JSlider s : new JSlider[]{barOpacity, offsetX, bottomMargin, minWidth, maxWidth}) {
             s.addChangeListener(e -> changed());
         }
-        for (JCheckBox b : new JCheckBox[]{bold, uppercase, outline, shadow, transparent}) {
+        for (JCheckBox b : new JCheckBox[]{bold, uppercase, outline, shadow, transparent, showPrevious, showNext}) {
             b.addActionListener(e -> changed());
         }
         textColor.onChange = this::changed;
         barColor.onChange = this::changed;
+        newLayout.addActionListener(e -> {
+            LyricsLayouts.Layout made = LyricsLayoutEditor.edit(this, current(), null);
+            if (made != null) {
+                LyricsLayouts.save(cfg, made);
+                fillModes();
+                mode.setSelectedItem(find(made.id()));
+                updateStatus("Saved \"" + made.name() + "\". Use it in Edit Scene → Lyrics layer → Lyrics layout.");
+            }
+        });
+        editLayout.addActionListener(e -> {
+            if (mode.getSelectedItem() instanceof LyricsLayouts.Layout l) {
+                LyricsLayouts.Layout edited = LyricsLayoutEditor.edit(this, current(), l);
+                if (edited != null) {
+                    LyricsLayouts.save(cfg, edited);
+                    fillModes();
+                    mode.setSelectedItem(find(edited.id()));
+                    updateStatus("Saved \"" + edited.name() + "\". Scenes that use it show the new place at once.");
+                }
+            }
+        });
+        deleteLayout.addActionListener(e -> {
+            if (mode.getSelectedItem() instanceof LyricsLayouts.Layout l && javax.swing.JOptionPane.showConfirmDialog(this,
+                    "Delete the layout \"" + l.name() + "\"?\nScenes that use it show the Lower Third instead.", "Delete Layout",
+                    javax.swing.JOptionPane.OK_CANCEL_OPTION) == javax.swing.JOptionPane.OK_OPTION) {
+                LyricsLayouts.delete(cfg, l.id());
+                fillModes();
+                mode.setSelectedItem(Mode.LOWER_THIRD);
+            }
+        });
+        mode.addActionListener(e -> updateLayoutButtons());
+        updateLayoutButtons();
         return body;
+    }
+
+    // ------------------------------------------------------------------ my layouts
+
+    /** The built-in bar layouts, then the saved custom layouts (the selection is kept when it still exists). */
+    private void fillModes() {
+        Object keep = mode.getSelectedItem();
+        boolean was = loading;
+        loading = true;
+        try {
+            mode.removeAllItems();
+            for (Mode m : new Mode[]{Mode.LOWER_THIRD, Mode.CENTERED, Mode.FULL_SCREEN}) {
+                mode.addItem(m);
+            }
+            for (LyricsLayouts.Layout l : LyricsLayouts.all()) {
+                mode.addItem(l);
+            }
+            Object again = keep instanceof LyricsLayouts.Layout l ? find(l.id()) : keep;
+            mode.setSelectedItem(again != null ? again : Mode.LOWER_THIRD);
+        } finally {
+            loading = was;
+        }
+        updateLayoutButtons();
+    }
+
+    private LyricsLayouts.Layout find(String id) {
+        return LyricsLayouts.all().stream().filter(l -> l.id().equals(id)).findFirst().orElse(null);
+    }
+
+    /** The list entry for a saved style: its custom layout (same box), else its built-in layout. */
+    private Object modeItem(ProgramLyricsStyle s) {
+        if (s.mode() == Mode.CUSTOM) {
+            return LyricsLayouts.all().stream().filter(l -> l.box().equals(s.box())).findFirst()
+                    .map(l -> (Object) l).orElse(Mode.LOWER_THIRD);
+        }
+        return s.mode() == Mode.OFF ? Mode.LOWER_THIRD : s.mode();
+    }
+
+    private void updateLayoutButtons() {
+        boolean custom = mode.getSelectedItem() instanceof LyricsLayouts.Layout;
+        editLayout.setEnabled(custom);
+        deleteLayout.setEnabled(custom);
+        String tip = custom ? null : "Choose one of your layouts in \"Sample shows\" first";
+        editLayout.setToolTipText(tip);
+        deleteLayout.setToolTipText(tip);
     }
 
     // ------------------------------------------------------------------ values
@@ -184,7 +261,7 @@ public final class LyricsAppearancePanel extends JPanel {
     private void load(ProgramLyricsStyle s) {
         loading = true;
         try {
-            mode.setSelectedItem(s.mode() == Mode.OFF ? Mode.LOWER_THIRD : s.mode());
+            mode.setSelectedItem(modeItem(s));
             if (((javax.swing.DefaultComboBoxModel<String>) family.getModel()).getIndexOf(s.fontFamily()) < 0) {
                 family.addItem(s.fontFamily());
             }
@@ -210,6 +287,10 @@ public final class LyricsAppearancePanel extends JPanel {
             fade.setSelectedItem(s.fade());
             fadeMs.setValue(s.fadeMs());
             transparent.setSelected(s.transparentOverlay());
+            showPrevious.setSelected(s.showPrevious());
+            showNext.setSelected(s.showNext());
+            spotifySpacing.setValue(s.spotifySpacing());
+            easing.setSelectedItem(s.easing());
         } finally {
             loading = false;
         }
@@ -219,12 +300,21 @@ public final class LyricsAppearancePanel extends JPanel {
 
     /** The draft as shown in the controls. */
     public ProgramLyricsStyle current() {
-        return new ProgramLyricsStyle((Mode) mode.getSelectedItem(), (String) family.getSelectedItem(), (Integer) size.getValue(),
+        Fade selectedFade = (Fade) fade.getSelectedItem();
+        LyricsTransitionSettings spotify = selectedFade == Fade.SPOTIFY
+                ? LyricsTransitionSettings.load(cfg) : null;
+        Object picked = mode.getSelectedItem();
+        ProgramLyricsStyle base = new ProgramLyricsStyle(picked instanceof Mode m ? m : Mode.LOWER_THIRD, (String) family.getSelectedItem(), (Integer) size.getValue(),
                 bold.isSelected(), uppercase.isSelected(), textColor.value, (TextAlign) align.getSelectedItem(), barColor.value,
                 barOpacity.getValue() / 100f, offsetX.getValue() / 100f, bottomMargin.getValue() / 100f,
                 (Integer) lineSpacing.getValue(), (Integer) padV.getValue(), (Integer) padH.getValue(), (Integer) maxLines.getValue(),
                 minWidth.getValue() / 100f, maxWidth.getValue() / 100f, (Integer) corner.getValue(), outline.isSelected(),
-                shadow.isSelected(), (Fade) fade.getSelectedItem(), (Integer) fadeMs.getValue(), transparent.isSelected());
+                shadow.isSelected(), selectedFade, spotify == null ? (Integer) fadeMs.getValue() : spotify.durationMs(),
+                transparent.isSelected(), spotify == null ? showPrevious.isSelected() : spotify.showPrevious(),
+                spotify == null ? showNext.isSelected() : spotify.showNext(),
+                spotify == null ? (Integer) spotifySpacing.getValue() : spotify.spacing(),
+                spotify == null ? (Easing) easing.getSelectedItem() : Easing.valueOf(spotify.easing().name()));
+        return picked instanceof LyricsLayouts.Layout l ? base.withBox(l.box()) : base;
     }
 
     private void changed() {
@@ -265,7 +355,10 @@ public final class LyricsAppearancePanel extends JPanel {
             g.fillRoundRect(w * 30 / 100, h * 40 / 100, w * 36 / 100, h, w / 10, w / 10);
             ProgramLyricsStyle s = current();
             if (s.active()) {
-                LowerThirdLyrics.paint(g, w, h, SAMPLE, s);
+                LyricsContext sampleContext = new LyricsContext(-1L,
+                        java.util.List.of("You alone are worthy", SAMPLE, "We live for You"), 1,
+                        LyricsTransitionSettings.load(cfg).withMode(LyricsTransitionSettings.Mode.SPOTIFY));
+                LowerThirdLyrics.paint(g, w, h, SAMPLE, s, sampleContext);
             } else {
                 g.setColor(new Color(255, 255, 255, 200));
                 g.drawString("Off: Program shows the Preview Style lyrics", 10, h - 12);

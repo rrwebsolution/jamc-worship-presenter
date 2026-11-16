@@ -51,6 +51,15 @@ public final class DirectorSettings {
         put("director.camera", cam);
     }
 
+    /** Cameras flipped left to right: the same setting as the Camera page's Mirror (one per camera). */
+    public boolean mirrored(String cam) {
+        return com.jamc.worship.camera.CameraMirror.mirrored(config, cam);
+    }
+
+    public void setMirrored(String cam, boolean on) {
+        com.jamc.worship.camera.CameraMirror.set(config, cam, on);
+    }
+
     /**
      * Camera setup: false = one camera (every shot is a cut-out of the main camera), true = multiple cameras (each
      * shot may come from its own camera).

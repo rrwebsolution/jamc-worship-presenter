@@ -28,6 +28,7 @@ import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JRadioButton;
+import javax.swing.JTabbedPane;
 // import javax.swing.JSlider;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
@@ -353,14 +354,25 @@ public class SettingsPanel extends JPanel {
             lyricsBody.add(lyricsTypography, BorderLayout.CENTER);
             lyricsBody.add(flow(everySong, Ui.small("Set it up once here. In a song, APPLY TO \"All Songs\" changes these same settings.")),
                     BorderLayout.SOUTH);
-            content.add(section("Lyrics Typography", "Presentation → Lyrics: one look for every song. "
-                    + "Lyrics are stored as typed; UPPERCASE is applied only on screen.", lyricsBody), c);
-            c.gridy++;
-            content.add(section("Lyrics Transition", "Presentation → Lyrics: how the words change on NEXT / PREVIOUS "
-                    + "(Preview, Program, projector, OBS and the stream)", new LyricsTransitionPanel(cfg, typo)), c);
-            c.gridy++;
-            content.add(section("Lyrics Appearance", "Full lyrics or a lower third (a bar per line over the camera): "
-                    + "each scene picks its layout in Edit Scene → Lyrics layout", new LyricsAppearancePanel(cfg)), c);
+
+            JPanel fullLyrics = Ui.transparent(new BorderLayout(0, 16));
+            JPanel typographyBlock = Ui.transparent(new BorderLayout(0, 8));
+            typographyBlock.add(Ui.label("Full Lyrics Typography", Palette::text, "h4"), BorderLayout.NORTH);
+            typographyBlock.add(lyricsBody, BorderLayout.CENTER);
+            fullLyrics.add(typographyBlock, BorderLayout.CENTER);
+
+            JPanel transitionBlock = Ui.transparent(new BorderLayout(0, 8));
+            transitionBlock.setBorder(BorderFactory.createCompoundBorder(
+                    Ui.line(true, false, false, false), BorderFactory.createEmptyBorder(12, 0, 0, 0)));
+            transitionBlock.add(Ui.label("Lyrics Transition", Palette::text, "h4"), BorderLayout.NORTH);
+            transitionBlock.add(new LyricsTransitionPanel(cfg, typo), BorderLayout.CENTER);
+            fullLyrics.add(transitionBlock, BorderLayout.SOUTH);
+
+            JTabbedPane lyricsAppearance = new JTabbedPane();
+            lyricsAppearance.addTab("Full Lyrics", fullLyrics);
+            lyricsAppearance.addTab("Lower Third / Bars", new LyricsAppearancePanel(cfg));
+            content.add(section("Lyrics Appearance", "Everything for song lyrics in one place. Each scene chooses Full Lyrics "
+                    + "or Lower Third / Bars in Edit Scene → Lyrics layout.", lyricsAppearance), c);
             c.gridy++;
             bibleTypography = new TypographyEditor(typo, ContentKind.BIBLE);
             bibleDesign = new BibleDesignPicker(typo, cfg, this::bibleDesignApplied);

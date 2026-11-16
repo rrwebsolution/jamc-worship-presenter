@@ -196,6 +196,28 @@ public class ScenesPanel extends JPanel {
             "Lower third (bar per line)", "Centered bars", "Full screen (dimmed)"});
     /** null = Full lyrics, the default of every Lyrics layer. */
     private static final String[] LAYOUTS = {null, "LOWER_THIRD", "CENTERED", "FULL_SCREEN"};
+    /** What each Lyrics layout entry stores: {@link #LAYOUTS}, then the operator's own layouts (CUSTOM:id). */
+    private final List<String> layoutValues = new ArrayList<>(java.util.Arrays.asList(LAYOUTS));
+
+    /** The built-in layouts and the saved custom ones (Settings → Lyrics Appearance → My layouts). */
+    private void fillLyricsLayouts(String chosen) {
+        String[] labels = {"Full lyrics (normal)", "Lower third (bar per line)", "Centered bars", "Full screen (dimmed)"};
+        lyricsLayout.removeAllItems();
+        layoutValues.clear();
+        for (int i = 0; i < LAYOUTS.length; i++) {
+            lyricsLayout.addItem(labels[i]);
+            layoutValues.add(LAYOUTS[i]);
+        }
+        for (var l : com.jamc.worship.config.LyricsLayouts.all()) {
+            lyricsLayout.addItem("My layout: " + l.name());
+            layoutValues.add(l.key());
+        }
+        if (chosen != null && chosen.startsWith(com.jamc.worship.config.LyricsLayouts.PREFIX) && !layoutValues.contains(chosen)) {
+            lyricsLayout.addItem("Deleted layout (shows the Lower third)");
+            layoutValues.add(chosen);
+        }
+        lyricsLayout.setSelectedIndex(Math.max(0, layoutValues.indexOf(chosen))); // unknown / "OFF" = Full lyrics
+    }
     private final JSlider textScale = new JSlider(30, 150, 100);
     private final JPanel props = Ui.transparent(new GridBagLayout());
     private boolean loadingProps;
@@ -1661,12 +1683,40 @@ public class ScenesPanel extends JPanel {
             return;
         }
         List<com.jamc.worship.capture.WindowCapture.WindowInfo> windows = com.jamc.worship.capture.WindowCapture.windows();
-        var w = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<com.jamc.worship.capture.WindowCapture.WindowInfo>(
-                "Select Window", "Search windows…", "monitor",
-                "No open windows found.<br>Open the program to capture (a browser, Zoom, …), then try again.",
-                text -> windows.stream().filter(x -> x.label().toLowerCase().contains(text.strip().toLowerCase())).toList(),
-                com.jamc.worship.capture.WindowCapture.WindowInfo::title,
-                x -> x.exe() == null ? "" : x.exe(), x -> null));
+        // a small picture of each window, so the right one is easy to spot; taken once, in the background
+        var thumbs = new java.util.concurrent.ConcurrentHashMap<com.jamc.worship.capture.WindowCapture.WindowInfo,
+                java.awt.image.BufferedImage>();
+        var grabber = new Thread(() -> {
+            for (var x : windows) {
+                if (Thread.currentThread().isInterrupted()) {
+                    return;
+                }
+                var img = com.jamc.worship.capture.WindowCapture.snapshot(x, 184);
+                if (img != null) {
+                    thumbs.put(x, img);
+                    javax.swing.SwingUtilities.invokeLater(() -> {
+                        for (java.awt.Window open : java.awt.Window.getWindows()) {
+                            if (open instanceof LibraryPickerDialog<?> && open.isShowing()) {
+                                open.repaint();
+                            }
+                        }
+                    });
+                }
+            }
+        }, "window-thumbnails");
+        grabber.setDaemon(true);
+        grabber.start();
+        com.jamc.worship.capture.WindowCapture.WindowInfo w;
+        try {
+            w = LibraryPickerDialog.pick(this, new LibraryPickerDialog.Spec<com.jamc.worship.capture.WindowCapture.WindowInfo>(
+                    "Select Window", "Search windows…", "monitor",
+                    "No open windows found.<br>Open the program to capture (a browser, Zoom, …), then try again.",
+                    text -> windows.stream().filter(x -> x.label().toLowerCase().contains(text.strip().toLowerCase())).toList(),
+                    com.jamc.worship.capture.WindowCapture.WindowInfo::title,
+                    x -> x.exe() == null ? "" : x.exe(), thumbs::get));
+        } finally {
+            grabber.interrupt();
+        }
         if (w == null) {
             return;
         }
@@ -2674,7 +2724,7 @@ public class ScenesPanel extends JPanel {
                 row(g, "Text size %", textScale);
             }
             if (t == SourceType.LYRICS) {
-                lyricsLayout.setSelectedIndex(Math.max(0, java.util.Arrays.asList(LAYOUTS).indexOf(c.lyricsLayout))); // unknown / "OFF" = Full lyrics
+                fillLyricsLayouts(c.lyricsLayout);
                 lyricsLayout.setToolTipText("<html>How song lyrics look in THIS scene, on Preview and Program (and the stream).<br>"
                         + "Lower third: a bar per line over the camera. Full lyrics: the normal big words.<br>"
                         + "Full lyrics is the default. The bars' font and colors are set in Settings → Lyrics Appearance.<br>"
@@ -3316,7 +3366,8 @@ public class ScenesPanel extends JPanel {
                 c.fixedSong = songMode.getSelectedIndex() == 1 ? Boolean.TRUE : null;
             }
             if (t == SourceType.LYRICS) {
-                c.lyricsLayout = LAYOUTS[Math.max(0, lyricsLayout.getSelectedIndex())];
+                int at = lyricsLayout.getSelectedIndex();
+                c.lyricsLayout = at >= 0 && at < layoutValues.size() ? layoutValues.get(at) : null;
             }
         }
         if (t == SourceType.OVERLAY) {

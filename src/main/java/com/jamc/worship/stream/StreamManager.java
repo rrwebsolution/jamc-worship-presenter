@@ -161,7 +161,8 @@ public final class StreamManager {
     }
 
     private void applyMics() {
-        for (FFmpegStreamEncoder enc : new FFmpegStreamEncoder[]{recorder, streamer}) {
+        for (FFmpegStreamEncoder enc : new FFmpegStreamEncoder[]{recorder, streamer,
+                shotUsesProgramAudio ? shotRecorder : null}) {
             if (enc != null) {
                 sendMics(enc);
             }
@@ -170,7 +171,9 @@ public final class StreamManager {
 
     private void sendMics(FFmpegStreamEncoder enc) {
         StreamSettings s = settings();
-        enc.setMicsMuted(micsMuted || isLiveInput(liveInputGains, s.micDevice()), micsMuted || isLiveInput(liveInputGains, s.auxDevice()));
+        boolean master = s.masterMuted();
+        enc.setMicsMuted(master || s.micMuted() || micsMuted || isLiveInput(liveInputGains, s.micDevice()),
+                master || s.auxMuted() || micsMuted || isLiveInput(liveInputGains, s.auxDevice()));
     }
 
     /** {@code device} is null when the channel has no input chosen. */
@@ -255,6 +258,10 @@ public final class StreamManager {
 
     public void saveSettings(StreamSettings s) {
         s.save(config);
+        // A shot already on Preview / Program follows live mixer mutes just like the Program recording.
+        if (shotUsesProgramAudio && shotRecorder != null) {
+            sendMics(shotRecorder);
+        }
         fire();
     }
 
@@ -714,7 +721,9 @@ public final class StreamManager {
     }
 
     private FFmpegStreamEncoder shotRecorder;
-    /** This app's own sound for the shot file. */
+    /** True when this file follows the normal Preview / Program mixer instead of its independent camera input. */
+    private volatile boolean shotUsesProgramAudio;
+    /** Program/app sound used only when the recorded shot is already on Preview / Program. */
     private LoopbackAudio shotLoopback;
     private volatile ShotRecording shotRecording;
     private javax.swing.Timer shotTimer;
@@ -729,16 +738,29 @@ public final class StreamManager {
      * recording: only that shot's picture, following its performer, with the recording's sound inputs (microphone,
      * camera audio). Same folder, size, quality and encoder as the Program recording. One shot at a time. Swing thread.
      */
-    public void startShotRecording(String shotName, ShotPainter painter, Consumer<String> onError) {
-        whenFFmpegChecked(() -> beginShotRecording(shotName, painter, onError));
+    public void startShotRecording(String shotName, String cameraAudio, boolean audioMuted, boolean useProgramAudio,
+                                   ShotPainter painter, Consumer<String> onError) {
+        whenFFmpegChecked(() -> beginShotRecording(shotName, cameraAudio, audioMuted, useProgramAudio, painter, onError));
     }
 
-    private void beginShotRecording(String shotName, ShotPainter painter, Consumer<String> onError) {
+    /** Compatibility entry point: a caller that supplies no camera input gets the safe, silent default. */
+    public void startShotRecording(String shotName, ShotPainter painter, Consumer<String> onError) {
+        startShotRecording(shotName, null, true, false, painter, onError);
+    }
+
+    private void beginShotRecording(String shotName, String cameraAudio, boolean audioMuted, boolean useProgramAudio,
+                                    ShotPainter painter, Consumer<String> onError) {
         if (shotRecording != null) {
             return;
         }
         FFmpeg.Capabilities caps = capabilities;
-        StreamSettings s = settings();
+        StreamSettings base = settings();
+        // When this shot is already on Preview / Program, use that normal audio routing and never add its camera twice.
+        // Off-output shot files are independent: silent by default, or only their own camera microphone / HDMI audio.
+        StreamSettings s = useProgramAudio ? base : new StreamSettings(base.providerId(), base.server(),
+                base.destinationName(), base.width(), base.height(), base.fps(), base.videoKbps(), base.audioKbps(),
+                base.encoder(), null, base.micVolume(), true, cameraAudio, 100, audioMuted || cameraAudio == null,
+                100, false, null, base.mediaVolume(), true);
         String encoder = caps == null ? null : caps.encoderFor(s.encoder());
         if (caps == null || !caps.available() || encoder == null) {
             onError.accept(ffmpegProblem(caps));
@@ -763,12 +785,11 @@ public final class StreamManager {
         });
         self[0] = enc;
         shotRecorder = enc;
+        shotUsesProgramAudio = useProgramAudio;
         Thread.ofVirtual().name("shot-recording-start").start(() -> {
             try {
                 Files.createDirectories(folder);
-                // the same sound as the Program recording: the MIC / AUX devices and this app's own sound, which
-                // carries the scene's Audio Input and camera-audio sources (without it a shot file was silent)
-                if (s.usesAppAudio()) {
+                if (useProgramAudio && s.usesAppAudio()) {
                     try {
                         LoopbackAudio a = LoopbackAudio.start(toolsDir);
                         mixLiveInputs(a, caps.executable());
@@ -777,7 +798,7 @@ public final class StreamManager {
                             if (shotRecorder == enc) shotLoopback = a; else a.close();
                         });
                     } catch (IOException e) {
-                        log.warn("Shot recording without this app's sound: {}", e.getMessage());
+                        log.warn("Shot recording without Program app sound: {}", e.getMessage());
                     }
                 }
                 enc.start();
@@ -845,6 +866,7 @@ public final class StreamManager {
         }
         ShotRecording r = shotRecording;
         shotRecorder = null;
+        shotUsesProgramAudio = false;
         shotRecording = null;
         if (error != null) {
             onError.accept("Shot recording stopped: " + error);

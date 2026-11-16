@@ -97,6 +97,41 @@ public final class WindowCapture {
         return t.frame;
     }
 
+    /**
+     * One small picture of the window for the Select Window list (not kept captured), or null when it is minimized,
+     * gone, or cannot be captured. Slow (a window capture): call it off the Swing thread.
+     */
+    public static BufferedImage snapshot(WindowInfo w, int maxWidth) {
+        if (!WINDOWS || w == null) {
+            return null;
+        }
+        try {
+            HWND hwnd = find(w.title(), w.exe());
+            if (hwnd == null || Extra.INSTANCE.IsIconic(hwnd)) {
+                return null;
+            }
+            BufferedImage full = grab(hwnd, null);
+            return full == null ? null : scaled(full, maxWidth);
+        } catch (RuntimeException | Error e) {
+            log.debug("No thumbnail for {}", w.title(), e);
+            return null;
+        }
+    }
+
+    static BufferedImage scaled(BufferedImage img, int maxWidth) {
+        if (img.getWidth() <= maxWidth) {
+            return img;
+        }
+        int w = maxWidth;
+        int h = Math.max(1, (int) Math.round(img.getHeight() * (maxWidth / (double) img.getWidth())));
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        java.awt.Graphics2D g = out.createGraphics();
+        g.setRenderingHint(java.awt.RenderingHints.KEY_INTERPOLATION, java.awt.RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+        g.drawImage(img, 0, 0, w, h, null);
+        g.dispose();
+        return out;
+    }
+
     /** Why there is no picture ("Window not found", "Window minimized"), or null when it is being captured. */
     public static String status(String title, String exe) {
         Target t = TARGETS.get(title + "\u0000" + (exe == null ? "" : exe));

@@ -925,6 +925,11 @@ public final class AutoDirector implements VirtualCameras.Source {
     }
 
     @Override
+    public boolean mirrored(String camera) {
+        return settings.mirrored(camera);
+    }
+
+    @Override
     public synchronized VirtualCameras.Framing framing(String sourceCamera, Boolean director, boolean onPreview) {
         if (!enabled || Boolean.FALSE.equals(director) || director == null && !isDirectorCamera(sourceCamera)) {
             return null;

@@ -13,6 +13,8 @@ public enum CameraStatus {
     PREVIEW("PREVIEW", new Color(0x1677FF)),
     LIVE("LIVE", new Color(0x16A34A)),
     INITIALIZING("INITIALIZING", new Color(0xD97706)),
+    /** Found and ready to use, but not opened: only the cameras on Program (and Preview in Studio Mode) run. */
+    STANDBY("STANDBY", new Color(0x334155)),
     DISCONNECTED("DISCONNECTED", new Color(0x475569)),
     ERROR("ERROR", new Color(0xB91C1C));
 

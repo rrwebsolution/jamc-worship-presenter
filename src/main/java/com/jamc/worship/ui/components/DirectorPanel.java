@@ -151,6 +151,10 @@ public final class DirectorPanel extends JPanel {
     private final ShotMonitor shotMonitor = new ShotMonitor();
     /** Off: the big picture shows the clicked shot. On: the whole camera picture. */
     private final JToggleButton fullCamera = new JToggleButton("FULL CAMERA");
+    /** Flips the camera shown left to right: here, in its shots on Preview / LIVE and in shot recordings. */
+    private final JToggleButton mirrorBtn = new JToggleButton("MIRROR");
+    /** Camera picker controls are useful only in multi-camera mode; FULL CAMERA and MIRROR remain available always. */
+    private JPanel multiCameraViewControls;
     /** What the big picture shows now; the small SHOT PREVIEW shows exactly the same (one framing for both). */
     private BufferedImage viewFrame;
     private CropRect viewCrop = CropRect.WIDE;
@@ -158,6 +162,10 @@ public final class DirectorPanel extends JPanel {
     private final JButton sendToPreview = Ui.primaryButton("SEND TO PREVIEW", "monitor");
     // SHOT RECORDING: the shot in Shot Preview into its own file (e.g. only the preacher), beside the Program recording
     private final JButton recordShot = Ui.button("● RECORD THIS SHOT", null);
+    /** Shot files are silent by default; unmute to record this shot camera's own microphone / HDMI input. */
+    private final JToggleButton shotAudioMute = Ui.muteToggle("this shot recording's camera audio");
+    /** Tracks routing transitions so Preview/LIVE shows unmuted, while an independent shot returns to muted. */
+    private boolean shotUsingOutputAudio;
     private final JLabel recChip = chip();
     private VirtualShot recordedShot;
     private CropRect recShown;
@@ -472,7 +480,8 @@ public final class DirectorPanel extends JPanel {
         // which camera the big picture shows (multi-camera): its people, zones and cut-outs
         viewBar = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 6, 0));
         viewBar.setBorder(BorderFactory.createEmptyBorder(0, 0, 6, 0));
-        viewBar.add(Ui.label("CAMERA PICTURE", Palette::secondaryText, "small"));
+        multiCameraViewControls = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        multiCameraViewControls.add(Ui.label("CAMERA PICTURE", Palette::secondaryText, "small"));
         viewCombo.setFocusable(false);
         viewCombo.setToolTipText("Which camera to look at here: its people, stage zones and shots");
         viewCombo.addActionListener(e -> {
@@ -482,17 +491,32 @@ public final class DirectorPanel extends JPanel {
                 refresh();
             }
         });
-        viewBar.add(viewCombo);
+        multiCameraViewControls.add(viewCombo);
         JButton camShot = Ui.button("ADD SHOT OF THIS CAMERA", "plus");
         camShot.setFocusable(false);
         camShot.setToolTipText("A new virtual shot from the camera shown here");
         camShot.addActionListener(e -> addShot());
-        viewBar.add(camShot);
+        multiCameraViewControls.add(camShot);
+        viewBar.add(multiCameraViewControls);
         // the big picture shows the clicked shot; FULL CAMERA shows the whole camera (click people, move frames, zones)
         fullCamera.setFocusable(false);
         fullCamera.setToolTipText("Show the whole camera picture (to click a person, move the Preview frame or edit zones) instead of the clicked shot");
         fullCamera.addActionListener(e -> source.repaint());
         viewBar.add(fullCamera);
+        // MIRROR: this camera flipped left to right (a phone's front camera, or a camera facing a mirror)
+        mirrorBtn.setFocusable(false);
+        mirrorBtn.setToolTipText("Flip this camera left to right: here, in its shots on Preview and LIVE, and in shot recordings");
+        mirrorBtn.addActionListener(e -> {
+            String cam = viewed();
+            if (cam == null) {
+                mirrorBtn.setSelected(false);
+                return;
+            }
+            director.settings().setMirrored(cam, mirrorBtn.isSelected());
+            flash(mirrorBtn.isSelected() ? "Mirror on: " + cam + " is flipped left to right" : "Mirror off: " + cam);
+            DirectorPanel.this.repaint();
+        });
+        viewBar.add(mirrorBtn);
         // left: the (small) camera picture with the virtual shots right under it; right: Shot Preview and the controls
         JPanel stack = Ui.transparent(new BorderLayout());
         stack.add(source, BorderLayout.NORTH);
@@ -539,9 +563,15 @@ public final class DirectorPanel extends JPanel {
         c.insets = new Insets(0, 0, 10, 0);
         recordShot.setFocusable(false);
         recordShot.setToolTipText("<html>Records only this shot (e.g. the preacher) into its own file, following its performer,<br>"
-                + "with the recording's sound. The Program recording is separate and is not changed.</html>");
+                + "independently of Preview and LIVE. Use the speaker button to include its camera audio.<br>"
+                + "The Program recording is separate and is not changed.</html>");
         recordShot.addActionListener(e -> toggleShotRecording());
-        col.add(recordShot, c);
+        shotAudioMute.setSelected(true); // safe default: a new shot recording is silent until deliberately unmuted
+        shotAudioMute.setFocusable(false);
+        JPanel recordRow = Ui.transparent(new BorderLayout(6, 0));
+        recordRow.add(recordShot, BorderLayout.CENTER);
+        recordRow.add(shotAudioMute, BorderLayout.EAST);
+        col.add(recordRow, c);
         c.insets = new Insets(0, 0, 2, 0);
         c.gridy++;
         col.add(tag("● LIVE", LIVE), c);
@@ -1071,13 +1101,32 @@ public final class DirectorPanel extends JPanel {
         recordedShot = picked;
         recShown = null;
         String name = picked.name;
-        streams.startShotRecording(name, this::paintRecordedShot, err -> {
+        AutoDirector.Status status = director.status();
+        boolean onOutput = sameShot(picked, status.previewShot()) || sameShot(picked, status.programShot());
+        if (onOutput) {
+            shotUsingOutputAudio = true;
+            shotAudioMute.setSelected(false); // normal Preview / Program routing is active
+        }
+        String cameraAudio = cameras.audioDevice(director.cameraOf(picked));
+        boolean audioMuted = shotAudioMute.isSelected() || cameraAudio == null;
+        streams.startShotRecording(name, cameraAudio, audioMuted, onOutput, this::paintRecordedShot, err -> {
             recordedShot = null;
             JOptionPane.showMessageDialog(this, err, "Shot recording", JOptionPane.WARNING_MESSAGE);
             refresh();
         });
         flash("Recording \"" + name + "\" into its own file (the Program recording is separate)");
         refresh();
+    }
+
+    private static boolean sameShot(VirtualShot a, VirtualShot b) {
+        return a != null && b != null && a.id.equals(b.id);
+    }
+
+    /** Draws part of a camera picture into {@code d}, flipped left to right when {@code flip} (Auto Director → Mirror). */
+    static void drawFlippable(Graphics2D g, BufferedImage img, Rectangle d, int sx1, int sy1, int sx2, int sy2, boolean flip) {
+        int dx1 = flip ? d.x + d.width : d.x;
+        int dx2 = flip ? d.x : d.x + d.width;
+        g.drawImage(img, dx1, d.y, dx2, d.y + d.height, sx1, sy1, sx2, sy2, null);
     }
 
     /** One picture of the recorded shot: its camera, cut out and following its performer (smoothly). */
@@ -1100,6 +1149,10 @@ public final class DirectorPanel extends JPanel {
         g.setColor(Color.BLACK);
         g.fillRect(0, 0, w, h);
         Graphics2D g2 = (Graphics2D) g.create();
+        if (director.settings().mirrored(cam)) {
+            g2.translate(w, 0); // the shot's own file is flipped like its LIVE picture
+            g2.scale(-1, 1);
+        }
         g2.scale(w / sw, h / sh);
         g2.translate(-sx, -sy);
         g2.drawImage(frame, 0, 0, null);
@@ -1126,6 +1179,19 @@ public final class DirectorPanel extends JPanel {
             recordShot.setText("● RECORD THIS SHOT");
             recordShot.putClientProperty(FlatClientProperties.STYLE, "foreground: #EF4444; font: bold");
             recordShot.setEnabled(streams != null && picked != null);
+            AutoDirector.Status status = director.status();
+            boolean onOutput = picked != null
+                    && (sameShot(picked, status.previewShot()) || sameShot(picked, status.programShot()));
+            if (onOutput != shotUsingOutputAudio) {
+                shotUsingOutputAudio = onOutput;
+                shotAudioMute.setSelected(!onOutput); // output audio is on; independent camera audio defaults muted
+            }
+            shotAudioMute.setVisible(!onOutput);
+            shotAudioMute.setEnabled(picked != null && !onOutput
+                    && cameras.audioDevice(director.cameraOf(picked)) != null);
+            shotAudioMute.setToolTipText(onOutput
+                    ? "This shot is on Preview / LIVE, so its normal output audio is recorded (no duplicate camera input)"
+                    : null); // Ui.muteToggle restores its normal Mute / Unmute text on the next click
             recChip.setVisible(false);
             return;
         }
@@ -1135,6 +1201,8 @@ public final class DirectorPanel extends JPanel {
         recordShot.setText(rec.finishing() ? "FINISHING THE FILE…" : "■ STOP RECORDING " + rec.shot() + " · " + time);
         recordShot.putClientProperty(FlatClientProperties.STYLE, "background: #DC2626; foreground: #FFFFFF; font: bold");
         recordShot.setEnabled(!rec.finishing());
+        shotAudioMute.setVisible(!shotUsingOutputAudio);
+        shotAudioMute.setEnabled(false); // the audio input is fixed when FFmpeg starts this file
         setChip(recChip, "● REC " + rec.shot() + " · " + time, new Color(0x7F1D1D), Color.WHITE);
         recChip.setVisible(true);
     }
@@ -1561,6 +1629,7 @@ public final class DirectorPanel extends JPanel {
         updating = true;
         try {
             onSwitch.setSelected(st.enabled());
+            mirrorBtn.setSelected(director.settings().mirrored(viewed())); // follows the camera shown
             manualBtn.setSelected(st.mode() == AutoDirector.Mode.MANUAL);
             assistedBtn.setSelected(st.mode() == AutoDirector.Mode.ASSISTED);
             autoBtn.setSelected(st.mode() == AutoDirector.Mode.AUTO);
@@ -1571,8 +1640,8 @@ public final class DirectorPanel extends JPanel {
             oneCamera.setSelected(!multi);
             multiCamera.setSelected(multi);
             shotCameraBox.setVisible(multi);
-            if (viewBar != null) {
-                viewBar.setVisible(multi);
+            if (multiCameraViewControls != null) {
+                multiCameraViewControls.setVisible(multi);
             }
             boolean assisted = st.mode() == AutoDirector.Mode.ASSISTED;
             reject.setEnabled(assisted && st.previewByAi() && st.previewPending());
@@ -1910,17 +1979,25 @@ public final class DirectorPanel extends JPanel {
             return new Rectangle((w - pw) / 2, 0, pw, ph); // at the top, centered
         }
 
+        /** Mirror is on for the camera shown: the picture, boxes and clicks are all flipped left to right. */
+        private boolean flipped() {
+            return director.settings().mirrored(viewed());
+        }
+
         private Point2 toNorm(int x, int y) {
             Rectangle r = picture();
             if (r.width <= 0 || r.height <= 0) {
                 return null;
             }
-            return new Point2(Math.clamp((x - r.x) / (double) r.width, 0, 1), Math.clamp((y - r.y) / (double) r.height, 0, 1));
+            double nx = Math.clamp((x - r.x) / (double) r.width, 0, 1);
+            return new Point2(flipped() ? 1 - nx : nx, Math.clamp((y - r.y) / (double) r.height, 0, 1));
         }
 
         private Rectangle toScreen(Rectangle pic, Box b) {
-            return new Rectangle(pic.x + (int) Math.round(b.x() * pic.width), pic.y + (int) Math.round(b.y() * pic.height),
-                    (int) Math.round(b.w() * pic.width), (int) Math.round(b.h() * pic.height));
+            int w = (int) Math.round(b.w() * pic.width);
+            int x = flipped() ? pic.x + pic.width - (int) Math.round((b.x() + b.w()) * pic.width)
+                    : pic.x + (int) Math.round(b.x() * pic.width);
+            return new Rectangle(x, pic.y + (int) Math.round(b.y() * pic.height), w, (int) Math.round(b.h() * pic.height));
         }
 
         @Override
@@ -1944,7 +2021,7 @@ public final class DirectorPanel extends JPanel {
             }
             if (lastFrame != null) {
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-                g.drawImage(lastFrame, pic.x, pic.y, pic.width, pic.height, null);
+                drawFlippable(g, lastFrame, pic, 0, 0, lastFrame.getWidth(), lastFrame.getHeight(), flipped());
             } else {
                 CameraStatus cs = st.camera() == null ? null : cameras.status(st.camera());
                 centered(g, pic, st.camera() == null ? "No camera found" : st.camera(), cs == null ? "STARTING" : cs.label());
@@ -2038,9 +2115,8 @@ public final class DirectorPanel extends JPanel {
                 int fw = frame.getWidth();
                 int fh = frame.getHeight();
                 g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-                g.drawImage(frame, pic.x, pic.y, pic.x + pic.width, pic.y + pic.height,
-                        (int) Math.round(b.x() * fw), (int) Math.round(b.y() * fh),
-                        (int) Math.round(b.right() * fw), (int) Math.round(b.bottom() * fh), null);
+                drawFlippable(g, frame, pic, (int) Math.round(b.x() * fw), (int) Math.round(b.y() * fh),
+                        (int) Math.round(b.right() * fw), (int) Math.round(b.bottom() * fh), director.settings().mirrored(cam));
             } else {
                 CameraStatus cs = cam == null ? null : cameras.status(cam);
                 centered(g, pic, cam == null ? "No camera" : cam, cs == null ? "STARTING" : cs.label());
@@ -2150,9 +2226,9 @@ public final class DirectorPanel extends JPanel {
                 Box b = viewCrop.box();
                 int fw = frame.getWidth();
                 int fh = frame.getHeight();
-                g2.drawImage(frame, r.x, r.y, r.x + r.width, r.y + r.height,
-                        (int) Math.round(b.x() * fw), (int) Math.round(b.y() * fh),
-                        (int) Math.round(b.right() * fw), (int) Math.round(b.bottom() * fh), null);
+                String cam = shot && s != null ? director.cameraOf(s) : viewed();
+                drawFlippable(g2, frame, r, (int) Math.round(b.x() * fw), (int) Math.round(b.y() * fh),
+                        (int) Math.round(b.right() * fw), (int) Math.round(b.bottom() * fh), director.settings().mirrored(cam));
                 g2.dispose();
             } else {
                 g.setColor(Palette.secondaryText());
@@ -2228,9 +2304,9 @@ public final class DirectorPanel extends JPanel {
                 int fw = frame.getWidth();
                 int fh = frame.getHeight();
                 Box b = c.box();
-                g2.drawImage(frame, t.x, t.y, t.x + t.width, t.y + t.height,
-                        (int) Math.round(b.x() * fw), (int) Math.round(b.y() * fh),
-                        (int) Math.round(b.right() * fw), (int) Math.round(b.bottom() * fh), null);
+                drawFlippable(g2, frame, t, (int) Math.round(b.x() * fw), (int) Math.round(b.y() * fh),
+                        (int) Math.round(b.right() * fw), (int) Math.round(b.bottom() * fh),
+                        director.settings().mirrored(director.cameraOf(shot)));
                 g2.dispose();
             }
             boolean chosen = picked != null && picked.id.equals(shot.id);

@@ -117,6 +117,13 @@ public final class Compositor {
             return null;
         }
         var s = com.jamc.worship.config.ProgramLyricsStyle.applied();
+        // the operator's own layout (Lyrics Appearance → My layouts); deleted since: the usual lower third
+        String chosen = lyrics.getConfig().lyricsLayout;
+        if (chosen != null && chosen.startsWith(com.jamc.worship.config.LyricsLayouts.PREFIX)) {
+            var custom = com.jamc.worship.config.LyricsLayouts.find(chosen);
+            return custom != null ? s.withBox(custom.box())
+                    : s.withMode(com.jamc.worship.config.ProgramLyricsStyle.Mode.LOWER_THIRD);
+        }
         // a Lyrics layer shows FULL lyrics unless its scene chose bars (Edit Scene → Lyrics layout)
         var mode = layoutOf(lyrics, com.jamc.worship.config.ProgramLyricsStyle.Mode.OFF);
         if (mode == com.jamc.worship.config.ProgramLyricsStyle.Mode.OFF) {
@@ -421,7 +428,14 @@ public final class Compositor {
                         BufferedImage old = shot.from() == null ? null
                                 : shot.fromCamera() == null || shot.fromCamera().equals(cam) ? frame
                                 : frames.camera(shot.fromCamera());
-                        drawVirtualShot(g, frame, old, rect, c, opacity(c), shot);
+                        // Mirror (Camera page / Auto Director, per camera): this camera's shots flipped left to right.
+                        // OR, not XOR: a source made by SEND TO PREVIEW with Mirror ticked must not flip back
+                        SourceConfig shotConfig = c;
+                        if (com.jamc.worship.director.VirtualCameras.mirrored(cam) && !Boolean.TRUE.equals(c.mirror)) {
+                            shotConfig = c.copy();
+                            shotConfig.mirror = Boolean.TRUE;
+                        }
+                        drawVirtualShot(g, frame, old, rect, shotConfig, opacity(c), shot);
                     } else if (frame != null) {
                         drawCamera(g, frame, rect, c, opacity(c));
                     } else {
@@ -743,7 +757,7 @@ public final class Compositor {
             if (programStyle != null) {
                 // Program lyrics style (stream / recording / OBS): a lower third over the picture, placed on the
                 // whole output (not the scene's lyrics box), with its own font, capitals and bars
-                LowerThirdLyrics.paint(g, pw, ph, slide.getText(), programStyle);
+                LowerThirdLyrics.paint(g, pw, ph, slide.getText(), programStyle, content.lyrics());
             } else if (text && content.spotifyLyrics()) {
                 // Spotify-style: previous card dimmed above, current in the middle, next dimmed below (inside the screen)
                 Graphics2D clip = (Graphics2D) g.create();
@@ -1138,10 +1152,9 @@ public final class Compositor {
                 continue;
             }
             if (s.getType() == SourceType.LYRICS && (programStyle(s, from.content()) != null || programStyle(s, to.content()) != null)) {
-                // Program lyrics style: the bars fade on their own clock (or cut); the camera / scene underneath is untouched
+                // Program lyrics style: bars animate on their own clock; the camera / scene underneath is untouched.
                 float q = overlayProgress;
-                fadeSource(g, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, 1f - q);
-                fadeSource(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, q);
+                paintProgramLyricsChange(g, pw, ph, s, from, to, fromSlot, toSlot, lowerThirdSource, keyMode, q);
                 continue;
             }
             if (s.getType() == SourceType.LYRICS && fxTransition != null && reelScrolls(s, from, to, fromSlot, toSlot)) {
@@ -1161,6 +1174,77 @@ public final class Compositor {
             fadeSide(g, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, fromAlpha, false);
             fadeSide(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, toAlpha, true);
         }
+    }
+
+    /** Animates only the lower-third bars while leaving the camera and the rest of the scene still. */
+    private void paintProgramLyricsChange(Graphics2D g, int pw, int ph, Source s, FrameSpec from, FrameSpec to,
+                                           Source fromSlot, Source toSlot, ProgramOutput lowerThirdSource,
+                                           boolean keyMode, float progress) {
+        var style = programStyle(s, to.content());
+        if (style == null) {
+            style = programStyle(s, from.content());
+        }
+        var transition = style == null ? com.jamc.worship.config.ProgramLyricsStyle.Fade.SMOOTH_FADE : style.fade();
+        var lyricsContext = to.content() == null ? null : to.content().lyrics();
+        float eased = transition == com.jamc.worship.config.ProgramLyricsStyle.Fade.SPOTIFY && lyricsContext != null
+                ? lyricsContext.settings().easing().apply(progress)
+                : ease(progress, style == null ? com.jamc.worship.config.ProgramLyricsStyle.Easing.EASE_IN_OUT
+                : style.easing());
+        if (transition == com.jamc.worship.config.ProgramLyricsStyle.Fade.SMOOTH_FADE) {
+            fadeSource(g, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, 1f - eased);
+            fadeSource(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, eased);
+            return;
+        }
+        if (transition == com.jamc.worship.config.ProgramLyricsStyle.Fade.CUT) {
+            fadeSource(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, 1f);
+            return;
+        }
+
+        int distance = transition == com.jamc.worship.config.ProgramLyricsStyle.Fade.SPOTIFY
+                ? Math.max(48, Math.round(ph * 0.12f)) : Math.max(36, Math.round(ph * 0.08f));
+        int direction = transition == com.jamc.worship.config.ProgramLyricsStyle.Fade.SLIDE_DOWN ? -1 : 1;
+        if (transition == com.jamc.worship.config.ProgramLyricsStyle.Fade.SPOTIFY) {
+            // Previous/next guide cards stay fixed. Only the incoming/current card moves into its resting position.
+            var toContent = to.content();
+            var toContext = toContent == null ? null : toContent.lyrics();
+            if (style != null && toContent != null && toContext != null) {
+                int scrollDirection = 1;
+                var fromContext = from.content() == null ? null : from.content().lyrics();
+                if (fromContext != null && fromContext.sameSong(toContext) && toContext.index() < fromContext.index()) {
+                    scrollDirection = -1;
+                }
+                int offset = scrollDirection * Math.round(distance * (1f - eased));
+                LowerThirdLyrics.paintSpotifyFrame(g, pw, ph, toContent.slide().getText(), style, toContext, offset);
+            } else {
+                fadeSource(g, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, 1f);
+            }
+            return;
+        }
+        Graphics2D oldBars = (Graphics2D) g.create();
+        Graphics2D newBars = (Graphics2D) g.create();
+        try {
+            oldBars.clipRect(0, 0, pw, ph);
+            newBars.clipRect(0, 0, pw, ph);
+            oldBars.translate(0, -direction * Math.round(distance * eased));
+            newBars.translate(0, direction * Math.round(distance * (1f - eased)));
+            float oldAlpha = 1f - eased;
+            float newAlpha = eased;
+            fadeSource(oldBars, pw, ph, s, from, fromSlot, lowerThirdSource, keyMode, oldAlpha);
+            fadeSource(newBars, pw, ph, s, to, toSlot, lowerThirdSource, keyMode, newAlpha);
+        } finally {
+            oldBars.dispose();
+            newBars.dispose();
+        }
+    }
+
+    private static float ease(float p, com.jamc.worship.config.ProgramLyricsStyle.Easing easing) {
+        p = Math.clamp(p, 0f, 1f);
+        return switch (easing) {
+            case LINEAR -> p;
+            case EASE_IN -> p * p;
+            case EASE_OUT -> 1f - (1f - p) * (1f - p);
+            case EASE_IN_OUT -> p * p * (3f - 2f * p);
+        };
     }
 
     /** True when this Lyrics layer shows both sides as Spotify-style cards of one song, so it scrolls between them. */

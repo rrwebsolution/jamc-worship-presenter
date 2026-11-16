@@ -330,6 +330,7 @@ public class MainFrame extends JFrame {
             previewState.setLyricsOverlayFade(ms); // Preview fades bar lyrics the same way, like Program will
         });
         com.jamc.worship.config.ProgramLyricsStyle.install(context.config());
+        com.jamc.worship.config.LyricsLayouts.install(context.config());
         // Presentation scene sources reference library presentations by id; their cached slides are looked up here
         this.libraryPresentations = new com.jamc.worship.presentation.LibraryPresentations(context.presentationService());
         Rendering.installPresentations(libraryPresentations);
@@ -1601,8 +1602,7 @@ public class MainFrame extends JFrame {
             if (previewState.scene() != syncedPreviewScene) {
                 syncedPreviewScene = previewState.scene();
                 slideshows.syncPreview(syncedPreviewScene); // Preview steps its slideshows without moving Program
-                // Preview's cameras are opened now, so TAKE never waits for a camera to start
-                cameras.keepOpen("preview", cameraDevices(syncedPreviewScene));
+                keepPreviewCameras();
             }
         });
         program.setCameraSwitchFade(cameraSettings.switchFadeMs());
@@ -2432,8 +2432,35 @@ public class MainFrame extends JFrame {
         }
         actionOrder.setTitle(thumbnails.getTitle());
         orderDialog.setTitle("Order – " + thumbnails.getTitle());
-        orderDialog.setLocationRelativeTo(thumbnails);
+        // minimized earlier with its Minimize button (taskbar or strip): full size again, else nothing appears
+        DialogWindowButtons.showNormal(orderDialog);
+        // always in the middle of the LiveCat window, never left on an output screen
+        orderDialog.setLocationRelativeTo(this);
+        // in front at once, every click: also when it was already open behind LiveCat, minimized (Minimize lifts it),
+        // or under a fullscreen output on this screen (outputs stay on top, so then the Order window does too)
+        orderDialog.setAlwaysOnTop(output.coversOnTop(orderDialog.getBounds()));
         orderDialog.setVisible(true);
+        orderDialog.toFront();
+        orderDialog.requestFocus();
+        // the selected card goes to its output after the window is up, so the window never waits for it
+        SwingUtilities.invokeLater(this::previewCurrentOrderItem);
+    }
+
+    /** ORDER opens on the output of the card already selected, just like clicking that Lyrics/Bible/content card. */
+    private void previewCurrentOrderItem() {
+        int selected = thumbnails.getSelectedIndex();
+        if (selected < 0 || thumbnails.getSelectedSlide() == null) {
+            return;
+        }
+        thumbnails.select(selected); // re-fire selection even when the same card was already selected
+        if (stripSource == StripSource.PRESENTATION) {
+            previewSelectedPresentationSlide(); // presentation selection alone normally only draws a white ring
+        } else if (stripSource == StripSource.ITEM && showingSceneItem()) {
+            Scene scene = sceneWorkspace.scene();
+            if (scene != null) {
+                sceneClicked(scene);
+            }
+        }
     }
 
     /** Settings: clicking a song lyrics slide sends it live at once (no Preview step). On by default. */
@@ -4092,9 +4119,6 @@ public class MainFrame extends JFrame {
             return null;
         }
         LyricsTransitionSettings s = settings != null ? settings : LyricsTransitionSettings.load(context.config());
-        if (s.mode() == LyricsTransitionSettings.Mode.NONE) {
-            return null;
-        }
         List<String> cards = new ArrayList<>(strip.size());
         for (Slide x : strip) {
             cards.add(Objects.equals(x.getSongId(), slide.getSongId()) ? x.getText() : "");
@@ -4944,9 +4968,18 @@ public class MainFrame extends JFrame {
         return context.config().getBoolean(SettingsPanel.KEY_STUDIO_MODE, false);
     }
 
+    /**
+     * Only the LIVE cameras run (Program). In Studio Mode, Preview's cameras are opened too, so TAKE never waits for a
+     * camera to start; without Studio Mode (Program only) a camera opens when it goes live.
+     */
+    private void keepPreviewCameras() {
+        cameras.keepOpen("preview", studioMode() ? cameraDevices(syncedPreviewScene) : List.of());
+    }
+
     /** Studio Mode switched: Preview and the TAKE button show or hide; nothing goes live by itself. */
     private void applyStudioMode() {
         boolean on = studioMode();
+        keepPreviewCameras();
         liveDock.setStudioMode(on);
         scenesDock.setStudioMode(on);
         if (separateLayoutsTicked()) {

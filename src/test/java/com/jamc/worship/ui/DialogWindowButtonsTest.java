@@ -71,6 +71,13 @@ class DialogWindowButtonsTest {
                 named(d, "Restore").doClick();
                 assertEquals(normal, d.getBounds());
 
+                // ORDER clicked while the Order window sits minimized: it comes back full size
+                named(d, "Minimize").doClick();
+                DialogWindowButtons.showNormal(d);
+                assertEquals(normal, d.getBounds(), "showNormal brings a minimized dialog back");
+                DialogWindowButtons.showNormal(d);
+                assertEquals(normal, d.getBounds(), "nothing changes when it is not minimized");
+
                 box.pack();
                 assertFalse(DialogWindowButtons.decorate(box), "OK / Cancel message boxes stay simple");
             } finally {
