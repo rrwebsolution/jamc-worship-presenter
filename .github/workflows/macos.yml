@@ -75,6 +75,18 @@ jobs:
           chmod +x staging/ffmpeg
           codesign --force --sign - staging/ffmpeg
 
+      # LiveCat's own sound (videos, music, YouTube) in recordings and the livestream: the Mac twin of the Windows
+      # loopback helper, using ScreenCaptureKit (macOS 13+). Next to the jar, where LiveCat looks for it.
+      - name: App sound helper
+        run: |
+          mkdir -p staging
+          swiftc -O -target arm64-apple-macos13.0 -o staging/livecat-audio packaging/mac/livecat-audio.swift
+          chmod +x staging/livecat-audio
+          codesign --force --sign - staging/livecat-audio
+          # a quick start check: without arguments it must answer with its usage line, not crash
+          if staging/livecat-audio 2> ff-usage.txt; then echo "::error::livecat-audio ran without arguments"; exit 1; fi
+          grep -q "^ERROR usage" ff-usage.txt || { echo "::error::livecat-audio did not start"; cat ff-usage.txt; exit 1; }
+
       - name: App icon
         run: |
           mkdir -p icon.iconset
@@ -92,6 +104,7 @@ jobs:
           mkdir -p staging dist
           cp "target/jamc-worship-presenter-$v-all.jar" staging/
           test -x staging/ffmpeg # from "Bundled FFmpeg": next to the jar, where LiveCat looks first
+          test -x staging/livecat-audio # from "App sound helper"
           jlink --add-modules ALL-MODULE-PATH --module-path "$JAVA_HOME/jmods" --strip-debug --no-header-files --no-man-pages --output runtime
           jpackage --type app-image --dest appimage \
             --name "LiveCat Multimedia" --app-version ${{ steps.v.outputs.bundle }} --vendor "LiveCat" \
@@ -111,9 +124,10 @@ jobs:
           }
           setkey NSCameraUsageDescription "LiveCat shows your cameras in scenes, recordings and the livestream."
           setkey NSMicrophoneUsageDescription "LiveCat records and streams your microphones."
-          chmod +x "$app/Contents/app/ffmpeg"
+          chmod +x "$app/Contents/app/ffmpeg" "$app/Contents/app/livecat-audio"
           # changing Info.plist breaks jpackage's signature: sign again (ad hoc, no Apple Developer account)
           codesign --force --sign - "$app/Contents/app/ffmpeg"
+          codesign --force --sign - "$app/Contents/app/livecat-audio"
           codesign --force --deep --sign - "$app"
           jpackage --type dmg --dest dist --app-image "$app" \
             --name "LiveCat Multimedia" --app-version ${{ steps.v.outputs.bundle }} --vendor "LiveCat"

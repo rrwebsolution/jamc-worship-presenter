@@ -359,12 +359,24 @@ public final class LoopbackAudio implements AutoCloseable {
     }
 
     /** The helper exe in {@code toolsDir}, compiled from the bundled source when missing or outdated. */
+    /** livecat-audio inside LiveCat Multimedia.app (next to the jar, like the bundled FFmpeg), or null. */
+    static Path macHelper() {
+        Path ffmpeg = FFmpeg.bundled();
+        Path helper = ffmpeg == null ? null : ffmpeg.resolveSibling("livecat-audio");
+        return helper != null && Files.isExecutable(helper) ? helper : null;
+    }
+
     static synchronized Path helper(Path toolsDir) throws IOException {
+        if (com.jamc.worship.app.Os.MAC) {
+            // the Mac helper (packaging/mac/livecat-audio.swift, ScreenCaptureKit) is built into the app next to the jar
+            Path mac = macHelper();
+            if (mac == null) {
+                throw new IOException("Recording this app's own sound needs the LiveCat Mac app (macOS 13 or newer).");
+            }
+            return mac;
+        }
         if (!com.jamc.worship.app.Os.WINDOWS) {
-            // macOS has no way for an app to record its own sound without an extra audio driver (e.g. BlackHole):
-            // choose that device as the MEDIA input on the Stream page instead
-            throw new IOException("Recording this app's own sound works on Windows only. On a Mac, install an audio "
-                    + "loopback driver such as BlackHole and choose it as the MEDIA input.");
+            throw new IOException("Recording this app's own sound works on Windows and macOS only.");
         }
         byte[] source;
         try (InputStream in = LoopbackAudio.class.getResourceAsStream(SOURCE)) {
