@@ -53,6 +53,28 @@ jobs:
           ./mvnw -B -ntp versions:set -DnewVersion=${{ steps.v.outputs.version }} -DgenerateBackupPoms=false
           ./mvnw -B -ntp package -DskipTests
 
+      # FFmpeg goes inside the app: cameras, recording and livestream work without Homebrew or the Terminal.
+      # ffmpeg-static downloads a ready-made FFmpeg for this Mac (Apple Silicon).
+      - name: Bundled FFmpeg
+        run: |
+          mkdir -p ff staging
+          (cd ff && npm init -y >/dev/null && npm install --no-save --no-audit --no-fund ffmpeg-static@5.2.0)
+          bin=ff/node_modules/ffmpeg-static/ffmpeg
+          test -x "$bin" || { echo "::error::ffmpeg-static gave no FFmpeg"; exit 1; }
+          file "$bin"
+          "$bin" -hide_banner -version > ff/version.txt
+          sed -n 1p ff/version.txt
+          # what LiveCat needs on a Mac, checked here so a .dmg without it is never made
+          "$bin" -hide_banner -devices > ff/devices.txt 2>&1 || true
+          "$bin" -hide_banner -encoders > ff/encoders.txt 2>&1 || true
+          grep -q avfoundation ff/devices.txt || { echo "::error::FFmpeg has no AVFoundation (cameras, microphones)"; exit 1; }
+          grep -q " libx264 " ff/encoders.txt || { echo "::error::FFmpeg has no libx264 (recording)"; exit 1; }
+          grep -q " aac " ff/encoders.txt || { echo "::error::FFmpeg has no AAC (sound)"; exit 1; }
+          if grep -q h264_videotoolbox ff/encoders.txt; then echo "Mac hardware encoder: yes"; else echo "Mac hardware encoder: no"; fi
+          cp "$bin" staging/ffmpeg
+          chmod +x staging/ffmpeg
+          codesign --force --sign - staging/ffmpeg
+
       - name: App icon
         run: |
           mkdir -p icon.iconset
@@ -69,6 +91,7 @@ jobs:
           v=${{ steps.v.outputs.version }}
           mkdir -p staging dist
           cp "target/jamc-worship-presenter-$v-all.jar" staging/
+          test -x staging/ffmpeg # from "Bundled FFmpeg": next to the jar, where LiveCat looks first
           jlink --add-modules ALL-MODULE-PATH --module-path "$JAVA_HOME/jmods" --strip-debug --no-header-files --no-man-pages --output runtime
           jpackage --type app-image --dest appimage \
             --name "LiveCat Multimedia" --app-version ${{ steps.v.outputs.bundle }} --vendor "LiveCat" \
@@ -88,7 +111,9 @@ jobs:
           }
           setkey NSCameraUsageDescription "LiveCat shows your cameras in scenes, recordings and the livestream."
           setkey NSMicrophoneUsageDescription "LiveCat records and streams your microphones."
+          chmod +x "$app/Contents/app/ffmpeg"
           # changing Info.plist breaks jpackage's signature: sign again (ad hoc, no Apple Developer account)
+          codesign --force --sign - "$app/Contents/app/ffmpeg"
           codesign --force --deep --sign - "$app"
           jpackage --type dmg --dest dist --app-image "$app" \
             --name "LiveCat Multimedia" --app-version ${{ steps.v.outputs.bundle }} --vendor "LiveCat"

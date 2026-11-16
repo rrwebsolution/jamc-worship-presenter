@@ -66,6 +66,10 @@ public final class FFmpeg {
                 candidates.add(Files.isDirectory(p) ? p.resolve(exe()) : p);
             }
         }
+        Path bundled = bundled();
+        if (bundled != null) {
+            candidates.add(bundled); // the macOS app carries its own FFmpeg (no Homebrew needed)
+        }
         String path = System.getenv("PATH");
         if (path != null) {
             for (String dir : path.split(java.io.File.pathSeparator)) {
@@ -105,6 +109,17 @@ public final class FFmpeg {
             }
         }
         return null;
+    }
+
+    /** An FFmpeg next to the app's own jar (inside LiveCat Multimedia.app on a Mac), or null. */
+    static Path bundled() {
+        try {
+            Path jar = Path.of(FFmpeg.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            Path dir = Files.isRegularFile(jar) ? jar.getParent() : null;
+            return dir == null ? null : dir.resolve(exe());
+        } catch (Exception | Error e) {
+            return null;
+        }
     }
 
     /** Null for text Windows does not accept as a path: one bad PATH entry must not stop the search. */
