@@ -470,8 +470,8 @@ public final class FFmpegStreamEncoder implements ProgramFrameTap.Sink, StreamEn
             } else if (device != null && !(Boolean) in[1]) {
                 // stamped with the real time it arrives: a device that delivers late or unevenly (some laptop
                 // microphones) then gets silence for the missing moments instead of holding up the whole mix
-                c.addAll(List.of("-thread_queue_size", "1024", "-use_wallclock_as_timestamps", "1", "-f", "dshow", "-audio_buffer_size", "50",
-                        "-i", "audio=" + device));
+                c.addAll(List.of("-thread_queue_size", "1024", "-use_wallclock_as_timestamps", "1"));
+                c.addAll(FFmpeg.audioInput(device, 50)); // DirectShow on Windows, AVFoundation on a Mac
                 gains.add(new double[]{(Integer) in[2] / 100.0});
                 names.add(inputNames[n]);
             }

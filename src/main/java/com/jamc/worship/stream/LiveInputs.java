@@ -157,8 +157,8 @@ final class LiveInputs {
                 Thread.ofPlatform().daemon().name("loopback-input").start(this::loopback);
                 return;
             }
-            List<String> cmd = new java.util.ArrayList<>(List.of(ffmpeg.toString(), "-hide_banner", "-loglevel", "error",
-                    "-f", "dshow", "-audio_buffer_size", "20", "-i", "audio=" + device));
+            List<String> cmd = new java.util.ArrayList<>(List.of(ffmpeg.toString(), "-hide_banner", "-loglevel", "error"));
+            cmd.addAll(FFmpeg.audioInput(device, 20)); // DirectShow on Windows, AVFoundation on a Mac
             String chain = MixerChannels.get().chain(MixerChannels.input(device)); // its Audio Mixer filters
             if (!chain.isEmpty()) {
                 cmd.addAll(List.of("-af", chain));

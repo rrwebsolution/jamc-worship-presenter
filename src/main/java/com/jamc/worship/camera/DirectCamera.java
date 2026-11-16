@@ -56,7 +56,7 @@ final class DirectCamera implements CameraManager.Feed {
     }
 
     static boolean enabled() {
-        return enabled && ffmpeg != null;
+        return (enabled || com.jamc.worship.app.Os.MAC) && ffmpeg != null; // a Mac always uses Direct
     }
 
     /** The FFmpeg the recordings use; without it cameras stay on VLC. */
@@ -72,7 +72,14 @@ final class DirectCamera implements CameraManager.Feed {
 
     /** True when this camera should be opened directly (Direct engine on, FFmpeg found, the camera not refused). */
     static boolean usesDirect(String name) {
+        if (com.jamc.worship.app.Os.MAC) {
+            return ffmpeg != null; // a Mac has no DirectShow for VLC: cameras are always read by FFmpeg there
+        }
         return enabled() && !refused.contains(name);
+    }
+
+    static Path ffmpeg() {
+        return ffmpeg;
     }
 
     /** Gave no picture at all: noted so the next try of this camera goes through VLC. */
@@ -104,6 +111,9 @@ final class DirectCamera implements CameraManager.Feed {
 
     /** The FFmpeg command: the camera as it comes, low delay, out as BGRA pictures (read as 0xAARRGGBB ints). */
     static List<String> command(String exe, String name, CameraManager.Format format) {
+        if (com.jamc.worship.app.Os.MAC) {
+            return macCommand(exe, name, format);
+        }
         List<String> c = new ArrayList<>(List.of(exe, "-hide_banner", "-loglevel", "info", "-nostats",
                 "-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0",
                 "-f", "dshow", "-rtbufsize", "64M"));
@@ -117,6 +127,21 @@ final class DirectCamera implements CameraManager.Feed {
             c.addAll(List.of("-pixel_format", "yuyv422")); // Iriun: its other format came out with red and blue swapped
         }
         c.addAll(List.of("-i", "video=" + name, "-an", "-f", "rawvideo", "-pix_fmt", "bgra", "pipe:1"));
+        return c;
+    }
+
+    /**
+     * macOS (AVFoundation): a Mac camera must be asked for a frame rate it has (it refuses FFmpeg's 29.97 default),
+     * so 30 is asked when none is chosen; the camera's own sound is not read here.
+     */
+    static List<String> macCommand(String exe, String name, CameraManager.Format format) {
+        List<String> c = new ArrayList<>(List.of(exe, "-hide_banner", "-loglevel", "info", "-nostats",
+                "-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0",
+                "-f", "avfoundation", "-framerate", String.valueOf(format.fps() > 0 ? format.fps() : 30)));
+        if (format.size() != null) {
+            c.addAll(List.of("-video_size", format.size()));
+        }
+        c.addAll(List.of("-i", name + ":none", "-an", "-f", "rawvideo", "-pix_fmt", "bgra", "pipe:1"));
         return c;
     }
 

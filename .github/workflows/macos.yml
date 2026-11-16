@@ -1,0 +1,92 @@
+# Builds a macOS preview (LiveCat-Multimedia-<version>-mac.dmg) on GitHub's Mac computers, for testing on a
+# borrowed Mac. Run it by hand: Actions tab -> "macOS preview" -> Run workflow. The .dmg is added to the release of
+# the newest version (vX.Y.Z on the Releases page) and is also a download of the run (Artifacts). The website finds it
+# there and shows "Download for macOS (Preview)". The Windows "Update available" only ever takes the .exe.
+name: macOS preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    # Apple Silicon (M1 and newer). Intel Macs are not built yet.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the version tags
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Version
+        id: v
+        run: |
+          git fetch --tags --force --quiet
+          v=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sed 's/^v//' | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+          v=${v:-0.1.0}
+          IFS=. read -r major minor patch <<< "$v"
+          # macOS wants the first number above zero: 0.1.50 becomes 1.1.50 inside the app bundle
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "bundle=$((major + 1)).$minor.$patch" >> "$GITHUB_OUTPUT"
+          echo "Building macOS preview of $v"
+
+      - name: Build the app
+        # the tests run on the Windows build; some of them need Windows
+        run: |
+          chmod +x mvnw
+          ./mvnw -B -ntp versions:set -DnewVersion=${{ steps.v.outputs.version }} -DgenerateBackupPoms=false
+          ./mvnw -B -ntp package -DskipTests
+
+      - name: App icon
+        run: |
+          mkdir -p icon.iconset
+          src=src/main/resources/branding/livecat-icon.png
+          for s in 16 32 128 256 512; do
+            sips -z $s $s "$src" --out icon.iconset/icon_${s}x${s}.png >/dev/null
+            d=$((s * 2))
+            sips -z $d $d "$src" --out icon.iconset/icon_${s}x${s}@2x.png >/dev/null
+          done
+          iconutil -c icns icon.iconset -o app.icns
+
+      - name: Make the .dmg
+        run: |
+          v=${{ steps.v.outputs.version }}
+          mkdir -p staging dist
+          cp "target/jamc-worship-presenter-$v-all.jar" staging/
+          jlink --add-modules ALL-MODULE-PATH --module-path "$JAVA_HOME/jmods" --strip-debug --no-header-files --no-man-pages --output runtime
+          jpackage --type app-image --dest appimage \
+            --name "LiveCat Multimedia" --app-version ${{ steps.v.outputs.bundle }} --vendor "LiveCat" \
+            --description "Present. Produce. Go Live." \
+            --input staging --main-jar "jamc-worship-presenter-$v-all.jar" --main-class com.jamc.worship.app.Main \
+            --runtime-image runtime --icon app.icns \
+            --mac-package-identifier com.livecat.multimedia --mac-package-name "LiveCat" \
+            --java-options "--enable-native-access=ALL-UNNAMED" --java-options "-Dfile.encoding=UTF-8" \
+            --java-options "-XX:MaxRAMPercentage=50"
+          app="appimage/LiveCat Multimedia.app"
+          # macOS asks before a camera or microphone is used, and only when the app says why
+          plist="$app/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Add :NSCameraUsageDescription string 'LiveCat shows your cameras in scenes, recordings and the livestream.'" "$plist"
+          /usr/libexec/PlistBuddy -c "Add :NSMicrophoneUsageDescription string 'LiveCat records and streams your microphones.'" "$plist"
+          # changing Info.plist breaks jpackage's signature: sign again (ad hoc, no Apple Developer account)
+          codesign --force --deep --sign - "$app"
+          jpackage --type dmg --dest dist --app-image "$app" \
+            --name "LiveCat Multimedia" --app-version ${{ steps.v.outputs.bundle }} --vendor "LiveCat"
+          mv dist/*.dmg "dist/LiveCat-Multimedia-$v-mac.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiveCat-Multimedia-${{ steps.v.outputs.version }}-mac
+          path: dist/*.dmg
+
+      # next to the Windows installer of the same version; the release text and the .exe stay as they are
+      - name: Add to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "v${{ steps.v.outputs.version }}" dist/*.dmg --clobber

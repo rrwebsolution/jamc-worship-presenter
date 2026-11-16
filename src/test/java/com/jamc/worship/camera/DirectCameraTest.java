@@ -28,6 +28,13 @@ class DirectCameraTest {
     }
 
     @Test
+    void aMacCameraIsReadThroughAvFoundationAt30() {
+        String cmd = String.join(" ", DirectCamera.macCommand("ffmpeg", "FaceTime HD Camera", new CameraManager.Format(null, 0)));
+        assertTrue(cmd.contains("-f avfoundation -framerate 30"), cmd);
+        assertTrue(cmd.endsWith("-i FaceTime HD Camera:none -an -f rawvideo -pix_fmt bgra pipe:1"), cmd);
+    }
+
+    @Test
     void thePictureSizeIsReadFromFFmpegsOutputLine() {
         assertArrayEquals(new int[]{1280, 720}, DirectCamera.outputSize(
                 "  Stream #0:0: Video: rawvideo (BGRA / 0x41524742), bgra(pc, gbr/unknown/unknown, progressive), 1280x720, q=2-31, 884736 kb/s, 30 fps"));

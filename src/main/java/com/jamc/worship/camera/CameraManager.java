@@ -128,7 +128,8 @@ public final class CameraManager {
 
     /** VLC is needed for DirectShow cameras; NDI sources are received without it. */
     private boolean canOpen(String cam) {
-        return Ndi.isNdi(cam) || available.getAsBoolean();
+        // VLC is needed for DirectShow cameras; NDI and FFmpeg (Direct engine, every Mac camera) are read without it
+        return Ndi.isNdi(cam) || DirectCamera.usesDirect(cam) || available.getAsBoolean();
     }
 
     /** One open camera device. */
@@ -670,6 +671,9 @@ public final class CameraManager {
     }
 
     private static Capabilities listOptions(Path ffmpeg, String name) throws Exception {
+        if (com.jamc.worship.app.Os.MAC) {
+            return new Capabilities(List.of(), List.of()); // AVFoundation cannot list a camera's sizes this way: Auto
+        }
         Process p = new ProcessBuilder(ffmpeg.toString(), "-hide_banner", "-f", "dshow", "-list_options", "true",
                 "-i", "video=" + name).redirectErrorStream(true).start();
         StringBuilder out = new StringBuilder();
@@ -1061,10 +1065,39 @@ public final class CameraManager {
 
     // ------------------------------------------------------------------ Windows detection
 
+    /** macOS: cameras and microphones as FFmpeg's AVFoundation lists them (needs FFmpeg, e.g. from Homebrew). */
+    private static Detection detectMac() {
+        java.nio.file.Path ffmpeg = DirectCamera.ffmpeg();
+        if (ffmpeg == null) {
+            ffmpeg = com.jamc.worship.stream.FFmpeg.locate(null);
+            if (ffmpeg != null) {
+                DirectCamera.setFFmpeg(ffmpeg);
+            }
+        }
+        if (ffmpeg == null) {
+            log.warn("No FFmpeg found: on a Mac, cameras need FFmpeg (brew install ffmpeg)");
+            return new Detection(List.of(), List.of());
+        }
+        try {
+            Process p = new ProcessBuilder(ffmpeg.toString(), "-hide_banner", "-f", "avfoundation", "-list_devices", "true",
+                    "-i", "").redirectErrorStream(true).start();
+            String out = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            p.waitFor(15, TimeUnit.SECONDS);
+            return new Detection(com.jamc.worship.stream.FFmpeg.parseAvFoundation(out, "video"),
+                    com.jamc.worship.stream.FFmpeg.parseAvFoundation(out, "audio"));
+        } catch (Exception e) {
+            log.warn("Camera detection failed", e);
+            return new Detection(List.of(), List.of());
+        }
+    }
+
     private static Detection detectWindows() {
         List<String> video = new ArrayList<>();
         List<String> virtual = new ArrayList<>();
         List<String> audio = new ArrayList<>();
+        if (com.jamc.worship.app.Os.MAC) {
+            return detectMac();
+        }
         if (!System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win")) {
             return new Detection(video, audio);
         }

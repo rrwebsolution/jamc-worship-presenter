@@ -26,7 +26,7 @@ public final class FFmpeg {
     private static final Logger log = LoggerFactory.getLogger(FFmpeg.class);
 
     /** Hardware H.264 encoders, best first: NVIDIA, Intel Quick Sync, AMD, Windows Media Foundation. */
-    public static final List<String> HARDWARE_ENCODERS = List.of("h264_nvenc", "h264_qsv", "h264_amf", "h264_mf");
+    public static final List<String> HARDWARE_ENCODERS = List.of("h264_nvenc", "h264_qsv", "h264_amf", "h264_mf", "h264_videotoolbox"); // videotoolbox: Mac
     public static final String SOFTWARE_ENCODER = "libx264";
 
     /** What the installed FFmpeg offers. {@code workingHardware} were test-encoded successfully. */
@@ -95,6 +95,10 @@ public final class FFmpeg {
         }
         candidates.add(Path.of("C:\\ffmpeg\\bin", exe()));
         candidates.add(Path.of("C:\\Program Files\\ffmpeg\\bin", exe()));
+        // macOS: a Mac app does not get the Terminal's PATH, so look where Homebrew and MacPorts put FFmpeg
+        candidates.add(Path.of("/opt/homebrew/bin", exe()));
+        candidates.add(Path.of("/usr/local/bin", exe()));
+        candidates.add(Path.of("/opt/local/bin", exe()));
         for (Path c : candidates) {
             if (Files.isRegularFile(c)) {
                 return c;
@@ -127,9 +131,16 @@ public final class FFmpeg {
                 hardware.add(enc);
             }
         }
-        String devices = run(exe, 10, "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy");
-        Capabilities caps = new Capabilities(exe, version, software, List.copyOf(hardware),
-                parseDevices(devices, "audio"), parseDevices(devices, "video"));
+        Capabilities caps;
+        if (com.jamc.worship.app.Os.MAC) {
+            String devices = run(exe, 10, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", "");
+            caps = new Capabilities(exe, version, software, List.copyOf(hardware),
+                    parseAvFoundation(devices, "audio"), parseAvFoundation(devices, "video"));
+        } else {
+            String devices = run(exe, 10, "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy");
+            caps = new Capabilities(exe, version, software, List.copyOf(hardware),
+                    parseDevices(devices, "audio"), parseDevices(devices, "video"));
+        }
         log.info("FFmpeg {}: software={}, hardware={}, audio devices={}", version, software, hardware, caps.audioDevices().size());
         return caps;
     }
@@ -220,6 +231,40 @@ public final class FFmpeg {
     private static String firstLine(String s) {
         String line = s.lines().findFirst().orElse("").strip();
         return line.startsWith("ffmpeg version ") ? line.substring("ffmpeg version ".length()).split(" ")[0] : line;
+    }
+
+    /**
+     * macOS device names of a type ("audio" / "video") from {@code -f avfoundation -list_devices true} output. The
+     * screens ("Capture screen 0") are left out: they are not cameras.
+     */
+    public static List<String> parseAvFoundation(String output, String type) {
+        List<String> out = new ArrayList<>();
+        String section = null;
+        Pattern item = Pattern.compile("\\]\\s*\\[(\\d+)\\]\\s+(.+)$");
+        for (String line : output.split("\\R")) {
+            if (line.contains("AVFoundation video devices")) {
+                section = "video";
+            } else if (line.contains("AVFoundation audio devices")) {
+                section = "audio";
+            } else if (type.equals(section)) {
+                Matcher m = item.matcher(line.strip());
+                if (m.find()) {
+                    String name = m.group(2).strip();
+                    if (!name.startsWith("Capture screen") && !out.contains(name)) {
+                        out.add(name);
+                    }
+                }
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    /** FFmpeg input options for one sound input device: DirectShow on Windows, AVFoundation on a Mac. */
+    public static List<String> audioInput(String device, int bufferMs) {
+        if (com.jamc.worship.app.Os.MAC) {
+            return List.of("-f", "avfoundation", "-i", ":" + device);
+        }
+        return List.of("-f", "dshow", "-audio_buffer_size", String.valueOf(bufferMs), "-i", "audio=" + device);
     }
 
     private static String exe() {

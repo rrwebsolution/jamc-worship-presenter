@@ -52,7 +52,7 @@ public final class MediaEngine {
         try {
             boolean found = false;
             for (Path dir : candidates) {
-                if (dir != null && Files.isRegularFile(dir.resolve(RuntimeUtil.isWindows() ? "libvlc.dll" : "libvlc.so"))) {
+                if (dir != null && Files.isRegularFile(dir.resolve(RuntimeUtil.isWindows() ? "libvlc.dll" : RuntimeUtil.isMac() ? "libvlc.dylib" : "libvlc.so"))) {
                     NativeLibrary.addSearchPath(RuntimeUtil.getLibVlcLibraryName(), dir.toString());
                     NativeLibrary.addSearchPath(RuntimeUtil.getLibVlcCoreLibraryName(), dir.toString());
                     log.info("Using VLC from {}", dir);
@@ -72,8 +72,12 @@ public final class MediaEngine {
             // DirectSound: each player keeps its own volume and mute. With Windows' default VLC output (mmdevice) all
             // players share one audio session, so muting any player (a silent background, a Preview video) muted every
             // video and song in the app.
-            MediaPlayerFactory f = new MediaPlayerFactory("--quiet", "--no-video-title-show", "--no-snapshot-preview",
-                    "--intf=dummy", "--no-stats", "--aout=directsound");
+            List<String> args = new ArrayList<>(List.of("--quiet", "--no-video-title-show", "--no-snapshot-preview",
+                    "--intf=dummy", "--no-stats"));
+            if (RuntimeUtil.isWindows()) {
+                args.add("--aout=directsound"); // Windows only; a Mac uses its own sound output
+            }
+            MediaPlayerFactory f = new MediaPlayerFactory(args.toArray(String[]::new));
             instance = new MediaEngine(f, null);
             log.info("VLC initialized");
         } catch (Throwable e) {

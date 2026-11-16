@@ -52,9 +52,11 @@ final class MicAudio implements AutoCloseable {
     }
 
     static MicAudio start(Path ffmpeg, String device) throws IOException {
-        Process p = new ProcessBuilder(ffmpeg.toString(), "-hide_banner", "-loglevel", "error", "-f", "dshow",
-                "-audio_buffer_size", "50", "-i", "audio=" + device, "-f", SAMPLE, "-ar", String.valueOf(RATE),
-                "-ac", String.valueOf(CHANNELS), "-flush_packets", "1", "pipe:1").start();
+        java.util.List<String> cmd = new java.util.ArrayList<>(java.util.List.of(ffmpeg.toString(), "-hide_banner", "-loglevel", "error"));
+        cmd.addAll(FFmpeg.audioInput(device, 50)); // DirectShow on Windows, AVFoundation on a Mac
+        cmd.addAll(java.util.List.of("-f", SAMPLE, "-ar", String.valueOf(RATE), "-ac", String.valueOf(CHANNELS),
+                "-flush_packets", "1", "pipe:1"));
+        Process p = new ProcessBuilder(cmd).start();
         MicAudio a = new MicAudio(device, p, new ServerSocket(0, 1, InetAddress.getLoopbackAddress()));
         Thread.ofPlatform().daemon().name("mic-accept").start(a::acceptLoop);
         Thread.ofPlatform().daemon().name("mic-read").start(a::readLoop);

@@ -176,6 +176,9 @@ public final class CameraAudio {
         }
         for (Want w : want.values()) {
             VideoPlayer p = players.get(w.input());
+            if (p == null && !com.jamc.worship.app.Os.WINDOWS) {
+                continue; // VLC reads sound inputs through DirectShow (Windows); recordings take them through FFmpeg
+            }
             if (p == null) {
                 p = new VideoPlayer();
                 players.put(w.input(), p);

@@ -360,6 +360,12 @@ public final class LoopbackAudio implements AutoCloseable {
 
     /** The helper exe in {@code toolsDir}, compiled from the bundled source when missing or outdated. */
     static synchronized Path helper(Path toolsDir) throws IOException {
+        if (!com.jamc.worship.app.Os.WINDOWS) {
+            // macOS has no way for an app to record its own sound without an extra audio driver (e.g. BlackHole):
+            // choose that device as the MEDIA input on the Stream page instead
+            throw new IOException("Recording this app's own sound works on Windows only. On a Mac, install an audio "
+                    + "loopback driver such as BlackHole and choose it as the MEDIA input.");
+        }
         byte[] source;
         try (InputStream in = LoopbackAudio.class.getResourceAsStream(SOURCE)) {
             if (in == null) {

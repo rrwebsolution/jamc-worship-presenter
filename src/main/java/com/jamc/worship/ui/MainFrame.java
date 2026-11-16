@@ -1051,6 +1051,14 @@ public class MainFrame extends JFrame {
             }
             return;
         }
+        if (com.jamc.worship.app.Os.MAC) {
+            // the releases carry the Windows installer only: a Mac gets new versions by hand (a new .dmg)
+            if (manual) {
+                Dialogs.showInfo(this, "Updates", "The Mac version (preview) is updated by installing a new .dmg. "
+                        + "Automatic updates are for the Windows version.");
+            }
+            return;
+        }
         var checker = new com.jamc.worship.update.UpdateChecker();
         BackgroundTask.run("Check for updates", () -> {
             var latest = checker.latest();
