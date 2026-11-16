@@ -1,11 +1,16 @@
 # Builds a macOS preview (LiveCat-Multimedia-<version>-mac.dmg) on GitHub's Mac computers, for testing on a
-# borrowed Mac. Run it by hand: Actions tab -> "macOS preview" -> Run workflow. The .dmg is added to the release of
+# borrowed Mac. It runs by itself after every successful Windows release (or by hand: Actions -> "macOS preview" ->
+# Run workflow). The .dmg is added to the release of
 # the newest version (vX.Y.Z on the Releases page) and is also a download of the run (Artifacts). The website finds it
 # there and shows "Download for macOS (Preview)". The Windows "Update available" only ever takes the .exe.
 name: macOS preview
 
 on:
   workflow_dispatch:
+  # by itself after every Windows release, so each version also gets its .dmg
+  workflow_run:
+    workflows: ["Windows installer"]
+    types: [completed]
 
 permissions:
   contents: write
@@ -14,10 +19,14 @@ jobs:
   dmg:
     # Apple Silicon (M1 and newer). Intel Macs are not built yet.
     runs-on: macos-latest
+    # after a Windows release: only when it worked (its version tag then exists)
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0 # the version tags
+          # the same code the Windows installer was built from
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: actions/setup-java@v4
         with:
