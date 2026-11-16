@@ -20,3 +20,6 @@
 
 ## Smoother camera
 - A camera on **Auto** that gives fewer than 20 pictures a second at 1080p (an Iriun phone over WiFi, a busy laptop) now switches by itself to **1280×720 at 30 fps** after 15 seconds, for a smooth picture. A size you choose in Camera settings is never changed.
+
+## Shot recordings have sound
+- **Camera → AUTO DIRECTOR → RECORD THIS SHOT** files now have the same sound as the main recording, including Audio Input sources and camera audio from the scene (before, a shot file could be silent).

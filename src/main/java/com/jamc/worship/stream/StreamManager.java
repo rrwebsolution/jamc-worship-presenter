@@ -711,6 +711,8 @@ public final class StreamManager {
     }
 
     private FFmpegStreamEncoder shotRecorder;
+    /** This app's own sound for the shot file. */
+    private LoopbackAudio shotLoopback;
     private volatile ShotRecording shotRecording;
     private javax.swing.Timer shotTimer;
 
@@ -761,7 +763,20 @@ public final class StreamManager {
         Thread.ofVirtual().name("shot-recording-start").start(() -> {
             try {
                 Files.createDirectories(folder);
-                // the app's own sound (videos, music) is the Program recording's; the shot file has the sound inputs
+                // the same sound as the Program recording: the MIC / AUX devices and this app's own sound, which
+                // carries the scene's Audio Input and camera-audio sources (without it a shot file was silent)
+                if (s.usesAppAudio()) {
+                    try {
+                        LoopbackAudio a = LoopbackAudio.start(toolsDir);
+                        mixLiveInputs(a, caps.executable());
+                        enc.setAppAudio(a.input());
+                        SwingUtilities.invokeLater(() -> {
+                            if (shotRecorder == enc) shotLoopback = a; else a.close();
+                        });
+                    } catch (IOException e) {
+                        log.warn("Shot recording without this app's sound: {}", e.getMessage());
+                    }
+                }
                 enc.start();
                 SwingUtilities.invokeLater(() -> {
                     if (shotRecorder == enc) {
@@ -820,6 +835,10 @@ public final class StreamManager {
         if (shotTimer != null) {
             shotTimer.stop();
             shotTimer = null;
+        }
+        if (shotLoopback != null) {
+            shotLoopback.close();
+            shotLoopback = null;
         }
         ShotRecording r = shotRecording;
         shotRecorder = null;
