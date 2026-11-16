@@ -22,6 +22,8 @@ public enum RemoteCommand {
     TAKE_PREVIEW("TAKE", EnumSet.of(TAKE)),
     SET_SCENE_PREVIEW(EnumSet.of(SCENES, PREVIEW)),
     SET_CAMERA_PREVIEW(EnumSet.of(CAMERAS, PREVIEW)),
+    /** The camera's on / off switch, same as the Camera page's. */
+    SET_CAMERA_POWER(EnumSet.of(CAMERAS, PREVIEW)),
     PRESENTATION_FIRST(EnumSet.of(PRESENTATION)),
     PRESENTATION_PREVIOUS(EnumSet.of(PRESENTATION)),
     PRESENTATION_NEXT(EnumSet.of(PRESENTATION)),

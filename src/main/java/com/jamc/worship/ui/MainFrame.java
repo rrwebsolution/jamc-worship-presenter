@@ -184,6 +184,8 @@ public class MainFrame extends JFrame {
     private final DisplayManager displays = new DisplayManager();
     private final CameraManager cameras = new CameraManager();
     private com.jamc.worship.camera.CameraNames cameraNames;
+    /** Which cameras the operator switched on (Camera page and remote); every camera starts off. */
+    private com.jamc.worship.camera.CameraPower cameraPower;
     /** The page on screen (leaving SCENE with unsaved scene changes asks Save / Discard / Cancel first). */
     private TopBar.Page currentPage = TopBar.Page.LIBRARY; // the app opens on the Library
     private com.jamc.worship.camera.CameraSettings cameraSettings;
@@ -315,6 +317,7 @@ public class MainFrame extends JFrame {
         this.hub = new MediaHub(path -> context.mediaService().resolve(path), cameras, audioRouting);
         // camera numbers and nicknames ("CAM 2 · PREACHER CAMERA"), the operator's audio input per camera
         this.cameraNames = new com.jamc.worship.camera.CameraNames(context.config());
+        this.cameraPower = new com.jamc.worship.camera.CameraPower(context.config());
         this.cameraSettings = new com.jamc.worship.camera.CameraSettings(context.config());
         cameras.setAudioOverride(cameraNames::audioInput);
         // the operator's mute / volume / loop per video, audio file and scene source (kept across visits and restarts)
@@ -432,7 +435,7 @@ public class MainFrame extends JFrame {
         });
         mediaDetail.setMediaStates(mediaStates);
         cameraWorkspace = new com.jamc.worship.ui.components.CameraWorkspacePanel(cameras, cameraNames, cameraSettings,
-                context.config(), new com.jamc.worship.ui.components.CameraWorkspacePanel.Actions() {
+                context.config(), cameraPower, new com.jamc.worship.ui.components.CameraWorkspacePanel.Actions() {
                     @Override
                     public void sendToPreview(String camera, com.jamc.worship.model.FitMode fit, boolean mirror) {
                         previewCamera(camera, fit, mirror, false);
@@ -2653,9 +2656,15 @@ public class MainFrame extends JFrame {
                 m.put("id", device);
                 m.put("name", cameraName(device));
                 m.put("status", offline ? "OFFLINE" : uses(program.scene(), device) ? "LIVE" : uses(previewState.scene(), device) ? "PREVIEW" : "READY");
+                m.put("on", cameraOn(device));
                 list.add(m);
             }
             return list;
+        }
+
+        /** Switched on, or on Program / Preview (which keep a camera running whatever its switch says). */
+        private boolean cameraOn(String device) {
+            return cameraPower.isOn(device) || uses(program.scene(), device) || uses(previewState.scene(), device);
         }
 
         private boolean uses(Scene scene, String device) {
@@ -2937,7 +2946,7 @@ public class MainFrame extends JFrame {
         private Map<String, Object> cameraPicture(String device) throws Exception {
             java.awt.image.BufferedImage[] frame = new java.awt.image.BufferedImage[1];
             SwingUtilities.invokeAndWait(() -> {
-                if (cameras.cameras().contains(device)) {
+                if (cameras.cameras().contains(device) && cameraOn(device)) { // an OFF camera stays closed
                     frame[0] = cameras.frame(device);
                 }
             });
@@ -3037,10 +3046,27 @@ public class MainFrame extends JFrame {
                     if (!cameras.cameras().contains(device)) {
                         return "camera_unavailable";
                     }
+                    if (!cameraOn(device)) {
+                        return "camera_off"; // like the Camera page: switch it on first
+                    }
                     if (MainFrame.this.scenes == null || MainFrame.this.scenes.stream().noneMatch(s -> s.has(com.jamc.worship.model.SourceType.CAMERA))) {
                         return "no_camera_scene";
                     }
                     previewCamera(device, com.jamc.worship.model.FitMode.FILL, false, false);
+                }
+                case SET_CAMERA_POWER -> {
+                    String device = payload.path("id").asText("");
+                    boolean turnOn = payload.path("on").asBoolean(false);
+                    if (!cameras.cameras().contains(device)) {
+                        return "camera_unavailable";
+                    }
+                    if (!turnOn && (uses(program.scene(), device) || uses(previewState.scene(), device))) {
+                        return "camera_in_use"; // on Program / Preview the app keeps it running
+                    }
+                    if (!turnOn) {
+                        cameras.close(device);
+                    }
+                    cameraPower.set(device, turnOn); // the Camera page's switch follows
                 }
                 case PRESENTATION_FIRST -> {
                     return presentationTo(0);
