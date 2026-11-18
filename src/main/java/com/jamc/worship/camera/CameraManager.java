@@ -887,6 +887,19 @@ public final class CameraManager {
         return img;
     }
 
+    /**
+     * The latest picture of a camera that is ALREADY running (switched on, or used by a live scene), for scene
+     * thumbnails. Never opens a camera and does not keep one open, so a thumbnail never starts an OFF camera.
+     */
+    public BufferedImage peek(String name) {
+        String cam = resolve(name);
+        Session s = cam == null ? null : sessions.get(cam);
+        if (s == null || !s.gotFrame || s.failed || s.reopenPending) {
+            return null;
+        }
+        return s.feed.frame();
+    }
+
     /** Every format was tried without a picture: ERROR, with the likely reason, until the next retry. */
     private void fail(String cam, Session s, long now) {
         s.failed = true;

@@ -214,6 +214,9 @@ public final class Fonts {
             names = null;
             families = null;
         }
+        synchronized (CREATED) {
+            CREATED.clear(); // a family that was missing may be installed now
+        }
         listeners.forEach(Runnable::run);
     }
 
@@ -261,6 +264,30 @@ public final class Fonts {
 
     /** A font of {@code size} points for the family and weight, using a dedicated weight face when installed. */
     public static Font create(String family, FontWeight weight, boolean italic, float size) {
+        // painted many times a second (Bible card, lower thirds): each font is made once and reused, so no new Font
+        // objects pile up per frame (see ui/FontCache for the leak that caused lag)
+        CreateKey key = new CreateKey(family, weight, italic, size);
+        synchronized (CREATED) {
+            Font f = CREATED.get(key);
+            if (f == null) {
+                f = make(family, weight, italic, size);
+                CREATED.put(key, f);
+            }
+            return f;
+        }
+    }
+
+    private record CreateKey(String family, FontWeight weight, boolean italic, float size) {
+    }
+
+    private static final java.util.Map<CreateKey, Font> CREATED = new java.util.LinkedHashMap<>(64, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(java.util.Map.Entry<CreateKey, Font> eldest) {
+            return size() > 512;
+        }
+    };
+
+    private static Font make(String family, FontWeight weight, boolean italic, float size) {
         String fam = effectiveFamily(family);
         for (String suffix : weight.faceSuffixes()) {
             String face = fam + " " + suffix;

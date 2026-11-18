@@ -161,13 +161,54 @@ public class ScenesPanel extends JPanel {
     private List<String> slideThumbs = List.of();
     private final JComboBox<FitMode> fitCombo = new JComboBox<>(FitMode.values());
     private final JLabel fileLabel = Ui.small("—");
-    private final JButton fileButton = Ui.button("Choose…", "folder");
+    private final JButton fileButton = Ui.button("Library…", "folder");
     private final JTextField textField = new JTextField();
     private final ColorButton colorButton = new ColorButton("Text color", Color.WHITE);
     private final JSpinner fontSpin = new JSpinner(new SpinnerNumberModel(48, 8, 300, 2));
     /** TEXT / CLOCK: how heavy the letters are, and slanted or not. */
     private final JComboBox<com.jamc.worship.model.FontWeight> weightCombo = new JComboBox<>(com.jamc.worship.model.FontWeight.values());
     private final JCheckBox italicBox = new JCheckBox("Italic");
+    /** LOWER_THIRD: SHOW_LIVE (the one SHOWn in Lower Thirds) or one saved lower third, always on in this scene. */
+    private final JComboBox<Object> lowerThirdCombo = new JComboBox<>();
+    private static final String SHOW_LIVE = "The one I SHOW in Lower Thirds";
+
+    // ---- designed layouts (user 2026-11-17): cards, tags, coloured words, the LIVE badge
+    /** A colour that can be switched off (a tick beside the colour button). */
+    private static final class OptionalColor extends JPanel {
+        final JCheckBox on;
+        final ColorButton button;
+
+        OptionalColor(String what, String defaultHex) {
+            super(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 4, 0));
+            setOpaque(false);
+            on = new JCheckBox();
+            on.setOpaque(false);
+            button = new ColorButton(what, Colors.parse(defaultHex, Color.WHITE));
+            add(on);
+            add(button);
+        }
+
+        String get() {
+            return on.isSelected() ? button.getHex() : null;
+        }
+
+        void set(String hex, String fallback) {
+            on.setSelected(hex != null && !hex.isBlank());
+            button.setColor(Colors.parse(hex == null ? fallback : hex, Color.WHITE));
+        }
+    }
+
+    private final OptionalColor gradientColor = new OptionalColor("Gradient bottom color", "#06122E");
+    private final OptionalColor borderColor = new OptionalColor("Border color", com.jamc.worship.render.DesignedLayers.GOLD);
+    private final OptionalColor tagColor = new OptionalColor("Tag color", com.jamc.worship.render.DesignedLayers.GOLD);
+    private final JSpinner cornerSpin = new JSpinner(new SpinnerNumberModel(0, 0, 300, 2));
+    private final JSpinner borderSpin = new JSpinner(new SpinnerNumberModel(3, 1, 30, 1));
+    private final JComboBox<String> alignCombo = new JComboBox<>(new String[]{"Center", "Left", "Right"});
+    private final ColorButton markedColor = new ColorButton("Marked words color",
+            Colors.parse(com.jamc.worship.render.DesignedLayers.GOLD, Color.YELLOW));
+    private final JCheckBox bibleCardBox = new JCheckBox("Card: reference in a tag, words on the left");
+    private final JTextField highlightField = new JTextField();
+    private final JCheckBox liveOnlyBox = new JCheckBox("Only while streaming (LIVE)");
     private final JComboBox<String> cameraCombo = new JComboBox<>();
     private final JComboBox<String> songMode = new JComboBox<>(new String[]{"From library (any song sent)", "This song only"});
     // CAMERA source: crop (% of the picture at each edge), rotation, mirror, offline picture
@@ -188,6 +229,10 @@ public class ScenesPanel extends JPanel {
     private final JCheckBox chromaSpill = new JCheckBox("Reduce green edges (spill)", true);
     private final JComboBox<String> offlineCombo = new JComboBox<>(new String[]{"\"Camera Offline\" card", "Black", "Image (e.g. church logo)"});
     private final JButton offlineImageButton = Ui.button("Choose Image…", "image");
+    /** CAMERA source: closes the camera and opens it again (when it is stuck or shows nothing). */
+    private final JButton cameraRefreshButton = Ui.button("REFRESH", "refresh");
+    /** The Status label of the camera source on screen (null when no camera source is shown), kept up to date. */
+    private JLabel cameraStateLabel;
     private com.jamc.worship.camera.CameraNames cameraNames;
     private final JSlider opacity = new JSlider(0, 100, 100);
     private final JComboBox<String> textPlace = new JComboBox<>(new String[]{"As the theme", "Top", "Middle", "Bottom"});
@@ -2335,7 +2380,10 @@ public class ScenesPanel extends JPanel {
             s.addChangeListener(e -> apply.run());
         }
         fitCombo.addActionListener(e -> apply.run());
-        cameraCombo.addActionListener(e -> apply.run());
+        cameraCombo.addActionListener(e -> {
+            apply.run();
+            updateCameraState(); // the Status next to REFRESH follows the chosen camera
+        });
         songMode.addActionListener(e -> apply.run());
         for (JSpinner s : List.of(cropLeft, cropTop, cropRight, cropBottom)) {
             s.addChangeListener(e -> apply.run());
@@ -2358,9 +2406,40 @@ public class ScenesPanel extends JPanel {
         chromaSpill.addActionListener(e -> apply.run());
         offlineCombo.addActionListener(e -> apply.run());
         offlineImageButton.addActionListener(e -> chooseOfflineImage());
+        bibleCardBox.addActionListener(e -> apply.run());
+        highlightField.getDocument().addDocumentListener(doc(apply));
+        highlightField.putClientProperty(FlatClientProperties.PLACEHOLDER_TEXT, "kingdom of God, His righteousness");
+        cameraRefreshButton.setFocusable(false);
+        cameraRefreshButton.setToolTipText("<html>Close this camera and open it again, when it is stuck, black or "
+                + "frozen.<br>Only this camera restarts; it is also looked for again if it was unplugged.</html>");
+        cameraRefreshButton.addActionListener(e -> refreshSelectedCamera());
+        cameras.addListener(this::updateCameraState);
         colorButton.addColorListener(c -> apply.run());
         weightCombo.addActionListener(e -> apply.run());
         italicBox.addActionListener(e -> apply.run());
+        lowerThirdCombo.addActionListener(e -> apply.run());
+        for (OptionalColor oc : List.of(gradientColor, borderColor, tagColor)) {
+            oc.on.addActionListener(e -> apply.run());
+            oc.button.addColorListener(col -> {
+                oc.on.setSelected(true); // picking a colour switches it on
+                apply.run();
+            });
+        }
+        cornerSpin.addChangeListener(e -> apply.run());
+        borderSpin.addChangeListener(e -> apply.run());
+        alignCombo.addActionListener(e -> apply.run());
+        markedColor.addColorListener(col -> apply.run());
+        liveOnlyBox.addActionListener(e -> apply.run());
+        liveOnlyBox.setToolTipText("Shown on Program only while the livestream is on, e.g. a LIVE badge");
+        lowerThirdCombo.setRenderer(new javax.swing.DefaultListCellRenderer() {
+            @Override
+            public Component getListCellRendererComponent(JList<?> l, Object v, int i, boolean sel, boolean f) {
+                String text = v instanceof com.jamc.worship.model.LowerThird lt
+                        ? lt.getTitle() + (lt.getSubtitle() == null || lt.getSubtitle().isBlank() ? "" : " — " + lt.getSubtitle())
+                        : String.valueOf(v);
+                return super.getListCellRendererComponent(l, text, i, sel, f);
+            }
+        });
         opacity.addChangeListener(e -> apply.run());
         textPlace.addActionListener(e -> apply.run());
         lyricsLayout.addActionListener(e -> apply.run());
@@ -2622,6 +2701,7 @@ public class ScenesPanel extends JPanel {
 
     private void loadProps() {
         props.removeAll();
+        cameraStateLabel = null; // set again by loadCameraProps when a camera source is shown
         Source s = sourceList.getSelectedValue();
         if (s == null) {
             props.revalidate();
@@ -2674,6 +2754,8 @@ public class ScenesPanel extends JPanel {
             place.add(fitToCanvas);
             place.add(resetPosition);
             row(g, "Layout", place);
+            liveOnlyBox.setSelected(Boolean.TRUE.equals(c.onlyWhileLive));
+            row(g, "", liveOnlyBox);
             if (t == SourceType.PRESENTATION || t == SourceType.COLOR) {
                 if (t == SourceType.PRESENTATION) {
                     row(g, "Fit", fitCombo);
@@ -2681,6 +2763,15 @@ public class ScenesPanel extends JPanel {
                 } else {
                     colorButton.setColor(Colors.parse(c.color, Color.BLACK));
                     row(g, "Color", colorButton);
+                    gradientColor.set(c.color2, "#06122E");
+                    gradientColor.setToolTipText("Tick for a gradient: the color above at the top, this one at the bottom");
+                    row(g, "Gradient", gradientColor);
+                    cornerSpin.setValue(c.cornerRadius == null ? 0 : c.cornerRadius);
+                    row(g, "Corners", cornerSpin);
+                    borderColor.set(c.borderColor, com.jamc.worship.render.DesignedLayers.GOLD);
+                    row(g, "Border", borderColor);
+                    borderSpin.setValue(c.borderWidth == null ? 3 : c.borderWidth);
+                    row(g, "Border size", borderSpin);
                 }
                 JPanel o = Ui.transparent(new BorderLayout());
                 o.add(opacity);
@@ -2716,7 +2807,7 @@ public class ScenesPanel extends JPanel {
                         + "show here (it keeps this song's last slide).");
                 row(g, "Shows", songMode);
             }
-            if (t == SourceType.LYRICS || t == SourceType.BIBLE) {
+            if (t == SourceType.LYRICS) {
                 textPlace.setSelectedIndex(c.textPosition == null ? 0 : c.textPosition.ordinal() + 1);
                 row(g, "Text position", textPlace);
                 textScale.setValue(c.textScale == null ? 100 : (int) Math.round(c.textScale * 100));
@@ -2800,6 +2891,37 @@ public class ScenesPanel extends JPanel {
                 italicBox.setSelected(Boolean.TRUE.equals(c.italic));
                 italicBox.setToolTipText("Slanted letters");
                 row(g, "Style", italicBox);
+                alignCombo.setSelectedItem(c.align == null ? "Center"
+                        : c.align.charAt(0) + c.align.substring(1).toLowerCase(java.util.Locale.ROOT));
+                row(g, "Align", alignCombo);
+                tagColor.set(c.background, com.jamc.worship.render.DesignedLayers.GOLD);
+                tagColor.setToolTipText("Tick for a filled tag behind the words (e.g. the yellow \"Preaching Title\")");
+                row(g, "Tag", tagColor);
+                cornerSpin.setValue(c.cornerRadius == null ? 0 : c.cornerRadius);
+                cornerSpin.setToolTipText("Rounded tag corners (0 = fully round)");
+                row(g, "Corners", cornerSpin);
+                markedColor.setColor(Colors.parse(c.highlightColor, Colors.parse(com.jamc.worship.render.DesignedLayers.GOLD, Color.YELLOW)));
+                row(g, "*Marked*", markedColor);
+                row(g, "", Ui.label("<html><body style='width:190px'>Put *stars* around words to give them the marked "
+                        + "color, e.g. Seek *first* the kingdom.</html>", Palette::mutedText, "small"));
+            }
+            if (t == SourceType.BIBLE) {
+                // this scene's Bible design; the words' font, size and color come from Settings → Bible Typography and
+                // the reference (capitals, version) from Settings → Bible Presentation
+                bibleCardBox.setSelected(Boolean.TRUE.equals(c.bibleCard));
+                row(g, "Design", bibleCardBox);
+                if (Boolean.TRUE.equals(c.bibleCard)) {
+                    highlightField.setText(c.highlightWords == null ? "" : c.highlightWords);
+                    row(g, "Yellow words", highlightField);
+                    markedColor.setColor(Colors.parse(c.highlightColor, Colors.parse(com.jamc.worship.render.DesignedLayers.GOLD, Color.YELLOW)));
+                    row(g, "Yellow color", markedColor);
+                    row(g, "", Ui.label("<html><body style='width:190px'>Words or phrases to color in the verse, with "
+                            + "commas between them. The words shrink to fit the card. Put a Color / Shape layer with "
+                            + "corners and a border under it for the card itself.</html>", Palette::mutedText, "small"));
+                }
+                row(g, "", Ui.label("<html><body style='width:190px'>Font, size and color of the words: Settings → Bible "
+                        + "Typography. Reference in capitals, version shown or hidden: Settings → Bible Presentation.</html>",
+                        Palette::mutedText, "small"));
             }
             if (t == SourceType.LYRICS || t == SourceType.BIBLE || t == SourceType.BACKGROUND || t == SourceType.LOWER_THIRD) {
                 String help = switch (t) {
@@ -2808,8 +2930,22 @@ public class ScenesPanel extends JPanel {
                     case BACKGROUND -> "The background layer: shows the video or picture taken with TAKE AS BACKGROUND, "
                             + "or the song's / verse's theme background. Put it below the Lyrics / Bible source so the "
                             + "words sit on it.";
-                    default -> "Shows the lower third when you press SHOW in Lower Thirds.";
+                    default -> "Choose one saved lower third to keep it on while this scene is up. Add more Lower Third "
+                            + "sources for more names at once, each with its own design and place (set in Lower Thirds).";
                 };
+                if (t == SourceType.LOWER_THIRD) {
+                    lowerThirdCombo.removeAllItems();
+                    lowerThirdCombo.addItem(SHOW_LIVE);
+                    Object chosen = SHOW_LIVE;
+                    for (com.jamc.worship.model.LowerThird lt : com.jamc.worship.model.LowerThirdLookup.all()) {
+                        lowerThirdCombo.addItem(lt);
+                        if (java.util.Objects.equals(lt.getId(), c.lowerThirdId)) {
+                            chosen = lt;
+                        }
+                    }
+                    lowerThirdCombo.setSelectedItem(chosen);
+                    row(g, "Shows", lowerThirdCombo);
+                }
                 row(g, "", Ui.label("<html><body style='width:190px'>" + help + "</html>", Palette::mutedText, "small"));
                 if (t == SourceType.BACKGROUND) {
                     backgroundVideoControls(g);
@@ -3307,6 +3443,33 @@ public class ScenesPanel extends JPanel {
         if (keepsAspect(t)) {
             c.keepAspect = keepAspect.isSelected();
         }
+        c.onlyWhileLive = liveOnlyBox.isSelected() ? Boolean.TRUE : null;
+        if (t == SourceType.COLOR) {
+            c.color2 = gradientColor.get();
+            c.cornerRadius = ((Number) cornerSpin.getValue()).intValue() == 0 ? null : ((Number) cornerSpin.getValue()).intValue();
+            c.borderColor = borderColor.get();
+            c.borderWidth = ((Number) borderSpin.getValue()).intValue() == 3 ? null : ((Number) borderSpin.getValue()).intValue();
+        }
+        if (t == SourceType.TEXT || t == SourceType.CLOCK) {
+            String a = ((String) alignCombo.getSelectedItem()).toUpperCase(java.util.Locale.ROOT);
+            c.align = "CENTER".equals(a) ? null : a;
+            c.background = tagColor.get();
+            c.cornerRadius = ((Number) cornerSpin.getValue()).intValue() == 0 ? null : ((Number) cornerSpin.getValue()).intValue();
+            String hc = markedColor.getHex();
+            c.highlightColor = hc.equalsIgnoreCase(com.jamc.worship.render.DesignedLayers.GOLD) ? null : hc;
+        }
+        if (t == SourceType.BIBLE) {
+            boolean wasCard = Boolean.TRUE.equals(c.bibleCard);
+            c.bibleCard = bibleCardBox.isSelected() ? Boolean.TRUE : null;
+            if (wasCard && c.bibleCard != null) { // the card's own rows are on screen only while it is on
+                c.highlightWords = highlightField.getText().isBlank() ? null : highlightField.getText().strip();
+                String hc = markedColor.getHex();
+                c.highlightColor = hc.equalsIgnoreCase(com.jamc.worship.render.DesignedLayers.GOLD) ? null : hc;
+            }
+            if (wasCard != (c.bibleCard != null)) {
+                javax.swing.SwingUtilities.invokeLater(this::loadProps); // show or hide the card's own rows
+            }
+        }
         c.x = ((Number) xSpin.getValue()).intValue() / (double) W;
         c.y = ((Number) ySpin.getValue()).intValue() / (double) H;
         c.w = Math.max(10, ((Number) wSpin.getValue()).intValue()) / (double) W;
@@ -3358,7 +3521,11 @@ public class ScenesPanel extends JPanel {
             c.restartOnProgram = slideOnProgram.getSelectedIndex() == 1 ? Boolean.TRUE : null;
             c.slideBackground = slideBackground.getSelectedIndex() == 1 ? "black" : null;
         }
-        if (t == SourceType.LYRICS || t == SourceType.BIBLE) {
+        if (t == SourceType.BIBLE) {
+            c.textPosition = null; // Settings → Bible Typography is the one place for the verses' look and position
+            c.textScale = null;
+        }
+        if (t == SourceType.LYRICS) {
             int place = textPlace.getSelectedIndex();
             c.textPosition = place <= 0 ? null : com.jamc.worship.model.TextPosition.values()[place - 1];
             c.textScale = textScale.getValue() == 100 ? null : textScale.getValue() / 100.0;
@@ -3413,39 +3580,29 @@ public class ScenesPanel extends JPanel {
             c.fontWeight = w == null || w == com.jamc.worship.model.FontWeight.BOLD ? null : w; // Bold = the default (null)
             c.italic = italicBox.isSelected() ? Boolean.TRUE : null;
         }
+        if (t == SourceType.LOWER_THIRD) {
+            Object v = lowerThirdCombo.getSelectedItem();
+            Long id = v instanceof com.jamc.worship.model.LowerThird lt ? lt.getId() : null;
+            if (!java.util.Objects.equals(id, c.lowerThirdId)) {
+                c.lowerThirdId = id;
+                // the layer's name follows the chosen person, so several lower thirds are told apart in the list
+                String name = v instanceof com.jamc.worship.model.LowerThird lt ? "Lower Third: " + lt.getTitle() : "Lower Third";
+                s.setName(name);
+                loadingProps = true;
+                try {
+                    nameField.setText(name);
+                } finally {
+                    loadingProps = false;
+                }
+            }
+        }
         sourceList.repaint();
         sceneEdited();
     }
 
+    /** Logo, Image and Video files come from the Library only (user 2026-11-17): its picker has UPLOAD FILE… for a file on this computer. */
     private void chooseFile() {
-        Source s = sourceList.getSelectedValue();
-        if (s == null) {
-            return;
-        }
-        JFileChooser chooser = new JFileChooser();
-        boolean video = s.getType() == SourceType.VIDEO;
-        if (video) {
-            com.jamc.worship.ui.MediaChoosers.videoFilters(chooser);
-        } else {
-            com.jamc.worship.ui.MediaChoosers.imageFilters(chooser);
-        }
-        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != JFileChooser.APPROVE_OPTION) {
-            return;
-        }
-        java.nio.file.Path file = chooser.getSelectedFile().toPath();
-        BackgroundTask.run("Import scene file", () -> {
-            if (video) {
-                var probe = com.jamc.worship.media.MediaProbe.probeVideo(file);
-                if (probe.status() == com.jamc.worship.media.MediaProbe.Status.UNPLAYABLE) {
-                    throw new com.jamc.worship.service.ValidationException(probe.message());
-                }
-            }
-            return importer.importImage(file);
-        }, stored -> {
-            s.getConfig().path = stored;
-            loadProps();
-            sceneEdited();
-        }, err -> Dialogs.showError(this, "The file could not be added.", err));
+        selectFromLibrary();
     }
 
     private static JSpinner percent() {
@@ -3483,13 +3640,13 @@ public class ScenesPanel extends JPanel {
         cameraCombo.setToolTipText("The physical camera this source shows. Each camera is opened once and shared by every "
                 + "scene, so switching scenes never restarts it.");
         row(g, "Camera", cameraCombo);
-        com.jamc.worship.camera.CameraStatus st = cameras.status(c.camera);
-        String size = cameras.liveSize(c.camera);
-        int fps = cameras.liveFps(c.camera);
-        String state = st.label() + (size == null ? "" : " · " + size) + (fps > 0 ? " · " + fps + " FPS" : "");
-        JLabel stateLabel = Ui.label(state, st.isOffline() ? Palette::warning : Palette::text, "semibold");
-        stateLabel.setToolTipText(cameras.problem(c.camera));
-        row(g, "Status", stateLabel);
+        JLabel stateLabel = Ui.label("", Palette::text, "semibold");
+        cameraStateLabel = stateLabel;
+        updateCameraState();
+        JPanel status = Ui.transparent(new BorderLayout(8, 0));
+        status.add(stateLabel, BorderLayout.CENTER);
+        status.add(cameraRefreshButton, BorderLayout.EAST);
+        row(g, "Status", status);
         row(g, "", Ui.label("<html><body style='width:190px'>Resolution and frame rate belong to the camera itself "
                 + "(Library → Camera → Configure), so every scene shows the same picture.</html>", Palette::mutedText, "small"));
         if (cameras.cameras().isEmpty()) {
@@ -3578,6 +3735,36 @@ public class ScenesPanel extends JPanel {
             f.add(Ui.small(c.offlineImage == null ? "No image" : fileName(c.offlineImage)), BorderLayout.CENTER);
             row(g, "", f);
         }
+    }
+
+    /** Shows the camera's state (READY · 1280x720 · 30 FPS) next to REFRESH; called again whenever a camera changes. */
+    private void updateCameraState() {
+        JLabel label = cameraStateLabel;
+        if (label == null) {
+            return;
+        }
+        String cam = selectedCameraDevice();
+        com.jamc.worship.camera.CameraStatus st = cameras.status(cam);
+        String size = cameras.liveSize(cam);
+        int fps = cameras.liveFps(cam);
+        label.setText(st.label() + (size == null ? "" : " · " + size) + (fps > 0 ? " · " + fps + " FPS" : ""));
+        label.setForeground(st.isOffline() ? Palette.warning() : Palette.text());
+        label.setToolTipText(cameras.problem(cam));
+    }
+
+    /** REFRESH on a camera source: restarts only that camera (the choice in the drop-down, saved or not). */
+    private void refreshSelectedCamera() {
+        cameras.refresh(selectedCameraDevice()); // null = the first available camera, as the source shows
+        if (cameraStateLabel != null) {
+            cameraStateLabel.setText("Refreshing…");
+            cameraStateLabel.setForeground(Palette.text());
+        }
+    }
+
+    /** The device in the Camera drop-down, or null for "First available camera". */
+    private String selectedCameraDevice() {
+        Object sel = cameraCombo.getSelectedItem();
+        return sel == null || cameraCombo.getSelectedIndex() <= 0 ? null : sel.toString();
     }
 
     private static int pct(Double v) {

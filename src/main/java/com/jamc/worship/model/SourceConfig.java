@@ -150,11 +150,35 @@ public class SourceConfig {
     public Boolean autoNext;
     /** SCENE: the scene shown inside this one (referenced by id). */
     public Long sceneId;
+    /** LOWER_THIRD: this saved lower third, always shown while the scene is up (null = the one SHOWn in Lower Thirds). */
+    public Long lowerThirdId;
     /** A layer inside a GROUP: that group's {@link #uid}. The group moves, shows and hides its layers together. */
     public String groupId;
     /** AUDIO_OUTPUT: the speakers / output whose sound is captured (null = the Windows default). APP_AUDIO: the program (exe). */
     public String audioOutput;
     public String appExe;
+
+    // ---- styling for designed layouts (user 2026-11-17: a Preaching layout with cards, tags and a title banner)
+    /** COLOR: the gradient's bottom colour (null = one plain colour). */
+    public String color2;
+    /** COLOR, TEXT tag, Bible card: rounded corners, in pixels of a 1920x1080 frame (null = square). */
+    public Integer cornerRadius;
+    /** COLOR, TEXT tag: an outline (e.g. a gold border); null = none. */
+    public String borderColor;
+    /** Outline thickness in 1080p pixels (null = 3 when a border colour is set). */
+    public Integer borderWidth;
+    /** TEXT: a filled tag behind the words (e.g. the yellow "Preaching Title"); null = words only. */
+    public String background;
+    /** TEXT: LEFT, CENTER (null) or RIGHT inside the box. */
+    public String align;
+    /** TEXT and Bible card: colour of words marked with *stars* or listed in highlightWords. */
+    public String highlightColor;
+    /** Shown only while the livestream is on (e.g. the LIVE badge); the scene editor always shows it. */
+    public Boolean onlyWhileLive;
+    /** BIBLE: drawn as a card, the reference in a yellow tag above the words, words on the left. */
+    public Boolean bibleCard;
+    /** BIBLE card: words or phrases to colour, separated by commas (e.g. "kingdom of God, His righteousness"). */
+    public String highlightWords;
 
     /** How a scene's Presentation source chooses what it shows. */
     public enum PresentationMode {
@@ -255,9 +279,20 @@ public class SourceConfig {
         c.videoIds = videoIds == null ? null : new java.util.ArrayList<>(videoIds);
         c.videoPaths = videoPaths == null ? null : new java.util.ArrayList<>(videoPaths);
         c.sceneId = sceneId;
+        c.lowerThirdId = lowerThirdId;
         c.groupId = groupId;
         c.audioOutput = audioOutput;
         c.appExe = appExe;
+        c.color2 = color2;
+        c.cornerRadius = cornerRadius;
+        c.borderColor = borderColor;
+        c.borderWidth = borderWidth;
+        c.background = background;
+        c.align = align;
+        c.highlightColor = highlightColor;
+        c.onlyWhileLive = onlyWhileLive;
+        c.bibleCard = bibleCard;
+        c.highlightWords = highlightWords;
         return c;
     }
 }

@@ -171,6 +171,23 @@ final class Schema {
 
     /** A short label on a service item (e.g. Fast, Slow), shown in the schedule. */
     /** NASB as a standard version: copyrighted, so no text; connected with the church's own licence like NLT or ESV. */
+    /** Designed layouts (user 2026-11-17): the name-tag lower third and its distance from the edge. */
+    static final String V17 = """
+            ALTER TABLE lower_thirds ADD COLUMN style TEXT NOT NULL DEFAULT 'CLASSIC';
+            ALTER TABLE lower_thirds ADD COLUMN label TEXT;
+            ALTER TABLE lower_thirds ADD COLUMN margin_y INTEGER NOT NULL DEFAULT 90
+            """;
+
+    /** Lower-third width (user 2026-11-17): 0 = as wide as the words. */
+    static final String V18 = """
+            ALTER TABLE lower_thirds ADD COLUMN width INTEGER NOT NULL DEFAULT 0
+            """;
+
+    /** Lower-third name / subtitle alignment (user 2026-11-17): null = the design's usual. */
+    static final String V19 = """
+            ALTER TABLE lower_thirds ADD COLUMN text_align TEXT
+            """;
+
     static final String V16 = """
             INSERT OR IGNORE INTO bible_versions(abbreviation, name, language, provider, enabled, sort_order)
                 VALUES ('NASB', 'New American Standard Bible', 'English', 'NONE', 0, 5)

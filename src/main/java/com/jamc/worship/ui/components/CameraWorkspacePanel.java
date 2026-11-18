@@ -321,9 +321,16 @@ public class CameraWorkspacePanel extends JPanel {
     private void tick() {
         boolean showing = isShowing();
         cameras.setWatching(showing); // newly plugged cameras appear by themselves while this page is open
-        // the page shows each camera's state, not its picture (right-click → View Camera… opens it): twice a second
-        if (frames.getDelay() != STATE_REFRESH_MS) {
-            frames.setDelay(STATE_REFRESH_MS);
+        // a camera that is ON (or LIVE / PREVIEW) shows its picture here, at the camera preview rate; with every camera
+        // off the page only shows their state, twice a second
+        int delay = showing && anyPictureShown() ? Math.max(15, 1000 / Math.max(1, settings.previewFps())) : STATE_REFRESH_MS;
+        if (delay != STATE_REFRESH_MS && multiToggle.isSelected()) {
+            // several camera pictures are scaled on the Swing thread: at most 15 a second here (only a monitor;
+            // Program, the stream and the recording keep their full rate), so 2-4 cameras never load the app
+            delay = Math.max(delay, MULTIVIEW_PICTURE_MS);
+        }
+        if (frames.getDelay() != delay) {
+            frames.setDelay(delay);
         }
         if (!showing) {
             return;
@@ -340,6 +347,7 @@ public class CameraWorkspacePanel extends JPanel {
     }
 
     private static final int STATE_REFRESH_MS = 500;
+    private static final int MULTIVIEW_PICTURE_MS = 1000 / 15;
 
     @Override
     public void addNotify() {
@@ -1106,11 +1114,11 @@ public class CameraWorkspacePanel extends JPanel {
             g2.fillRect(r.x, r.y, r.width, r.height);
             String cam = selectedCamera();
             boolean isOff = isOff(cam);
-            // the camera's name and state; its live picture opens in a window (right-click → View Camera…)
+            // a camera that is on shows its picture; an off camera only its name and state
             if (cam == null) {
                 centered(g2, r, "No camera detected", 14f, Palette.mutedText());
             } else {
-                stateCard(g2, r, cam, isOff, 1f);
+                pictureOrState(g2, r, cam, 1f);
             }
             badge(g2, r.x + 6, r.y + 6, "CAMERA", new Color(0, 0, 0, 170));
             powerButton = null;
@@ -1281,8 +1289,8 @@ public class CameraWorkspacePanel extends JPanel {
             g2.fillRect(r.x, r.y, r.width, r.height);
             CameraStatus st = statusOf(cam);
             boolean isOff = isOff(cam);
-            // the state (READY in green); the live picture opens in a window (right-click → View Camera…)
-            stateCard(g2, r, cam, isOff, 0.8f);
+            // the picture while the camera is on; off: its state only
+            pictureOrState(g2, r, cam, 0.8f);
             String tag = names.tag(cam);
             badge(g2, r.x + 6, r.y + 6, (tag == null ? "CAM" : tag) + "  " + names.label(cam).toUpperCase(java.util.Locale.ROOT),
                     new Color(0, 0, 0, 170));
@@ -1362,6 +1370,40 @@ public class CameraWorkspacePanel extends JPanel {
             w = (int) Math.round(h * 16 / 9.0);
         }
         return new Rectangle(x + (availW - w) / 2, y + (availH - h) / 2, Math.max(1, w), Math.max(1, h));
+    }
+
+    /** True when the camera is on (switched on, or LIVE / PREVIEW) and not unplugged or failed: its picture shows. */
+    private boolean showsPicture(String cam) {
+        return cam != null && !isOff(cam) && !statusOf(cam).isOffline();
+    }
+
+    /** True when the page currently shows at least one camera picture (the Monitor or a multiview tile). */
+    private boolean anyPictureShown() {
+        if (!multiToggle.isSelected()) {
+            return showsPicture(selectedCamera());
+        }
+        for (int i = 0; i < deviceModel.size(); i++) {
+            if (showsPicture(deviceModel.get(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A camera that is on: its live picture (opening the camera if needed). Off, unplugged, or still connecting: the
+     * state card. Every camera starts OFF, so nothing opens until the operator switches one on or a scene uses it.
+     */
+    private void pictureOrState(Graphics2D g2, Rectangle r, String cam, float scale) {
+        BufferedImage img = showsPicture(cam) ? cameras.frame(cam) : null;
+        if (img == null) {
+            stateCard(g2, r, cam, isOff(cam), scale);
+            return;
+        }
+        SourceConfig c = new SourceConfig();
+        c.fit = cam.equals(selectedCamera()) ? currentFit() : FitMode.FIT;
+        c.mirror = cam.equals(selectedCamera()) && mirror.isSelected() ? Boolean.TRUE : null;
+        Compositor.drawCamera(g2, img, r, c, 1f);
     }
 
     /** A camera's state in place of its picture: the nickname, and the state large (READY in bright green). */

@@ -33,10 +33,10 @@ import java.awt.GridBagLayout;
 import java.awt.Insets;
 
 /**
- * Settings editor for one global typography profile (song lyrics, Bible...). Every change is saved
- * at once and shows in Preview straight away; Program keeps what it shows until the next TAKE.
+ * Settings editor for one global typography profile (song lyrics, Bible...). Changes show in its own sample first;
+ * the card's SAVE keeps them and APPLY also shows them on Preview and Program at once.
  */
-public class TypographyEditor extends JPanel {
+public class TypographyEditor extends JPanel implements SettingsCard {
 
     private final TypographySettings settings;
     private final ContentKind kind;
@@ -142,12 +142,35 @@ public class TypographyEditor extends JPanel {
         updateSample();
     }
 
-    /** Reloads the controls from the saved profile. */
+    /** Reloads the controls from the saved profile (an unsaved draft is dropped). */
     public void load() {
+        show(settings.get(kind), settings.isGlobal(kind));
+    }
+
+    /** Puts these values in the controls as a DRAFT (e.g. a Bible Design was picked): saved by SAVE / APPLY. */
+    public void showDraft(Typography t, boolean global) {
+        show(t, global);
+    }
+
+    @Override
+    public void saveCard() {
+        if (settings.isGlobal(kind) != useGlobal.isSelected()) {
+            settings.setGlobal(kind, useGlobal.isSelected());
+        }
+        if (!read().equals(settings.get(kind))) {
+            settings.set(kind, read()); // saves and tells the app (Preview and the slides are restyled)
+        }
+    }
+
+    @Override
+    public void reloadCard() {
+        load();
+    }
+
+    private void show(Typography t, boolean global) {
         loading = true;
         try {
-            Typography t = settings.get(kind);
-            useGlobal.setSelected(settings.isGlobal(kind));
+            useGlobal.setSelected(global);
             selectFamily(t.fontFamily());
             weight.setSelectedItem(t.fontWeight());
             italic.setSelected(t.italic());
@@ -171,7 +194,6 @@ public class TypographyEditor extends JPanel {
 
     private void wire() {
         useGlobal.addActionListener(e -> {
-            settings.setGlobal(kind, useGlobal.isSelected());
             updateDependent();
             updateSample();
         });
@@ -194,18 +216,14 @@ public class TypographyEditor extends JPanel {
         outline.addActionListener(e -> changed());
         outlineSize.addChangeListener(e -> changed());
         outlineColor.addColorListener(col -> changed());
-        restore.addActionListener(e -> {
-            settings.restoreDefaults(kind);
-            load();
-        });
+        restore.addActionListener(e -> show(TypographySettings.defaults(kind), useGlobal.isSelected())); // a draft too
     }
 
     private void changed() {
         if (loading) {
             return;
         }
-        settings.set(kind, read());
-        updateDependent();
+        updateDependent(); // a draft: only the sample changes until SAVE / APPLY
         updateSample();
     }
 
@@ -228,11 +246,11 @@ public class TypographyEditor extends JPanel {
         fontNote.setText(!on ? "Off: each theme's own text settings are used (edit them under Themes)."
                 : fam != null && !Fonts.isInstalled(fam)
                 ? "\"" + fam + "\" is not installed on this computer; " + Fonts.effectiveFamily(fam) + " is used until it is."
-                : "Changes show in Preview at once. Program and the projector change on the next TAKE.");
+                : "Changes show in the sample. Save Changes keeps them; then Apply shows them on Preview and Program.");
     }
 
     private void updateSample() {
-        SlideStyle style = settings.apply(kind, base, false);
+        SlideStyle style = useGlobal.isSelected() ? read().applyTo(base) : base; // the draft
         sample.setContent(new Slide("Sample", sampleText(), kind == ContentKind.BIBLE ? "John 3:16" : null), style);
     }
 

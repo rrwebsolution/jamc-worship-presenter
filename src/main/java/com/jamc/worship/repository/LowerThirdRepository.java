@@ -17,7 +17,7 @@ public class LowerThirdRepository {
 
     private static final String SELECT = """
             SELECT id, name, title, subtitle, font_family, font_size, title_color, font_color, background_color,
-                   accent_color, logo_path, position, animation FROM lower_thirds""";
+                   accent_color, logo_path, position, animation, style, label, margin_y, width, text_align FROM lower_thirds""";
 
     private final DatabaseManager db;
 
@@ -54,11 +54,11 @@ public class LowerThirdRepository {
             if (lt.getId() == null) {
                 try (PreparedStatement ps = conn.prepareStatement("""
                         INSERT INTO lower_thirds(name, title, subtitle, font_family, font_size, title_color, font_color,
-                                                 background_color, accent_color, logo_path, position, animation, created_at, updated_at)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", Statement.RETURN_GENERATED_KEYS)) {
+                                                 background_color, accent_color, logo_path, position, animation, style, label, margin_y, width, text_align, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", Statement.RETURN_GENERATED_KEYS)) {
                     bind(ps, lt);
-                    ps.setString(13, now);
-                    ps.setString(14, now);
+                    ps.setString(18, now);
+                    ps.setString(19, now);
                     ps.executeUpdate();
                     try (ResultSet keys = ps.getGeneratedKeys()) {
                         keys.next();
@@ -69,10 +69,10 @@ public class LowerThirdRepository {
             try (PreparedStatement ps = conn.prepareStatement("""
                     UPDATE lower_thirds SET name = ?, title = ?, subtitle = ?, font_family = ?, font_size = ?, title_color = ?,
                                             font_color = ?, background_color = ?, accent_color = ?, logo_path = ?, position = ?,
-                                            animation = ?, updated_at = ? WHERE id = ?""")) {
+                                            animation = ?, style = ?, label = ?, margin_y = ?, width = ?, text_align = ?, updated_at = ? WHERE id = ?""")) {
                 bind(ps, lt);
-                ps.setString(13, now);
-                ps.setLong(14, lt.getId());
+                ps.setString(18, now);
+                ps.setLong(19, lt.getId());
                 ps.executeUpdate();
             }
             return lt.getId();
@@ -103,6 +103,11 @@ public class LowerThirdRepository {
         ps.setString(10, lt.getLogoPath());
         ps.setString(11, lt.getPosition().name());
         ps.setString(12, lt.getAnimation().name());
+        ps.setString(13, lt.getStyle().name());
+        ps.setString(14, lt.getLabel());
+        ps.setInt(15, lt.getMarginY());
+        ps.setInt(16, lt.getWidth());
+        ps.setString(17, lt.getTextAlign() == null ? null : lt.getTextAlign().name());
     }
 
     private static LowerThird map(ResultSet rs) throws SQLException {
@@ -120,6 +125,11 @@ public class LowerThirdRepository {
         lt.setLogoPath(rs.getString("logo_path"));
         lt.setPosition(LowerThird.Position.parse(rs.getString("position")));
         lt.setAnimation(LowerThird.Animation.parse(rs.getString("animation")));
+        lt.setStyle(LowerThird.Style.parse(rs.getString("style")));
+        lt.setLabel(rs.getString("label"));
+        lt.setMarginY(rs.getInt("margin_y"));
+        lt.setWidth(rs.getInt("width"));
+        lt.setTextAlign(LowerThird.TextAlign.parse(rs.getString("text_align")));
         return lt;
     }
 }

@@ -187,10 +187,10 @@ class CompositorTest {
         LowerThird lt = new LowerThird();
         lt.setTitle("Ptr. Carlo");
         lt.setAnimation(LowerThird.Animation.NONE);
-        assertEquals(0f, program.lowerThirdProgress());
+        assertTrue(program.lowerThirds().isEmpty());
         program.showLowerThird(lt);
         assertTrue(program.isLowerThirdOn());
-        assertEquals(1f, program.lowerThirdProgress(), "no animation shows immediately");
+        assertEquals(1f, program.lowerThirds().get(0).progress(), "no animation shows immediately");
 
         Compositor c = new Compositor(new SlideRenderer(new ImageCache(dir)));
         BufferedImage img = new BufferedImage(320, 180, BufferedImage.TYPE_INT_RGB);

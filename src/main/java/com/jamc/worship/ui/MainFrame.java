@@ -190,6 +190,8 @@ public class MainFrame extends JFrame {
     private TopBar.Page currentPage = TopBar.Page.LIBRARY; // the app opens on the Library
     private com.jamc.worship.camera.CameraSettings cameraSettings;
     private final com.jamc.worship.stream.StreamManager streamManager;
+    /** The livestream state the Program picture was last drawn for (LIVE badge layers). */
+    private volatile boolean liveBadgeShown;
     private final com.jamc.worship.remote.RemoteManager remoteManager;
     private final com.jamc.worship.ui.components.StreamPanel streamPanel;
     private final MediaHub hub;
@@ -366,6 +368,20 @@ public class MainFrame extends JFrame {
         deckLibrary = new SlideDeckLibraryPanel(context.slideDeckService());
         slideEditor = new SlideEditorPanel(context.slideDeckService(), context.themeService(), importer, thumbnails);
         biblePanel = new BiblePanel(context.bibleService());
+        // the scene editor's Bible card sample writes its reference as Settings → Bible Presentation does
+        com.jamc.worship.output.Compositor.installBibleSampleReference(() -> {
+            com.jamc.worship.config.AppConfig cfg = context.config();
+            String ref = cfg.getBoolean(SettingsPanel.KEY_BIBLE_UPPERCASE, true) ? "MATTHEW 6:33" : "Matthew 6:33";
+            String ver = cfg.getBoolean(SettingsPanel.KEY_BIBLE_SHOW_VERSION, true) ? biblePanel.versionAbbreviation() : null;
+            String[] hc = com.jamc.worship.bible.BibleDisplay.headingAndCaption(com.jamc.worship.bible.BibleDisplay.ReferencePosition
+                    .parse(cfg.get(SettingsPanel.KEY_BIBLE_REF_POSITION, null)), ref, ver);
+            Slide sample = new Slide("Matthew 6:33", "", hc[1]);
+            sample.setHeading(hc[0]);
+            return com.jamc.worship.output.Compositor.cardReference(sample);
+        });
+        // ... and its words in the Bible Typography font, size, thickness and color of Settings
+        com.jamc.worship.output.Compositor.installBibleSampleStyle(() -> context.themeService().typography().apply(
+                ContentKind.BIBLE, bibleStyle != null ? bibleStyle : SlideStyle.fallback(), false));
         bibleDetail = new BibleDetailPanel(() -> biblePanel.step(-1), () -> biblePanel.step(1), () -> {
             BiblePassage p = biblePanel.selectedPassage();
             if (p != null) schedule.addItem(BiblePanel.serviceItem(p));
@@ -574,6 +590,15 @@ public class MainFrame extends JFrame {
                 cameras::cameras);
         this.streamPanel = new com.jamc.worship.ui.components.StreamPanel(streamManager, msg -> statusBar.showMessage(msg));
         streamManager.addListener(this::updateRecordingIndicator);
+        // scene layers set to "only while live" (the LIVE badge) follow the livestream
+        com.jamc.worship.output.LiveStatus.install(() -> streamManager.live().state() == com.jamc.worship.stream.StreamManager.State.ACTIVE);
+        streamManager.addListener(() -> {
+            boolean on = com.jamc.worship.output.LiveStatus.streaming();
+            if (on != liveBadgeShown) {
+                liveBadgeShown = on;
+                javax.swing.SwingUtilities.invokeLater(() -> { program.refresh(); previewState.refresh(); });
+            }
+        });
         topBar.setRecordActions(streamPanel::toggleRecording, streamPanel::startStream);
         streamManager.refreshCapabilities(); // known before the first RECORD or STREAM press
         // while a video or music is heard on Program, the room microphones are muted in recordings / the livestream
@@ -588,6 +613,7 @@ public class MainFrame extends JFrame {
         this.settingsPanel =new SettingsPanel(context, this::changeTheme, shortcuts, obs, hub, this::restartApplication,
                 this::manageBibleVersions);
         settingsPanel.setUpdateCheckHandler(() -> checkForUpdates(true));
+        settingsPanel.setApplyToLive(this::applySettingsToLive);
         settingsPanel.setWhatsNewHandler(this::showWhatsNew);
         settingsPanel.setCameraSwitchFadeHandler(ms -> {
             program.setCameraSwitchFade(ms);
@@ -1821,6 +1847,7 @@ public class MainFrame extends JFrame {
     /** A global typography profile changed in Settings: restyle what is showing; Program waits for TAKE. */
     private void typographyChanged() {
         bibleStyle = null; // recomputed (with the new Bible typography) the next time verses are prepared
+        scenesPanel.repaint(); // the scene editor's Bible card sample uses the new font at once
         Song song = songLibrary.currentSong();
         if (song != null) {
             BackgroundTask.run("Apply lyrics typography", () -> context.themeService().styleForSong(song), style -> {
@@ -1851,6 +1878,52 @@ public class MainFrame extends JFrame {
             }, err -> log.warn("Could not apply the typography", err));
         }
         slideEditor.reloadThemes();
+    }
+
+    /**
+     * Settings → APPLY: Preview and the live Program show the saved settings now, without TAKE. Their words are drawn
+     * again with the new Lyrics / Bible typography, and everything else (Bible card, lower third, scenes) redraws.
+     */
+    private void applySettingsToLive() {
+        bibleStyle = null;
+        typographyChanged(); // the strip and the selected slide are styled again
+        restyleLive(previewState.content(), true);
+        restyleLive(program.content(), false);
+        program.refresh();
+        previewState.refresh();
+    }
+
+    private void restyleLive(LiveContent live, boolean preview) {
+        if (live == null || live.isVideo() || live.slide() == null) {
+            return;
+        }
+        Slide slide = live.slide();
+        BackgroundTask.run("Apply settings", () -> freshStyle(slide, live.style()), style -> {
+            LiveContent now = preview ? previewState.content() : program.content();
+            if (now != live || style == null || style.equals(live.style())) {
+                return; // something else is shown now, or nothing changed for this slide
+            }
+            LiveContent content = LiveContent.snapshot(slide, style, live.title(), live.lyrics());
+            if (preview) {
+                previewState.updateContent(content);
+            } else {
+                if (takenContent == live) {
+                    takenContent = content;
+                }
+                program.updateContent(content); // no transition: the same words in the new look
+            }
+        }, err -> log.warn("Could not apply the settings to the live picture", err));
+    }
+
+    /** The style this slide gets with the saved settings (blocking); slides that keep their own look keep it. */
+    private SlideStyle freshStyle(Slide slide, SlideStyle current) {
+        if (slide.isBible()) {
+            return resolveBibleStyle();
+        }
+        if (slide.getSongId() != null) {
+            return context.songService().load(slide.getSongId()).map(s -> context.themeService().styleForSong(s)).orElse(current);
+        }
+        return current;
     }
 
     private void restyleSong(SlideStyle style) {

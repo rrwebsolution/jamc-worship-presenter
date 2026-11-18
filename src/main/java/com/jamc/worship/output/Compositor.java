@@ -207,8 +207,8 @@ public final class Compositor {
         }
     }
 
-    /** Settings → Live & Scenes: a scene's Lyrics source also shows Bible verses (default on). */
-    private static volatile boolean lyricsShowBible = true;
+    /** Settings → Live & Scenes: a scene's Lyrics source also shows Bible verses (default off: songs only). */
+    private static volatile boolean lyricsShowBible = false;
     /** Settings → Live & Scenes: a scene's Bible source also shows song lyrics (default off). */
     private static volatile boolean bibleShowsLyrics = false;
 
@@ -330,6 +330,9 @@ public final class Compositor {
         SourceConfig c = s.getConfig();
         Rectangle rect = rect(c, pw, ph);
         LiveFrames frames = com.jamc.worship.render.Rendering.frames();
+        if (Boolean.TRUE.equals(c.onlyWhileLive) && !editorMode && !LiveStatus.streaming()) {
+            return; // e.g. the LIVE badge: only while the livestream is on
+        }
         switch (s.getType()) {
             case BACKGROUND -> {
                 LiveContent content = spec.content();
@@ -395,7 +398,22 @@ public final class Compositor {
                 }
                 // which words each source shows is a setting (Settings → Live & Scenes): by default a Lyrics source shows
                 // songs and Bible verses, a Bible source Bible verses only
-                if (content != null && !content.isVideo() && spec.text() && shows(s.getType(), content)
+                boolean card = s.getType() == SourceType.BIBLE && Boolean.TRUE.equals(c.bibleCard); // Edit Scene → Design
+                if (card && editorMode && (content == null || content.slide() == null || !content.slide().isBible())) {
+                    // the editor shows how the card looks before any verse is sent
+                    com.jamc.worship.model.SlideStyle sampleStyle = bibleSampleStyle.get(); // Settings → Bible Typography
+                    com.jamc.worship.render.DesignedLayers.paintBibleCard(g, rect, bibleSampleReference.get(),
+                            cardText("But seek first the kingdom of God and His righteousness, and all these things will be "
+                                    + "added to you.", sampleStyle), bibleCardLook(c, sampleStyle), ph);
+                } else if (card && content != null && !content.isVideo() && content.slide() != null && spec.text()
+                        && shows(s.getType(), content) && !hidesPresentation(spec, slot)) {
+                    // the scene editor always shows the font of Settings → Bible Typography now (a verse on Program keeps
+                    // the look it was sent with until it is sent again or Settings Apply restyles it)
+                    com.jamc.worship.model.SlideStyle sampleStyle = editorMode ? bibleSampleStyle.get() : null;
+                    com.jamc.worship.model.SlideStyle cardStyle = sampleStyle != null ? sampleStyle : content.style();
+                    com.jamc.worship.render.DesignedLayers.paintBibleCard(g, rect, cardReference(content.slide()),
+                            cardText(content.slide().getText(), cardStyle), bibleCardLook(c, cardStyle), ph);
+                } else if (!card && content != null && !content.isVideo() && spec.text() && shows(s.getType(), content)
                         && (fixed || !hidesPresentation(spec, slot))) {
                     // a scene may place the text itself (e.g. smaller, at the bottom over a camera)
                     // inside the layer's box when the scene gives it one (smaller box = smaller text)
@@ -403,7 +421,8 @@ public final class Compositor {
                     // edges) is a box too, so the words grow with it like any other layer
                     boolean fullFrame = Math.abs(c.x) < 0.001 && Math.abs(c.y) < 0.001
                             && Math.abs(c.w - 1) < 0.001 && Math.abs(c.h - 1) < 0.001;
-                    g.drawImage(layer(content, pw, ph, true, c.textPosition, c.textScale, fullFrame ? null : rect,
+                    boolean bible = s.getType() == SourceType.BIBLE; // its look and position: Settings → Bible Typography only
+                    g.drawImage(layer(content, pw, ph, true, bible ? null : c.textPosition, bible ? null : c.textScale, fullFrame ? null : rect,
                             s.getType() == SourceType.LYRICS ? programStyle(s, content) : null), 0, 0, null);
                 }
             }
@@ -414,8 +433,14 @@ public final class Compositor {
             }
             case CAMERA -> {
                 if (!keyMode && stillVideos) {
-                    // thumbnail: no camera picture (nothing to keep refreshing), only its name and state
-                    cameraState(g, rect, s.getName(), frames.cameraStatus(c.camera), ph);
+                    // thumbnail: a still of the camera's picture when it is already running (ON or live); an OFF
+                    // camera is never opened for a thumbnail, it shows its name and state
+                    BufferedImage snap = frames.cameraSnapshot(c.camera);
+                    if (snap != null) {
+                        drawCamera(g, chromaKey.apply(snap, c), rect, c, opacity(c));
+                    } else {
+                        cameraState(g, rect, s.getName(), frames.cameraStatus(c.camera), ph);
+                    }
                 } else if (!keyMode) {
                     // AI Auto Director: Preview and Program each show their own virtual shot, of this camera or of
                     // another one (multi-camera); the source's sound stays its own camera's
@@ -513,7 +538,10 @@ public final class Compositor {
             case PRESENTATION -> paintPresentation(g, rect, s, spec.content(), s == slot, ph);
             case SLIDESHOW -> paintSlideshow(g, rect, s, keyMode, ph);
             case COLOR -> {
-                if (!keyMode) {
+                if (designedShape(c)) {
+                    // a card / banner graphic (rounded, gradient, border): part of the design, kept on the key output too
+                    com.jamc.worship.render.DesignedLayers.paintShape(g, rect, c, ph, opacity(c));
+                } else if (!keyMode) {
                     Color fill = Colors.parse(c.color, Color.BLACK);
                     g.setColor(new Color(fill.getRed(), fill.getGreen(), fill.getBlue(), Math.round(opacity(c) * 255)));
                     g.fillRect(rect.x, rect.y, rect.width, rect.height);
@@ -528,15 +556,41 @@ public final class Compositor {
                     drawText(g, rect, "♪ " + s.getName(), label, ph);
                 }
             }
-            case TEXT -> drawText(g, rect, c.text, c, ph);
+            case TEXT -> {
+                if (designedText(c)) {
+                    com.jamc.worship.render.DesignedLayers.paintText(g, rect, c.text, c, ph, opacity(c));
+                } else {
+                    drawText(g, rect, c.text, c, ph);
+                }
+            }
             case CLOCK -> drawText(g, rect, LocalTime.now().format(clockPattern(c)), c, ph);
             case LOWER_THIRD -> {
-                if (lt != null && lt.lowerThird() != null) {
-                    Graphics2D g2 = (Graphics2D) g.create();
-                    g2.scale(pw / (double) W, ph / (double) H);
-                    LowerThirdRenderer.paint(g2, lt.lowerThird(), lt.lowerThirdProgress(), renderer.images());
-                    g2.dispose();
+                Graphics2D g2 = (Graphics2D) g.create();
+                g2.scale(pw / (double) W, ph / (double) H);
+                if (c.lowerThirdId != null) {
+                    // one chosen lower third: on while this scene is up, until that one is hidden (others stay)
+                    com.jamc.worship.model.LowerThird fixed = com.jamc.worship.model.LowerThirdLookup.find(c.lowerThirdId);
+                    float p = lt == null ? 1f : lt.fixedLowerThirdProgress(c.lowerThirdId);
+                    if (fixed != null && p > 0f) {
+                        LowerThirdRenderer.paint(g2, fixed, p, renderer.images());
+                    }
+                } else if (lt != null) {
+                    // every SHOWn lower third, each with its own animation, except those another layer of this scene draws
+                    java.util.Set<Long> ownLayer = new java.util.HashSet<>();
+                    if (spec.scene() != null) {
+                        for (Source other : spec.scene().getSources()) {
+                            if (other.getType() == SourceType.LOWER_THIRD && other.getConfig().lowerThirdId != null) {
+                                ownLayer.add(other.getConfig().lowerThirdId);
+                            }
+                        }
+                    }
+                    for (ProgramOutput.LowerThirdState st : lt.lowerThirds()) {
+                        if (!ownLayer.contains(st.lowerThird().getId())) {
+                            LowerThirdRenderer.paint(g2, st.lowerThird(), st.progress(), renderer.images());
+                        }
+                    }
                 }
+                g2.dispose();
             }
         }
     }
@@ -946,6 +1000,54 @@ public final class Compositor {
         }
     }
 
+    private static volatile java.util.function.Supplier<String> bibleSampleReference = () -> "Matthew 6:33";
+
+    private static volatile java.util.function.Supplier<com.jamc.worship.model.SlideStyle> bibleSampleStyle = () -> null;
+
+    /** The Bible look (Settings → Bible Typography) the scene editor's Bible card sample is drawn with. */
+    public static void installBibleSampleStyle(java.util.function.Supplier<com.jamc.worship.model.SlideStyle> style) {
+        bibleSampleStyle = style == null ? () -> null : style;
+    }
+
+    /** How the scene editor's Bible card sample writes its reference (Settings → Bible Presentation). */
+    public static void installBibleSampleReference(java.util.function.Supplier<String> reference) {
+        bibleSampleReference = reference == null ? () -> "Matthew 6:33" : reference;
+    }
+
+    /**
+     * The reference in the card's yellow tag, written the way Settings → Bible Presentation writes it on the slide
+     * (capitals or not, with or without the version, reference hidden = version only).
+     */
+    /** The verse words as Bible Typography writes them (e.g. ALL CAPS when its Text transform says so). */
+    static String cardText(String text, com.jamc.worship.model.SlideStyle style) {
+        return text == null || style == null || style.textTransform() == null ? text : style.textTransform().apply(text);
+    }
+
+    public static String cardReference(Slide slide) {
+        String heading = slide.getHeading();
+        String caption = slide.getCaption();
+        boolean h = heading != null && !heading.isBlank();
+        boolean c = caption != null && !caption.isBlank();
+        if (h && c) {
+            return heading.strip() + " · " + caption.strip();
+        }
+        return h ? heading.strip() : c ? caption.strip() : slide.getLabel();
+    }
+
+    /**
+     * The Bible card of a scene (Edit Scene → Design, Yellow words, Yellow color): its font, size, thickness and color
+     * come from Bible Typography (the verse's own style), so the words match the other Bible slides.
+     */
+    public static SourceConfig bibleCardLook(SourceConfig c, com.jamc.worship.model.SlideStyle style) {
+        SourceConfig look = c == null ? new SourceConfig() : c.copy();
+        look.fontFamily = style == null ? null : style.fontFamily();
+        look.fontSize = style == null || style.fontSize() <= 0 ? null : style.fontSize();
+        look.fontWeight = style == null ? null : style.fontWeight();
+        look.color = style == null ? null : style.fontColor();
+        look.italic = style != null && style.italic() ? Boolean.TRUE : null;
+        return look;
+    }
+
     /** A camera in a thumbnail: its name and state on a slate, READY in green. */
     private static void cameraState(Graphics2D g, Rectangle r, String name, com.jamc.worship.camera.CameraStatus status, int ph) {
         if (r.width <= 0 || r.height <= 0) {
@@ -1060,6 +1162,18 @@ public final class Compositor {
             }
         }
         return clockFormat;
+    }
+
+    /** A shape with a gradient, rounded corners or a border (else the plain colour box, drawn as always). */
+    static boolean designedShape(SourceConfig c) {
+        return (c.color2 != null && !c.color2.isBlank()) || (c.cornerRadius != null && c.cornerRadius > 0)
+                || (c.borderColor != null && !c.borderColor.isBlank());
+    }
+
+    /** Text with a tag behind it, an alignment or *coloured* words (else the plain centred text, drawn as always). */
+    static boolean designedText(SourceConfig c) {
+        return (c.background != null && !c.background.isBlank()) || (c.align != null && !"CENTER".equals(c.align))
+                || (c.text != null && c.text.matches("(?s).*\\*[^*]+\\*.*"));
     }
 
     private static float opacity(SourceConfig c) {

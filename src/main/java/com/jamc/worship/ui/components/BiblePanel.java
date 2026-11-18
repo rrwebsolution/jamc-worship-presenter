@@ -326,6 +326,11 @@ public class BiblePanel extends JPanel {
     }
 
     /** Re-reads versions (after Bible Versions changed) and keeps the current reference. */
+    /** The chosen version ("NIV"), or null when none is chosen. */
+    public String versionAbbreviation() {
+        return versionCombo.getSelectedItem() instanceof BibleVersion v ? v.abbreviation() : null;
+    }
+
     public void versionsChanged() {
         BiblePassage keep = selectedPassage();
         reloadVersions(() -> {

@@ -27,7 +27,7 @@ import java.util.Map;
  * A click applies it (Bible typography + reference options); the editors below stay available for fine-tuning,
  * and a hand-made change shows as "Custom".
  */
-public class BibleDesignPicker extends JPanel {
+public class BibleDesignPicker extends JPanel implements SettingsCard {
 
     private final TypographySettings typography;
     private final AppConfig config;
@@ -35,6 +35,15 @@ public class BibleDesignPicker extends JPanel {
     private final Map<BibleDesign, SlidePreviewCanvas> samples = new EnumMap<>(BibleDesign.class);
     private final JLabel current = Ui.label(" ", Palette::secondaryText, "small");
     private SlideStyle base = SlideStyle.fallback();
+    /** The design clicked but not saved yet (SAVE / APPLY of the card uses it), or null. */
+    private BibleDesign pending;
+    private java.util.function.Consumer<BibleDesign> picked = d -> { };
+    private Runnable edited = () -> { };
+
+    @Override
+    public void onEdited(Runnable r) {
+        edited = r;
+    }
 
     /** @param applied runs after a design was applied (the other Bible controls reload) */
     public BibleDesignPicker(TypographySettings typography, AppConfig config, Runnable applied) {
@@ -52,9 +61,8 @@ public class BibleDesignPicker extends JPanel {
         gridHolder.add(grid);
         add(current, BorderLayout.NORTH);
         add(gridHolder, BorderLayout.CENTER);
-        add(Ui.label("<html>Click a design to use it for every verse. Fine-tune it below in Bible Typography and Bible "
-                + "Presentation. The background comes from the Bible theme. Preview changes at once; Program on the next "
-                + "TAKE.</html>", Palette::mutedText, "small"), BorderLayout.SOUTH);
+        add(Ui.label("<html>Click a design, then SAVE (keep it) or APPLY (Preview and Program show it now). Fine-tune it "
+                + "in Bible Typography and Bible Presentation. The background comes from the Bible theme.</html>", Palette::mutedText, "small"), BorderLayout.SOUTH);
         typography.addListener(this::refresh);
         refresh();
     }
@@ -67,13 +75,14 @@ public class BibleDesignPicker extends JPanel {
 
     /** Redraws the samples and marks the design that matches the saved settings. */
     public void refresh() {
-        BibleDesign chosen = chosen();
+        BibleDesign chosen = pending != null ? pending : chosen();
         for (Map.Entry<BibleDesign, SlidePreviewCanvas> e : samples.entrySet()) {
             BibleDesign d = e.getKey();
             e.getValue().setContent(sampleSlide(d), d.typography().applyTo(base));
             e.getValue().setFrameColor(d == chosen ? Palette::accent : null);
         }
-        current.setText(chosen != null ? "Current design: " + chosen.label()
+        current.setText(pending != null ? "Picked: " + pending.label() + " (not saved yet: press Save Changes)"
+                : chosen != null ? "Current design: " + chosen.label()
                 : typography.isGlobal(ContentKind.BIBLE) ? "Current design: Custom (changed by hand below)"
                 : "Current design: the Bible theme's own text settings");
     }
@@ -86,6 +95,33 @@ public class BibleDesignPicker extends JPanel {
                 BibleDisplay.ReferencePosition.parse(config.get(SettingsPanel.KEY_BIBLE_REF_POSITION, null)),
                 config.getBoolean(SettingsPanel.KEY_BIBLE_UPPERCASE, true),
                 config.getBoolean(SettingsPanel.KEY_BIBLE_SHOW_VERSION, true));
+    }
+
+    /** Told when a design is clicked (the Bible Typography card shows it as a draft). */
+    public void setOnPick(java.util.function.Consumer<BibleDesign> onPick) {
+        picked = onPick == null ? d -> { } : onPick;
+    }
+
+    private void pick(BibleDesign d) {
+        pending = d;
+        edited.run();
+        refresh();
+        picked.accept(d);
+    }
+
+    @Override
+    public void saveCard() {
+        BibleDesign d = pending;
+        pending = null;
+        if (d != null) {
+            apply(d);
+        }
+    }
+
+    @Override
+    public void reloadCard() {
+        pending = null;
+        refresh();
     }
 
     private void apply(BibleDesign d) {
@@ -120,7 +156,7 @@ public class BibleDesignPicker extends JPanel {
         MouseAdapter click = new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
-                apply(d);
+                pick(d);
             }
         };
         card.addMouseListener(click);

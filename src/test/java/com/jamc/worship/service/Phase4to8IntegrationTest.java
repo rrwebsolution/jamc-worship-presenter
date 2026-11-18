@@ -380,7 +380,7 @@ class Phase4to8IntegrationTest {
     void defaultScenesSeededAndEditable() {
         List<Scene> all = scenes.scenes();
         assertEquals(List.of("Worship", "Camera", "Camera + Lyrics", "Bible", "Sermon", "Camera + Presentation", "Announcement", "Fullscreen Video",
-                        "Logo / Welcome", "Blank"),
+                        "Logo / Welcome", "Blank", "Preaching"),
                 all.stream().map(Scene::getName).toList());
         Scene worship = all.getFirst();
         assertEquals(List.of(SourceType.LOWER_THIRD, SourceType.CHURCH_LOGO, SourceType.LYRICS, SourceType.CAMERA,

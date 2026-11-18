@@ -363,6 +363,69 @@ final class SeedData {
         }
     }
 
+    /**
+     * The "Preaching" layout (user 2026-11-17, their own picture): camera full screen, logo and "SUNDAY SERVICE /
+     * PREACHING" at the top left, the Bible card on the left, a "Preaching Today" name tag on the right, the sermon
+     * title banner at the bottom and a LIVE badge only while streaming. Every part is an ordinary layer to change.
+     */
+    static void applyV17(Connection conn) throws SQLException {
+        if (sceneId(conn, "Preaching") != null) {
+            return;
+        }
+        String now = Instant.now().toString();
+        long badge;
+        try (PreparedStatement ps = conn.prepareStatement("""
+                INSERT INTO lower_thirds(name, title, subtitle, font_family, font_color, background_color, position,
+                                         animation, title_color, accent_color, font_size, style, label, margin_y,
+                                         created_at, updated_at)
+                VALUES ('Preaching Today', 'Pastor''s Name', 'Pastor', 'Segoe UI', '#111827', '#FFFFFF', 'BOTTOM_RIGHT',
+                        'SLIDE', '#0B1A3A', '#1E4FD8', 54, 'BADGE', 'Preaching Today', 250, ?, ?)""",
+                Statement.RETURN_GENERATED_KEYS)) {
+            ps.setString(1, now);
+            ps.setString(2, now);
+            ps.executeUpdate();
+            try (ResultSet keys = ps.getGeneratedKeys()) {
+                keys.next();
+                badge = keys.getLong(1);
+            }
+        }
+        int order;
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery("SELECT COALESCE(MAX(sort_order), -1) + 1 FROM scenes")) {
+            order = rs.next() ? rs.getInt(1) : 0;
+        }
+        long id = insertScene(conn, "Preaching", order, now);
+        try (PreparedStatement ps = conn.prepareStatement("UPDATE scenes SET is_builtin = 1 WHERE id = ?")) {
+            ps.setLong(1, id); // a standard scene like the others (kept, its layers still editable)
+            ps.executeUpdate();
+        }
+        String gold = "#F5C542";
+        insertSources(conn, id, new String[][]{
+                {"LIVE Badge", "TEXT", "1", "{\"x\":0.893,\"y\":0.028,\"w\":0.085,\"h\":0.054,\"text\":\"● LIVE\",\"color\":\"#FFFFFF\","
+                        + "\"fontSize\":40,\"background\":\"#E11D2E\",\"cornerRadius\":10,\"onlyWhileLive\":true}"},
+                {"Church Logo", "CHURCH_LOGO", "1", "{\"x\":0.028,\"y\":0.022,\"w\":0.062,\"h\":0.088,\"fit\":\"FIT\"}"},
+                {"Church Name", "TEXT", "1", "{\"x\":0.094,\"y\":0.03,\"w\":0.095,\"h\":0.05,\"text\":\"JAMC\",\"color\":\"#FFFFFF\","
+                        + "\"fontSize\":48,\"align\":\"LEFT\"}"},
+                {"Church Place", "TEXT", "1", "{\"x\":0.094,\"y\":0.075,\"w\":0.095,\"h\":0.03,\"text\":\"KINOGUITAN\",\"color\":\"#FFFFFF\","
+                        + "\"fontSize\":24,\"fontWeight\":\"MEDIUM\",\"align\":\"LEFT\"}"},
+                {"Divider", "COLOR", "1", "{\"x\":0.193,\"y\":0.033,\"w\":0.0012,\"h\":0.065,\"color\":\"#FFFFFF\",\"opacity\":0.6}"},
+                {"Service Name", "TEXT", "1", "{\"x\":0.212,\"y\":0.03,\"w\":0.2,\"h\":0.036,\"text\":\"SUNDAY SERVICE\",\"color\":\"#FFFFFF\","
+                        + "\"fontSize\":30,\"fontWeight\":\"MEDIUM\",\"align\":\"LEFT\"}"},
+                {"Part of Service", "TEXT", "1", "{\"x\":0.212,\"y\":0.066,\"w\":0.2,\"h\":0.036,\"text\":\"PREACHING\",\"color\":\"" + gold + "\","
+                        + "\"fontSize\":30,\"fontWeight\":\"MEDIUM\",\"align\":\"LEFT\"}"},
+                {"Lower Third: Preaching Today", "LOWER_THIRD", "1", "{\"x\":0,\"y\":0,\"w\":1,\"h\":1,\"lowerThirdId\":" + badge + "}"},
+                {"Sermon Title", "TEXT", "1", "{\"x\":0.12,\"y\":0.852,\"w\":0.76,\"h\":0.09,\"text\":\"Sermon Title Here\",\"color\":\"#FFFFFF\","
+                        + "\"fontSize\":88,\"fontWeight\":\"BLACK\",\"italic\":true}"},
+                {"Title Line", "COLOR", "1", "{\"x\":0.375,\"y\":0.962,\"w\":0.25,\"h\":0.005,\"color\":\"" + gold + "\",\"cornerRadius\":3}"},
+                {"Preaching Title Tag", "TEXT", "1", "{\"x\":0.35,\"y\":0.812,\"w\":0.3,\"h\":0.044,\"text\":\"Preaching Title\",\"color\":\"#111827\","
+                        + "\"fontSize\":32,\"italic\":true,\"background\":\"" + gold + "\"}"},
+                {"Title Banner", "COLOR", "1", "{\"x\":0,\"y\":0.795,\"w\":1,\"h\":0.205,\"color\":\"#0F2C70\",\"color2\":\"#06122E\"}"},
+                {"Banner Gold Line", "COLOR", "1", "{\"x\":0,\"y\":0.792,\"w\":1,\"h\":0.004,\"color\":\"" + gold + "\"}"},
+                {"Bible Card", "BIBLE", "1", "{\"x\":0.03,\"y\":0.145,\"w\":0.396,\"h\":0.605,\"bibleCard\":true,\"fontSize\":60}"},
+                {"Bible Card Back", "COLOR", "1", "{\"x\":0.03,\"y\":0.145,\"w\":0.396,\"h\":0.605,\"color\":\"#1D3F94\",\"color2\":\"#0A1840\","
+                        + "\"opacity\":0.92,\"cornerRadius\":28,\"borderColor\":\"" + gold + "\",\"borderWidth\":4}"},
+                {"Camera", "CAMERA", "1", "{\"x\":0,\"y\":0,\"w\":1,\"h\":1,\"fit\":\"FILL\"}"}}, 0);
+    }
+
     private static void rename(Connection conn, String from, String to) throws SQLException {
         if (sceneId(conn, to) != null) {
             return; // the church already has a scene with the new name

@@ -318,6 +318,11 @@ public final class MediaHub implements LiveFrames {
     }
 
     @Override
+    public BufferedImage cameraSnapshot(String name) {
+        return cameras.peek(name);
+    }
+
+    @Override
     public com.jamc.worship.camera.CameraStatus cameraStatus(String name) {
         return cameras.status(name);
     }

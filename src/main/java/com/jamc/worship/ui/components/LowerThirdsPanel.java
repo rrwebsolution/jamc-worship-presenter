@@ -128,6 +128,7 @@ public class LowerThirdsPanel extends JPanel {
         BackgroundTask.run("Load lower thirds", scenes::lowerThirds, items -> {
             model.clear();
             model.addAll(items);
+            com.jamc.worship.model.LowerThirdLookup.set(items);
             for (int i = 0; i < items.size(); i++) {
                 if (Objects.equals(items.get(i).getId(), keep)) {
                     list.setSelectedIndex(i);
@@ -150,6 +151,7 @@ public class LowerThirdsPanel extends JPanel {
                 model.set(i, lt);
             }
         }
+        com.jamc.worship.model.LowerThirdLookup.set(items());
     }
 
     private void create() {

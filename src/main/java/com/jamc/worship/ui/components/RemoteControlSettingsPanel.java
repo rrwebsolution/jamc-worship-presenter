@@ -52,7 +52,7 @@ import java.util.function.Supplier;
  * Settings → Remote Control. The desktop decides what each remote may do: the server and its QR code, approving new
  * devices, the devices and their permissions, what new devices start with, and locking or disabling all remotes.
  */
-public class RemoteControlSettingsPanel extends JPanel {
+public class RemoteControlSettingsPanel extends JPanel implements SettingsCard {
 
     private static final DateTimeFormatter LAST_SEEN = DateTimeFormatter.ofPattern("MMM d, h:mm a").withZone(ZoneId.systemDefault());
 
@@ -143,7 +143,7 @@ public class RemoteControlSettingsPanel extends JPanel {
         r.gridy++;
         controls.add(networkRow, r);
         r.gridy++;
-        controls.add(row(Ui.small("Port:"), port, applyPort), r);
+        controls.add(row(Ui.small("Port:"), port), r); // a new port is used on the card's Save Changes
         r.gridy++;
         controls.add(row(Ui.small("Remote Address:"), address, copy), r);
         r.gridy++;
@@ -228,6 +228,14 @@ public class RemoteControlSettingsPanel extends JPanel {
             sync();
             Dialogs.showError(this, "The remote server could not be changed.", err);
         });
+    }
+
+    /** The Settings card's Save Changes: a changed port is used (the remote server restarts on it). */
+    @Override
+    public void saveCard() {
+        if (!busy && ((Number) port.getValue()).intValue() != remote.port()) {
+            applyPort();
+        }
     }
 
     private void applyPort() {

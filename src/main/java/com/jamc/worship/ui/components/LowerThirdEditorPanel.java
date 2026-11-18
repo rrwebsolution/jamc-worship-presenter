@@ -39,7 +39,6 @@ import java.awt.GraphicsEnvironment;
 import java.awt.GridBagConstraints;
 import java.awt.GridBagLayout;
 import java.awt.Insets;
-import java.util.Objects;
 import java.util.function.Consumer;
 
 /** Edit a lower third with a design preview, and SHOW / HIDE it on the main Preview and Program monitors. */
@@ -61,6 +60,15 @@ public class LowerThirdEditorPanel extends JPanel {
     private final ColorButton accentColor = new ColorButton("Accent color", Color.BLUE);
     private final JComboBox<LowerThird.Position> positionCombo = new JComboBox<>(LowerThird.Position.values());
     private final JComboBox<LowerThird.Animation> animationCombo = new JComboBox<>(LowerThird.Animation.values());
+    /** Classic box or the 3-line name tag, its top line, and how far from the screen edge (user 2026-11-17). */
+    private final JComboBox<LowerThird.Style> styleCombo = new JComboBox<>(LowerThird.Style.values());
+    private final JTextField labelField = new JTextField();
+    private final JSpinner marginSpin = new JSpinner(new SpinnerNumberModel(90, 0, 900, 10));
+    /** Box width in 1080p pixels, 0 = Auto (as wide as the words). */
+    private final JSpinner widthSpin = new JSpinner(new SpinnerNumberModel(0, 0, 1728, 20));
+    /** Name and subtitle alignment; AUTO_ALIGN = the design's usual (classic left, name tag centered). */
+    private final JComboBox<Object> alignCombo = new JComboBox<>(new Object[]{"Auto", LowerThird.TextAlign.LEFT,
+            LowerThird.TextAlign.CENTER, LowerThird.TextAlign.RIGHT});
     private final JLabel logoLabel = Ui.small("No logo");
     private final JButton showButton = new JButton("SHOW LOWER THIRD");
     private final JButton hideButton = new JButton("HIDE LOWER THIRD");
@@ -91,8 +99,11 @@ public class LowerThirdEditorPanel extends JPanel {
             }
         });
         hideButton.addActionListener(e -> {
-            previewState.hideLowerThird();
-            program.hideLowerThird();
+            // only this lower third: the others shown stay on (user 2026-11-17)
+            if (editing != null) {
+                previewState.hideLowerThird(editing.getId());
+                program.hideLowerThird(editing.getId());
+            }
         });
         JPanel liveRow = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 8, 0));
         liveRow.add(showButton);
@@ -112,7 +123,13 @@ public class LowerThirdEditorPanel extends JPanel {
         row(form, g, "Font", fontCombo, "Size", sizeSpin);
         row(form, g, "Name color", titleColor, "Subtitle color", subtitleColor);
         row(form, g, "Panel color", backgroundColor, "Accent color", accentColor);
+        row(form, g, "Design", styleCombo, "Top line", labelField);
         row(form, g, "Position", positionCombo, "Animation", animationCombo);
+        marginSpin.setToolTipText("Distance from the bottom (or top) of the screen; raise it above a title banner");
+        widthSpin.setToolTipText("Width of the lower third (0 = Auto: as wide as the words). Long words shrink to fit.");
+        row(form, g, "Height", marginSpin, "Width (0 = Auto)", widthSpin);
+        alignCombo.setToolTipText("Where the name and subtitle sit: Left, Center or Right (Auto = the design's usual)");
+        row(form, g, "Align text", alignCombo, "", Ui.transparent(new BorderLayout()));
         JButton logoButton = Ui.button("Choose Logo…", "image");
         logoButton.addActionListener(e -> chooseLogo());
         JButton clearLogo = new JButton("No Logo");
@@ -164,6 +181,30 @@ public class LowerThirdEditorPanel extends JPanel {
         nameField.getDocument().addDocumentListener(dl);
         titleField.getDocument().addDocumentListener(dl);
         subtitleField.getDocument().addDocumentListener(dl);
+        labelField.getDocument().addDocumentListener(dl);
+        labelField.putClientProperty(com.formdev.flatlaf.FlatClientProperties.PLACEHOLDER_TEXT, "Preaching Today (name tag only)");
+        marginSpin.addChangeListener(e -> changed());
+        widthSpin.addChangeListener(e -> changed());
+        alignCombo.addActionListener(e -> changed());
+        styleCombo.addActionListener(e -> {
+            if (!loading && editing != null && styleCombo.getSelectedItem() == LowerThird.Style.BADGE
+                    && editing.getStyle() != LowerThird.Style.BADGE) {
+                // the name tag's own colours: white name bar, blue top line, dark words on the gold role bar
+                loading = true;
+                try {
+                    backgroundColor.setColor(Color.WHITE);
+                    titleColor.setColor(new Color(0x0B1A3A));
+                    subtitleColor.setColor(new Color(0x111827));
+                    accentColor.setColor(new Color(0x1E4FD8));
+                    if (labelField.getText().isBlank()) {
+                        labelField.setText("Preaching Today");
+                    }
+                } finally {
+                    loading = false;
+                }
+            }
+            changed();
+        });
         fontCombo.addActionListener(e -> changed());
         sizeSpin.addChangeListener(e -> changed());
         positionCombo.addActionListener(e -> changed());
@@ -199,6 +240,11 @@ public class LowerThirdEditorPanel extends JPanel {
             accentColor.setColor(Colors.parse(editing.getAccentColor(), Color.BLUE));
             positionCombo.setSelectedItem(editing.getPosition());
             animationCombo.setSelectedItem(editing.getAnimation());
+            styleCombo.setSelectedItem(editing.getStyle());
+            labelField.setText(editing.getLabel() == null ? "" : editing.getLabel());
+            marginSpin.setValue(editing.getMarginY());
+            widthSpin.setValue(editing.getWidth());
+            alignCombo.setSelectedItem(editing.getTextAlign() == null ? "Auto" : editing.getTextAlign());
             logoLabel.setText(editing.getLogoPath() == null ? "No logo" : java.nio.file.Path.of(editing.getLogoPath()).getFileName().toString());
         } finally {
             loading = false;
@@ -223,13 +269,16 @@ public class LowerThirdEditorPanel extends JPanel {
         editing.setAccentColor(accentColor.getHex());
         editing.setPosition((LowerThird.Position) positionCombo.getSelectedItem());
         editing.setAnimation((LowerThird.Animation) animationCombo.getSelectedItem());
+        editing.setStyle((LowerThird.Style) styleCombo.getSelectedItem());
+        editing.setLabel(labelField.getText().isBlank() ? null : labelField.getText().strip());
+        editing.setMarginY(((Number) marginSpin.getValue()).intValue());
+        editing.setWidth(((Number) widthSpin.getValue()).intValue());
+        editing.setTextAlign(alignCombo.getSelectedItem() instanceof LowerThird.TextAlign a ? a : null);
         preview.repaint();
-        if (program.isLowerThirdOn() && program.lowerThird() != null
-                && Objects.equals(program.lowerThird().getId(), editing.getId())) {
+        if (program.isLowerThirdOn(editing.getId())) {
             program.showLowerThird(editing); // live: update the on-air graphic immediately
         }
-        if (previewState.isLowerThirdOn() && previewState.lowerThird() != null
-                && Objects.equals(previewState.lowerThird().getId(), editing.getId())) {
+        if (previewState.isLowerThirdOn(editing.getId())) {
             previewState.showLowerThird(editing); // the prepared composition follows edits too
         }
         saveTimer.restart();
@@ -263,13 +312,13 @@ public class LowerThirdEditorPanel extends JPanel {
     }
 
     private void updateLiveButtons() {
-        boolean on = program.isLowerThirdOn() || previewState.isLowerThirdOn();
-        hideButton.setEnabled(on);
-        boolean sameOnBoth = editing != null && program.isLowerThirdOn() && previewState.isLowerThirdOn()
-                && program.lowerThird() != null && previewState.lowerThird() != null
-                && Objects.equals(program.lowerThird().getId(), editing.getId())
-                && Objects.equals(previewState.lowerThird().getId(), editing.getId());
+        Long id = editing == null ? null : editing.getId();
+        // HIDE stays usable for this one: it may be on through a scene layer set to it, without SHOW
+        hideButton.setEnabled(editing != null && (program.fixedLowerThirdProgress(id) > 0f
+                || previewState.fixedLowerThirdProgress(id) > 0f));
+        boolean sameOnBoth = editing != null && program.isLowerThirdOn(id) && previewState.isLowerThirdOn(id);
         showButton.setText(sameOnBoth ? "ON PREVIEW + PROGRAM" : "SHOW LOWER THIRD");
+        hideButton.setText("HIDE THIS ONE");
     }
 
     private static void row(JPanel form, GridBagConstraints g, String l1, JComponent c1, String l2, JComponent c2) {

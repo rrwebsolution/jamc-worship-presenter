@@ -102,6 +102,19 @@ public final class MigrationManager {
                 new Migration(16, "NASB as a standard Bible version", conn -> {
                     executeScript(conn, Schema.V16);
                     return null;
+                }),
+                new Migration(17, "Designed layouts: name-tag lower third, Preaching scene", conn -> {
+                    executeScript(conn, Schema.V17);
+                    SeedData.applyV17(conn);
+                    return null;
+                }),
+                new Migration(18, "Lower-third width", conn -> {
+                    executeScript(conn, Schema.V18);
+                    return null;
+                }),
+                new Migration(19, "Lower-third text alignment", conn -> {
+                    executeScript(conn, Schema.V19);
+                    return null;
                 })
         );
     }

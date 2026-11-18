@@ -35,7 +35,7 @@ import java.nio.file.Path;
  * live preview. Nothing changes until SAVE CHANGES; CANCEL goes back to what is saved. Branding is the
  * app's identity only: songs, Bible, media, scenes and services are never touched.
  */
-public class BrandingSettingsPanel extends JPanel {
+public class BrandingSettingsPanel extends JPanel implements SettingsCard {
 
     private final BrandingManager branding;
     private final JTextField name = new JTextField(28);
@@ -66,13 +66,12 @@ public class BrandingSettingsPanel extends JPanel {
             pendingImage = null;
             pendingDefaultLogo = true;
             updatePreview();
+            edited.run();
         });
         JButton reset = Ui.button("RESET DEFAULT", "refresh");
         reset.addActionListener(e -> resetDefault());
         JButton cancel = Ui.button("CANCEL", null);
         cancel.addActionListener(e -> load());
-        JButton save = Ui.primaryButton("SAVE CHANGES", null);
-        save.addActionListener(e -> save());
 
         DocumentListener live = new DocumentListener() {
             @Override public void insertUpdate(DocumentEvent e) { updatePreview(); }
@@ -127,8 +126,6 @@ public class BrandingSettingsPanel extends JPanel {
         buttons.add(reset);
         buttons.add(javax.swing.Box.createHorizontalStrut(8));
         buttons.add(cancel);
-        buttons.add(javax.swing.Box.createHorizontalStrut(8));
-        buttons.add(save);
         add(buttons, g);
         g.gridy++;
         add(Ui.label("<html>The name and icon show in the header, the window title and icon, About and messages. "
@@ -199,7 +196,21 @@ public class BrandingSettingsPanel extends JPanel {
             pendingImage = img;
             pendingDefaultLogo = false;
             updatePreview();
+            edited.run();
         }
+    }
+
+    private Runnable edited = () -> { };
+
+    @Override
+    public void onEdited(Runnable r) {
+        edited = r;
+    }
+
+    /** The Settings card's Save Changes (this card has no save button of its own). */
+    @Override
+    public void saveCard() {
+        save();
     }
 
     private void save() {

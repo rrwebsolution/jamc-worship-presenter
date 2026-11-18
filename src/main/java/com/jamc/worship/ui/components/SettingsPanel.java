@@ -42,6 +42,7 @@ import java.awt.Insets;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -61,7 +62,7 @@ public class SettingsPanel extends JPanel {
     /** The Audio Mixer under Preview / Program (on unless switched off). */
     public static final String KEY_SHOW_MIXER = "ui.showAudioMixer";
     public static final String KEY_SEPARATE_PRESENTATION = "live.separatePresentation";
-    /** A scene's Lyrics source also shows Bible verses (default true). */
+    /** A scene's Lyrics source also shows Bible verses (default false since 2026-11-18: songs only). */
     public static final String KEY_LYRICS_SOURCE_SHOWS_BIBLE = "scene.lyricsSourceShowsBible";
     /** A scene's Bible source also shows song lyrics (default false). */
     public static final String KEY_BIBLE_SOURCE_SHOWS_LYRICS = "scene.bibleSourceShowsLyrics";
@@ -376,6 +377,7 @@ public class SettingsPanel extends JPanel {
             c.gridy++;
             bibleTypography = new TypographyEditor(typo, ContentKind.BIBLE);
             bibleDesign = new BibleDesignPicker(typo, cfg, this::bibleDesignApplied);
+            bibleDesign.setOnPick(d -> bibleTypography.showDraft(d.typography(), true)); // shown below until SAVE / APPLY
             content.add(section("Bible Design", "Presentation → Bible: pick a ready-made look for the verses", bibleDesign), c);
             c.gridy++;
             content.add(section("Bible Typography", "Presentation → Bible: separate from lyrics, so verses never turn "
@@ -941,7 +943,7 @@ public class SettingsPanel extends JPanel {
         JCheckBox separatePresentation = checkbox("Separate Presentation", KEY_SEPARATE_PRESENTATION, false);
         separatePresentation.addActionListener(e -> h.contentSeparationChanged());
         // what a scene's Lyrics and Bible sources show (user, 2026-11-13: "this should be set up in Settings")
-        JCheckBox lyricsShowBible = checkbox("Scene Lyrics source also shows Bible verses", KEY_LYRICS_SOURCE_SHOWS_BIBLE, true);
+        JCheckBox lyricsShowBible = checkbox("Scene Lyrics source also shows Bible verses", KEY_LYRICS_SOURCE_SHOWS_BIBLE, false);
         JCheckBox bibleShowsLyrics = checkbox("Scene Bible source also shows song lyrics", KEY_BIBLE_SOURCE_SHOWS_LYRICS, false);
         lyricsShowBible.setToolTipText("On: one Lyrics source is enough for songs and verses. Off: the Lyrics source shows songs only");
         bibleShowsLyrics.setToolTipText("Off: a Bible source shows verses only, never song lyrics. On: it shows songs too");
@@ -1457,7 +1459,7 @@ public class SettingsPanel extends JPanel {
         return p;
     }
 
-    private static JComponent section(String title, String subtitle, JComponent body) {
+    private JComponent section(String title, String subtitle, JComponent body) {
         JPanel p = Ui.panel(new BorderLayout(0, 10), Palette::secondaryBackground);
         p.setBorder(BorderFactory.createCompoundBorder(Ui.line(true, true, true, true),
                 BorderFactory.createEmptyBorder(14, 16, 14, 16)));
@@ -1465,8 +1467,141 @@ public class SettingsPanel extends JPanel {
         head.add(Ui.label(title, Palette::text, "h4"), BorderLayout.NORTH);
         head.add(Ui.small(subtitle), BorderLayout.SOUTH);
         p.add(head, BorderLayout.NORTH);
-        p.add(body, BorderLayout.CENTER);
+        // SAVE CHANGES and APPLY sit inside the card's body, right under its settings (no separate footer)
+        JPanel inner = Ui.transparent(new BorderLayout(0, 12));
+        inner.add(body, BorderLayout.CENTER);
+        inner.add(cardButtons(body), BorderLayout.SOUTH);
+        p.add(inner, BorderLayout.CENTER);
         return p;
+    }
+
+    private Runnable applyToLive = () -> { };
+
+    /** Settings APPLY: Preview and the live Program show the saved settings now (set by MainFrame). */
+    public void setApplyToLive(Runnable r) {
+        applyToLive = r == null ? () -> { } : r;
+    }
+
+    /**
+     * SAVE CHANGES and APPLY of a card. Both start greyed out. Changing something in the card turns SAVE CHANGES on;
+     * saving turns it off and APPLY on; APPLY shows the saved settings on Preview and the live Program and turns off
+     * again. Parts that wait for SAVE CHANGES (typography, Bible design, lower third, branding, remote port) keep a
+     * draft until then; simple switches are stored when changed, and SAVE CHANGES confirms them.
+     */
+    private JComponent cardButtons(JComponent body) {
+        JButton save = Ui.primaryButton("Save Changes", null);
+        JButton apply = Ui.button("Apply", null);
+        JLabel note = Ui.label(" ", Palette::mutedText, "small");
+        save.setToolTipText("Keep the changes made in this card");
+        apply.setToolTipText("Show the saved settings on Preview and the live Program now");
+        save.setEnabled(false);
+        apply.setEnabled(false);
+        javax.swing.Timer clear = new javax.swing.Timer(6000, e -> note.setText(" "));
+        clear.setRepeats(false);
+        Runnable edited = () -> {
+            save.setEnabled(true);
+            apply.setEnabled(false); // what is new must be saved before it can be applied
+            note.setText(" ");
+        };
+        watchEdits(body, edited, save, apply);
+        for (SettingsCard card : cards(body)) {
+            card.onEdited(edited);
+        }
+        save.addActionListener(e -> {
+            cards(body).forEach(SettingsCard::saveCard);
+            context.config().save();
+            save.setEnabled(false);
+            apply.setEnabled(true);
+            note.setText("Saved. Press Apply to show it on Preview and Program.");
+            clear.restart();
+        });
+        apply.addActionListener(e -> {
+            cards(body).forEach(SettingsCard::applyCard);
+            context.config().save();
+            applyToLive.run();
+            apply.setEnabled(false);
+            note.setText("Applied: Preview and Program show these settings now.");
+            clear.restart();
+        });
+        JPanel row = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        row.add(save);
+        row.add(javax.swing.Box.createHorizontalStrut(8));
+        row.add(apply);
+        row.add(javax.swing.Box.createHorizontalStrut(12));
+        row.add(note);
+        return row;
+    }
+
+    /**
+     * Turns SAVE CHANGES on when the operator changes a setting in the card: a tick, a choice, a number, a slider, a
+     * text or a color. Only changes made with the mouse or keyboard count, not the card filling itself in when it
+     * loads. Controls added later (rows that appear) are watched too.
+     */
+    private static void watchEdits(java.awt.Component c, Runnable edited, JButton save, JButton apply) {
+        if (c == save || c == apply || !(c instanceof JComponent jc) || jc.getClientProperty(WATCHED) != null) {
+            return;
+        }
+        jc.putClientProperty(WATCHED, Boolean.TRUE);
+        Runnable byUser = () -> {
+            if (java.awt.EventQueue.getCurrentEvent() instanceof java.awt.event.InputEvent) {
+                edited.run();
+            }
+        };
+        if (c instanceof javax.swing.JToggleButton t) {
+            t.addActionListener(e -> byUser.run());
+        } else if (c instanceof JButton b && b.getClass().getSimpleName().equals("ColorButton")) {
+            b.addActionListener(e -> byUser.run()); // opens the color chooser
+        } else if (c instanceof javax.swing.JComboBox<?> box) {
+            box.addActionListener(e -> byUser.run());
+        } else if (c instanceof javax.swing.JSpinner s) {
+            // the arrows repeat on a timer and focus the number box, so a change while the box has focus counts too
+            s.addChangeListener(e -> {
+                if (java.awt.EventQueue.getCurrentEvent() instanceof java.awt.event.InputEvent
+                        || s.getEditor() instanceof javax.swing.JSpinner.DefaultEditor ed && ed.getTextField().isFocusOwner()) {
+                    edited.run();
+                }
+            });
+        } else if (c instanceof javax.swing.JSlider s) {
+            s.addChangeListener(e -> byUser.run());
+        } else if (c instanceof javax.swing.text.JTextComponent t && t.isEditable()) {
+            t.getDocument().addDocumentListener(new javax.swing.event.DocumentListener() {
+                private void typed() {
+                    if (t.isFocusOwner()) {
+                        edited.run();
+                    }
+                }
+                @Override public void insertUpdate(javax.swing.event.DocumentEvent e) { typed(); }
+                @Override public void removeUpdate(javax.swing.event.DocumentEvent e) { typed(); }
+                @Override public void changedUpdate(javax.swing.event.DocumentEvent e) { typed(); }
+            });
+            return; // its children are the text component's own parts
+        }
+        if (c instanceof java.awt.Container box && !(c instanceof javax.swing.JSpinner) && !(c instanceof javax.swing.JComboBox)) {
+            for (java.awt.Component child : box.getComponents()) {
+                watchEdits(child, edited, save, apply);
+            }
+            box.addContainerListener(new java.awt.event.ContainerAdapter() {
+                @Override
+                public void componentAdded(java.awt.event.ContainerEvent e) {
+                    watchEdits(e.getChild(), edited, save, apply);
+                }
+            });
+        }
+    }
+
+    private static final String WATCHED = "settings.watched";
+    /** The parts of a card that wait for SAVE / APPLY (found anywhere inside it, tabs included). */
+    private static List<SettingsCard> cards(java.awt.Component c) {
+        List<SettingsCard> found = new ArrayList<>();
+        if (c instanceof SettingsCard s) {
+            found.add(s);
+        }
+        if (c instanceof java.awt.Container box) {
+            for (java.awt.Component child : box.getComponents()) {
+                found.addAll(cards(child));
+            }
+        }
+        return found;
     }
 
     private JComponent pathRow(String label, Path path) {

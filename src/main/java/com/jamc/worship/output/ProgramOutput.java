@@ -57,10 +57,34 @@ public final class ProgramOutput {
     /** Where the Spotify-style lyrics were on screen when this transition cut a running one short, else null. */
     private LyricsReel.Pose reelStart;
 
-    private LowerThird lowerThird;
-    private boolean lowerThirdOn;
+    /**
+     * Every lower third on screen or animating, each on its own (user 2026-11-17: hiding one must hide only that
+     * one), keyed by its id, in the order shown.
+     */
+    private final java.util.LinkedHashMap<Long, Shown> lowerThirds = new java.util.LinkedHashMap<>();
+    /** Lower thirds hidden on purpose: a scene layer set to one of these stays off until it is SHOWn again. */
+    private final java.util.Set<Long> hiddenLowerThirds = new java.util.HashSet<>();
     private long lowerThirdStart;
-    private float lowerThirdFrom;
+
+    /** One lower third's animation: in while {@code on}, out from {@code from} otherwise. */
+    private static final class Shown {
+        LowerThird lt;
+        boolean on;
+        long start;
+        float from;
+
+        float progress() {
+            float t = Math.clamp((System.nanoTime() - start) / 1_000_000f / LOWER_THIRD_MS, 0f, 1f);
+            if (lt.getAnimation() == LowerThird.Animation.NONE) {
+                t = 1f;
+            }
+            return on ? from + (1f - from) * t : from * (1f - t);
+        }
+    }
+
+    /** A lower third to draw and how far it is in (0 = hidden, 1 = fully shown). */
+    public record LowerThirdState(LowerThird lowerThird, float progress) {
+    }
 
     public ProgramOutput() {
         timer.setCoalesce(true);
@@ -173,27 +197,65 @@ public final class ProgramOutput {
         fire();
     }
 
-    /** Animates a lower third in. Showing another one while one is visible swaps it instantly. */
+    /**
+     * Animates a lower third in, next to any others already shown. Showing one that is already on just updates it
+     * (a live edit).
+     */
     public void showLowerThird(LowerThird lt) {
-        boolean swap = lowerThirdOn && lowerThird != null;
-        lowerThird = lt.copy();
-        if (swap) {
-            fire();
-            return;
+        synchronized (lowerThirds) {
+            hiddenLowerThirds.remove(lt.getId());
+            Shown s = lowerThirds.get(lt.getId());
+            if (s != null && s.on) {
+                s.lt = lt.copy();
+                fire();
+                return;
+            }
+            if (s == null) {
+                s = new Shown();
+                lowerThirds.put(lt.getId(), s);
+            }
+            s.from = s.lt == null ? 0f : s.progress();
+            s.lt = lt.copy();
+            s.on = true;
+            s.start = System.nanoTime();
         }
-        lowerThirdFrom = lowerThirdProgress();
-        lowerThirdOn = true;
         lowerThirdStart = System.nanoTime();
         timer.start();
         fire();
     }
 
-    public void hideLowerThird() {
-        if (!lowerThirdOn) {
-            return;
+    /** Hides this one lower third only; the others stay on. */
+    public void hideLowerThird(Long id) {
+        synchronized (lowerThirds) {
+            hiddenLowerThirds.add(id);
+            Shown s = lowerThirds.get(id);
+            if (s != null && s.on) {
+                s.from = s.progress();
+                s.on = false;
+                s.start = System.nanoTime();
+            }
         }
-        lowerThirdFrom = lowerThirdProgress();
-        lowerThirdOn = false;
+        lowerThirdStart = System.nanoTime();
+        timer.start();
+        fire();
+    }
+
+    /** Hides every lower third (the emergency HIDE and its shortcut), also the ones a scene layer keeps on. */
+    public void hideLowerThird() {
+        synchronized (lowerThirds) {
+            for (LowerThird lt : com.jamc.worship.model.LowerThirdLookup.all()) {
+                hiddenLowerThirds.add(lt.getId());
+            }
+            for (var e : lowerThirds.entrySet()) {
+                hiddenLowerThirds.add(e.getKey());
+                Shown s = e.getValue();
+                if (s.on) {
+                    s.from = s.progress();
+                    s.on = false;
+                    s.start = System.nanoTime();
+                }
+            }
+        }
         lowerThirdStart = System.nanoTime();
         timer.start();
         fire();
@@ -240,29 +302,54 @@ public final class ProgramOutput {
         return previous == null ? null : reelStart;
     }
 
-    public LowerThird lowerThird() {
-        return lowerThird;
+    /** Every lower third shown with SHOW (or animating out), in the order shown. */
+    public List<LowerThirdState> lowerThirds() {
+        synchronized (lowerThirds) {
+            List<LowerThirdState> out = new java.util.ArrayList<>(lowerThirds.size());
+            for (Shown s : lowerThirds.values()) {
+                out.add(new LowerThirdState(s.lt, s.progress()));
+            }
+            return out;
+        }
     }
 
+    /** True while at least one lower third is SHOWn. */
     public boolean isLowerThirdOn() {
-        return lowerThirdOn;
+        synchronized (lowerThirds) {
+            return lowerThirds.values().stream().anyMatch(s -> s.on);
+        }
     }
 
-    /** 0 = hidden, 1 = fully shown; in between while animating. */
-    public float lowerThirdProgress() {
-        if (lowerThird == null) {
-            return 0f;
+    /** True while this lower third is SHOWn. */
+    public boolean isLowerThirdOn(Long id) {
+        synchronized (lowerThirds) {
+            Shown s = lowerThirds.get(id);
+            return s != null && s.on;
         }
-        float t = Math.clamp((System.nanoTime() - lowerThirdStart) / 1_000_000f / LOWER_THIRD_MS, 0f, 1f);
-        if (lowerThird.getAnimation() == LowerThird.Animation.NONE) {
-            t = 1f;
+    }
+
+    /**
+     * How far a scene layer set to this lower third is in: its SHOW / HIDE animation when it has one, otherwise
+     * fully on unless it was hidden.
+     */
+    public float fixedLowerThirdProgress(Long id) {
+        synchronized (lowerThirds) {
+            Shown s = lowerThirds.get(id);
+            if (s != null) {
+                return s.progress();
+            }
+            return hiddenLowerThirds.contains(id) ? 0f : 1f;
         }
-        return lowerThirdOn ? lowerThirdFrom + (1f - lowerThirdFrom) * t : lowerThirdFrom * (1f - t);
     }
 
     /** True if something other than black is on Program. */
     public boolean isShowingContent() {
         return shown.showsSomething();
+    }
+
+    /** Redraws every Program surface without changing what is live (e.g. the LIVE badge when the stream starts). */
+    public void refresh() {
+        fire();
     }
 
     public void addListener(Runnable listener) {
@@ -374,8 +461,10 @@ public final class ProgramOutput {
             previous = null;
         }
         boolean lowerThirdDone = (System.nanoTime() - lowerThirdStart) / 1_000_000f >= LOWER_THIRD_MS;
-        if (!lowerThirdOn && lowerThirdDone) {
-            lowerThird = lowerThird != null && lowerThirdProgress() <= 0f ? null : lowerThird;
+        if (lowerThirdDone) {
+            synchronized (lowerThirds) {
+                lowerThirds.values().removeIf(s -> !s.on && s.progress() <= 0f);
+            }
         }
         if (transitionDone && lowerThirdDone) {
             timer.stop();

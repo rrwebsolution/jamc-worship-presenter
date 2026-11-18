@@ -46,7 +46,7 @@ import java.awt.RenderingHints;
  * <p>Program Style edits a draft with a live sample picture. SAVE SETTINGS keeps the draft; only APPLY TO PROGRAM
  * changes the live outputs, so nothing on air changes while the operator is still adjusting.
  */
-public final class LyricsAppearancePanel extends JPanel {
+public final class LyricsAppearancePanel extends JPanel implements SettingsCard {
 
     private static final String SAMPLE = "Worthy of ev'ry breath\nWe could ever breathe";
 
@@ -129,18 +129,6 @@ public final class LyricsAppearancePanel extends JPanel {
             load(ProgramLyricsStyle.defaults());
             changed();
         });
-        JButton save = Ui.button("Save Settings", null);
-        save.setToolTipText("Keeps these settings. The live Program does not change until Apply to Program.");
-        save.addActionListener(e -> {
-            ProgramLyricsStyle.saveDraft(cfg, current());
-            updateStatus("Saved. The live Program still uses its applied style; press Apply to Program to use these.");
-        });
-        JButton apply = Ui.primaryButton("Apply to Program", null);
-        apply.setToolTipText("The livestream, recording, OBS window and Program monitor use these settings now");
-        apply.addActionListener(e -> {
-            ProgramLyricsStyle.apply(cfg, current());
-            updateStatus("Applied: Program now shows these lyrics settings.");
-        });
 
         JPanel right = Ui.transparent(new BorderLayout(0, 6));
         right.add(Ui.label("Sample (how the stream will look)", Palette::secondaryText, "small"), BorderLayout.NORTH);
@@ -153,7 +141,7 @@ public final class LyricsAppearancePanel extends JPanel {
         body.add(top, BorderLayout.CENTER);
         body.add(right, BorderLayout.EAST);
         JPanel south = Ui.transparent(new BorderLayout(0, 6));
-        south.add(flow(reset, save, apply), BorderLayout.NORTH);
+        south.add(flow(reset), BorderLayout.NORTH); // SAVE / APPLY are the Settings card's own buttons
         south.add(status, BorderLayout.CENTER);
         south.add(Ui.label("<html><b>Each scene chooses its own layout</b>: Edit Scene → its Lyrics layer → <b>Lyrics layout</b> "
                 + "(e.g. \"Camera + Lyrics\" = Lower third, \"Lyrics\" = Full lyrics). Every Lyrics layer starts as "
@@ -299,6 +287,18 @@ public final class LyricsAppearancePanel extends JPanel {
     }
 
     /** The draft as shown in the controls. */
+    @Override
+    public void saveCard() {
+        ProgramLyricsStyle.saveDraft(cfg, current());
+        updateStatus("Saved. The live Program still uses its applied style; press Apply to use these.");
+    }
+
+    @Override
+    public void applyCard() {
+        ProgramLyricsStyle.apply(cfg, current());
+        updateStatus("Applied: Program now shows these lyrics settings.");
+    }
+
     public ProgramLyricsStyle current() {
         Fade selectedFade = (Fade) fade.getSelectedItem();
         LyricsTransitionSettings spotify = selectedFade == Fade.SPOTIFY

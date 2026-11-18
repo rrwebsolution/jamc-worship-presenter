@@ -65,6 +65,11 @@ public interface LiveFrames {
     /** Frame from a camera (blank name = first camera). */
     BufferedImage camera(String name);
 
+    /** For thumbnails: the latest picture of a camera that is already running, never opening one (null = none). */
+    default BufferedImage cameraSnapshot(String name) {
+        return null;
+    }
+
     /** The camera's state, so a disconnected camera shows its offline image instead of a frozen or black box. */
     default com.jamc.worship.camera.CameraStatus cameraStatus(String name) {
         return com.jamc.worship.camera.CameraStatus.READY;

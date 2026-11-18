@@ -27,6 +27,54 @@ public class LowerThird {
         }
     }
 
+    public enum Style {
+        CLASSIC("Classic box"), BADGE("Name tag (3 lines)");
+
+        private final String label;
+
+        Style(String label) {
+            this.label = label;
+        }
+
+        public static Style parse(String v) {
+            try {
+                return v == null ? CLASSIC : valueOf(v);
+            } catch (IllegalArgumentException e) {
+                return CLASSIC;
+            }
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
+    /** How the name and subtitle sit in the lower third. */
+    public enum TextAlign {
+        LEFT("Left"), CENTER("Center"), RIGHT("Right");
+
+        private final String label;
+
+        TextAlign(String label) {
+            this.label = label;
+        }
+
+        /** null when not set (the design's usual alignment). */
+        public static TextAlign parse(String v) {
+            try {
+                return v == null ? null : valueOf(v);
+            } catch (IllegalArgumentException e) {
+                return null;
+            }
+        }
+
+        @Override
+        public String toString() {
+            return label;
+        }
+    }
+
     public enum Animation {
         SLIDE("Slide in"), FADE("Fade"), NONE("None");
 
@@ -63,6 +111,16 @@ public class LowerThird {
     private String logoPath;
     private Position position = Position.BOTTOM_LEFT;
     private Animation animation = Animation.SLIDE;
+    /** CLASSIC box, or BADGE: a 3-line name tag (label / name / role) on slanted bars (user 2026-11-17). */
+    private Style style = Style.CLASSIC;
+    /** BADGE: the small line above the name, e.g. "Preaching Today". */
+    private String label;
+    /** Distance from the top or bottom edge, in 1080p pixels (raise it above a title banner). */
+    private int marginY = 90;
+    /** Box width in 1080p pixels; 0 = as wide as the words (user 2026-11-17: the width must be adjustable). */
+    private int width;
+    /** Name and subtitle: LEFT, CENTER or RIGHT; null = the design's usual (classic left, name tag centered). */
+    private TextAlign textAlign;
 
     public LowerThird copy() {
         LowerThird l = new LowerThird();
@@ -79,6 +137,11 @@ public class LowerThird {
         l.logoPath = logoPath;
         l.position = position;
         l.animation = animation;
+        l.style = style;
+        l.label = label;
+        l.marginY = marginY;
+        l.width = width;
+        l.textAlign = textAlign;
         return l;
     }
 
@@ -108,6 +171,17 @@ public class LowerThird {
     public void setPosition(Position position) { this.position = position == null ? Position.BOTTOM_LEFT : position; }
     public Animation getAnimation() { return animation; }
     public void setAnimation(Animation animation) { this.animation = animation == null ? Animation.SLIDE : animation; }
+
+    public Style getStyle() { return style; }
+    public void setStyle(Style style) { this.style = style == null ? Style.CLASSIC : style; }
+    public String getLabel() { return label; }
+    public void setLabel(String label) { this.label = label; }
+    public int getMarginY() { return marginY; }
+    public void setMarginY(int marginY) { this.marginY = Math.clamp(marginY, 0, 900); }
+    public int getWidth() { return width; }
+    public void setWidth(int width) { this.width = Math.clamp(width, 0, 1920); }
+    public TextAlign getTextAlign() { return textAlign; }
+    public void setTextAlign(TextAlign textAlign) { this.textAlign = textAlign; }
 
     @Override
     public String toString() {
