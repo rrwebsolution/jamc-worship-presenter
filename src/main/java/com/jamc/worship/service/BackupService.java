@@ -198,7 +198,7 @@ public class BackupService {
         zip.closeEntry();
     }
 
-    private static void deleteTree(Path dir) {
+    static void deleteTree(Path dir) {
         try (Stream<Path> files = Files.walk(dir)) {
             files.sorted((a, b) -> b.getNameCount() - a.getNameCount()).forEach(p -> {
                 try {

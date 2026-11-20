@@ -41,6 +41,9 @@ public final class DialogWindowButtons {
     public static void install() {
         Toolkit.getDefaultToolkit().addAWTEventListener(e -> {
             if (e.getID() == WindowEvent.WINDOW_OPENED && e.getSource() instanceof JDialog d) {
+                if (isMessageBox(d)) {
+                    centerOnApp(d); // at once, before it is painted where its asking panel was
+                }
                 SwingUtilities.invokeLater(() -> decorate(d));
             }
         }, AWTEvent.WINDOW_EVENT_MASK);
@@ -89,6 +92,30 @@ public final class DialogWindowButtons {
         if (d.getRootPane().getClientProperty(INSTALLED) instanceof State state) {
             state.showNormal();
         }
+    }
+
+    /**
+     * Every message box (OK / Yes / No / errors / questions) opens in the middle of the LiveCat window, not over
+     * the small panel that asked (Service list, a side card...) nor in the middle of another screen.
+     */
+    static void centerOnApp(JDialog d) {
+        java.awt.Window app = null;
+        for (java.awt.Frame f : java.awt.Frame.getFrames()) {
+            if (f instanceof MainFrame && f.isShowing() && (f.getExtendedState() & java.awt.Frame.ICONIFIED) == 0) {
+                app = f;
+                break;
+            }
+        }
+        if (app == null) {
+            return; // splash / startup: keep Swing's own placement
+        }
+        Rectangle a = app.getBounds();
+        Rectangle area = workArea(app);
+        int x = a.x + (a.width - d.getWidth()) / 2;
+        int y = a.y + (a.height - d.getHeight()) / 2;
+        x = Math.max(area.x, Math.min(x, area.x + area.width - d.getWidth()));
+        y = Math.max(area.y, Math.min(y, area.y + area.height - d.getHeight()));
+        d.setLocation(x, y);
     }
 
     /** OK / Cancel / Yes / No message boxes stay small and simple. */

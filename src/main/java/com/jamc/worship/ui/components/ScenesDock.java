@@ -161,8 +161,8 @@ public class ScenesDock extends JPanel {
     /** Raised whenever the thumbnails' pictures must be made again (a still is ready, the timer, new scenes). */
     private int thumbVersion;
     private boolean listView;
-    private final javax.swing.JToggleButton gridButton = viewButton("grid", "Grid: two scenes per row");
-    private final javax.swing.JToggleButton listButton = viewButton("list", "List: one scene per row (vertical)");
+    /** One button: shows the view a click switches to (Grid or List). */
+    private final JButton viewToggle = viewButton("list", "Switch to List: one scene per row (vertical)");
 
     {
         compositor.setStillVideos(true); // thumbnails: a still picture of each video, never a playing one
@@ -172,8 +172,8 @@ public class ScenesDock extends JPanel {
         Rendering.renderer().images().addChangeListener(() -> javax.swing.SwingUtilities.invokeLater(this::refreshThumbnails));
     }
 
-    private static javax.swing.JToggleButton viewButton(String icon, String tooltip) {
-        javax.swing.JToggleButton b = new javax.swing.JToggleButton(Icons.get(icon, Icons.SMALL));
+    private static JButton viewButton(String icon, String tooltip) {
+        JButton b = new JButton(Icons.get(icon, Icons.SMALL));
         b.setToolTipText(tooltip);
         b.setFocusable(false);
         b.putClientProperty(com.formdev.flatlaf.FlatClientProperties.BUTTON_TYPE,
@@ -190,8 +190,8 @@ public class ScenesDock extends JPanel {
     /** Grid (two per row) or List (one per row, vertical). */
     private void setListView(boolean list) {
         listView = list;
-        gridButton.setSelected(!list);
-        listButton.setSelected(list);
+        viewToggle.setIcon(Icons.get(list ? "grid" : "list", Icons.SMALL));
+        viewToggle.setToolTipText(list ? "Switch to Grid: two scenes per row" : "Switch to List: one scene per row (vertical)");
         gridLayout.setColumns(list ? 1 : 2);
         grid.revalidate();
         refreshThumbnails();
@@ -211,16 +211,13 @@ public class ScenesDock extends JPanel {
         JPanel head = Ui.transparent(new BorderLayout());
         head.add(Ui.label("SCENES", Palette::secondaryText, "semibold"), BorderLayout.WEST);
         JPanel headRight = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 2, 0));
-        gridButton.addActionListener(e -> {
-            setListView(false);
-            host.setScenesListView(false);
+        viewToggle.setFocusable(false);
+        viewToggle.addActionListener(e -> {
+            boolean list = !listView;
+            setListView(list);
+            host.setScenesListView(list);
         });
-        listButton.addActionListener(e -> {
-            setListView(true);
-            host.setScenesListView(true);
-        });
-        headRight.add(gridButton);
-        headRight.add(listButton);
+        headRight.add(viewToggle);
         headRight.add(add);
         head.add(headRight, BorderLayout.EAST);
         setListView(host.scenesListView());

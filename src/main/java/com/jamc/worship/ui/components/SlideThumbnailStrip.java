@@ -108,8 +108,8 @@ public class SlideThumbnailStrip extends JPanel {
      */
     private boolean gridView;
     private int columns = 1;
-    private final javax.swing.JToggleButton cardsViewButton = viewButton("list", "Cards: the words, one card per row");
-    private final javax.swing.JToggleButton gridViewButton = viewButton("grid", "Grid: the slides as they look on screen, side by side");
+    /** One button: shows the view a click switches to (Cards or Grid). */
+    private final javax.swing.JButton viewToggle = viewButton("grid", "Switch to Grid: the slides as they look on screen, side by side");
     private final JPanel viewButtons = Ui.transparent(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 0, 0));
     private final List<java.util.function.Consumer<Boolean>> viewListeners = new ArrayList<>();
 
@@ -129,14 +129,8 @@ public class SlideThumbnailStrip extends JPanel {
         editButtons.add(deleteButton);
         editButtons.setVisible(false);
 
-        javax.swing.ButtonGroup views = new javax.swing.ButtonGroup();
-        views.add(cardsViewButton);
-        views.add(gridViewButton);
-        cardsViewButton.setSelected(true);
-        cardsViewButton.addActionListener(e -> changeView(false));
-        gridViewButton.addActionListener(e -> changeView(true));
-        viewButtons.add(cardsViewButton);
-        viewButtons.add(gridViewButton);
+        viewToggle.addActionListener(e -> changeView(!gridView));
+        viewButtons.add(viewToggle);
         viewButtons.setVisible(false);
 
         JPanel right = headerActions;
@@ -178,8 +172,8 @@ public class SlideThumbnailStrip extends JPanel {
         }, WHEN_FOCUSED);
     }
 
-    private static javax.swing.JToggleButton viewButton(String icon, String tooltip) {
-        javax.swing.JToggleButton b = new javax.swing.JToggleButton(Icons.get(icon, Icons.SMALL));
+    private static javax.swing.JButton viewButton(String icon, String tooltip) {
+        javax.swing.JButton b = new javax.swing.JButton(Icons.get(icon, Icons.SMALL));
         b.setToolTipText(tooltip);
         b.setFocusable(false);
         b.putClientProperty(com.formdev.flatlaf.FlatClientProperties.BUTTON_TYPE,
@@ -189,8 +183,9 @@ public class SlideThumbnailStrip extends JPanel {
 
     /** Lyrics cards as Cards (one per row) or Grid (several per row). Does not tell the view listeners. */
     public void setGridView(boolean grid) {
-        cardsViewButton.setSelected(!grid);
-        gridViewButton.setSelected(grid);
+        viewToggle.setIcon(Icons.get(grid ? "list" : "grid", Icons.SMALL));
+        viewToggle.setToolTipText(grid ? "Switch to Cards: the words, one card per row"
+                : "Switch to Grid: the slides as they look on screen, side by side");
         if (grid != gridView) {
             gridView = grid;
             if (lyricsCards) {

@@ -56,7 +56,7 @@ public final class FileUtils {
         return abs.startsWith(root) ? root.relativize(abs).toString().replace('\\', '/') : abs.toString();
     }
 
-    static Path uniqueTarget(Path dir, String fileName) {
+    public static Path uniqueTarget(Path dir, String fileName) {
         String safe = fileName.replaceAll("[\\\\/:*?\"<>|]", "_");
         int dot = safe.lastIndexOf('.');
         String base = dot < 0 ? safe : safe.substring(0, dot);

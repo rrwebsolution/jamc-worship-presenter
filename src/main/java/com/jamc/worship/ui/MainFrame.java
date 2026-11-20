@@ -862,7 +862,7 @@ public class MainFrame extends JFrame {
         // (PowerPoint, custom slides). The order list opens from its ORDER button, not as a second list.
         actionOrder = new ActionOrderPanel(thumbnails, new OrderHost());
         thumbnails.setTextCase(() -> new OrderHost().cardsUseTextCase());
-        thumbnails.addHeaderAction(clearToggle());
+        // CLEAR is in the Order dialog and under Preview / Program (removed from beside the workspace cards on request)
         actionOrder.addHeaderAction(clearToggle());
         JButton order = Ui.button("Order", "list");
         order.setToolTipText("Change the order (a song's arrangement)");
@@ -1343,7 +1343,27 @@ public class MainFrame extends JFrame {
                 syncingPlaylist = was;
             }
         });
-        schedule.setLowerThirdChoices(() -> lowerThirds.items().stream().map(LowerThirdsPanel::serviceItem).toList());
+        // Service + menu → Lyrics…, Bible Passage…, Slides…, media…: picked from the library
+        schedule.setLibrary(new ServiceSchedulePanel.Library(context.songService(), context.slideDeckService(),
+                context.mediaService(), context.presentationService(), context.sceneService(), context.bibleService(),
+                biblePanel::versionAbbreviation));
+        // Service menu → Save to File / Open Service File: a service with its songs, slides and media for another laptop
+        schedule.setServiceFiles(new com.jamc.worship.service.ServiceFileService(context.paths(), context.servicePlans(),
+                context.songService(), context.slideDeckService(), context.mediaService(), context.presentationService(),
+                context.sceneService(), context.themeService()), () -> {
+            songLibrary.refresh(null);
+            if (decksLoaded) {
+                deckLibrary.refresh(null);
+            }
+            if (presentationsLoaded) {
+                presentationLibrary.refresh(null);
+            }
+            lowerThirds.refresh(null);
+            for (MediaLibraryPanel m : List.of(mediaLibrary, videoLibrary, imageLibrary, audioLibrary, backgroundLibrary)) {
+                m.refresh(null);
+            }
+            servicesPanel.refresh();
+        });
         servicesPanel.setStatusHandler(statusBar::showMessage);
         servicesPanel.setOpenHandler(s -> {
             schedule.open(s);
@@ -2477,7 +2497,7 @@ public class MainFrame extends JFrame {
      * longer a second permanent list beside the horizontal lyrics cards.
      */
     /**
-     * CLEAR beside the lyrics cards and in the Order dialog: the same switch as CLEAR under Program
+     * CLEAR in the Order dialog: the same switch as CLEAR under Program
      * (hides the lyrics, keeps the background and video); red while the lyrics are cleared.
      */
     private javax.swing.JToggleButton clearToggle() {

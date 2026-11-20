@@ -334,11 +334,6 @@ public class LiveDock extends JPanel {
     }
 
     private JComponent withDisplayRow(JComponent monitor, OutputService.Source source) {
-        JButton button = new JButton("DISPLAY ▾", Icons.get("monitor", Icons.SMALL));
-        button.setToolTipText("Show " + source + " on a projector, TV or window (or right-click the monitor)");
-        button.putClientProperty(FlatClientProperties.STYLE, "font: bold -1; margin: 2,8,2,8");
-        button.setFocusable(false);
-        button.addActionListener(e -> showRouteMenu(source, button, 0, button.getHeight()));
         monitor.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mousePressed(java.awt.event.MouseEvent e) {
@@ -347,9 +342,9 @@ public class LiveDock extends JPanel {
                 }
             }
         });
+        // where a monitor goes: right-click it (the DISPLAY button and "not on a display" row were removed on request)
+        monitor.setToolTipText("Right-click: show " + source + " on a projector, TV or window");
         JPanel row = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 6, 0));
-        row.add(button);
-        row.add(source == OutputService.Source.PREVIEW ? previewRoutes : programRoutes);
         if (source == OutputService.Source.PREVIEW) {
             previewMonitorButton.setFocusable(false);
             previewMonitorButton.putClientProperty(FlatClientProperties.STYLE, "font: bold -2; margin: 2,8,2,8");
@@ -364,7 +359,9 @@ public class LiveDock extends JPanel {
         boolean program = source == OutputService.Source.PROGRAM;
         JPanel south = Ui.transparent(new BorderLayout(0, 4));
         south.add(imageNav(program), BorderLayout.NORTH);
-        south.add(row, BorderLayout.SOUTH);
+        if (row.getComponentCount() > 0) {
+            south.add(row, BorderLayout.SOUTH);
+        }
         JPanel p = Ui.transparent(new BorderLayout(0, 4));
         p.add(monitor, BorderLayout.CENTER);
         p.add(south, BorderLayout.SOUTH);

@@ -158,6 +158,25 @@ public class MediaService {
         return saved;
     }
 
+    /**
+     * Adds an online (YouTube or Pixabay) video described by {@code m} (e.g. from a service file), or returns the
+     * library item that already has that video.
+     */
+    public MediaItem addOnlineReference(MediaItem m) {
+        if (m.getSourceType() == MediaSourceType.LOCAL || m.getYoutubeVideoId() == null) {
+            throw new ValidationException("\"" + m.getName() + "\" is not an online video.");
+        }
+        Optional<MediaItem> existing = repository.findBySource(m.getSourceType(), m.getYoutubeVideoId());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        m.setId(null);
+        m.setCopied(false);
+        MediaItem saved = repository.insert(m);
+        log.info("Added {} video {} '{}' from a service file", m.getSourceType(), m.getYoutubeVideoId(), saved.getName());
+        return saved;
+    }
+
     private final java.util.List<Runnable> changeListeners = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /** Told (on the thread that changed it) when an item is added outside a library list, e.g. a download that finished. */

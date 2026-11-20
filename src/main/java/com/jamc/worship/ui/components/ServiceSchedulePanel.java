@@ -2,10 +2,13 @@ package com.jamc.worship.ui.components;
 
 import com.formdev.flatlaf.FlatClientProperties;
 import com.jamc.worship.model.Service;
+import com.jamc.worship.model.MediaKind;
 import com.jamc.worship.model.ServiceItem;
+import com.jamc.worship.service.ServiceFileService;
 import com.jamc.worship.service.ServicePlanService;
 import com.jamc.worship.ui.BackgroundTask;
 import com.jamc.worship.ui.Dialogs;
+import com.jamc.worship.ui.dialogs.LibraryPickerDialog;
 import com.jamc.worship.ui.Ui;
 import com.jamc.worship.ui.theme.Icons;
 import com.jamc.worship.ui.theme.Palette;
@@ -87,16 +90,17 @@ public class ServiceSchedulePanel extends JPanel {
     private boolean suppressActivation;
     private Runnable openServicesHandler = () -> { };
     private Consumer<Service> serviceChangedHandler = s -> { };
-    private Supplier<List<ServiceItem>> lowerThirdChoices = List::of;
+    private ServiceFileService serviceFiles;
+    private Runnable libraryChangedHandler = () -> { };
 
     public ServiceSchedulePanel(ServicePlanService plans) {
         super(new BorderLayout());
         this.plans = plans;
         setOpaque(false);
 
-        JButton menu = Ui.toolButton("sliders", "Service: save, save as, rename, open another service");
+        JButton menu = Ui.toolButton("sliders", "Service: save, save as, rename, save to file, open a service file");
         menu.addActionListener(e -> showServiceMenu(menu));
-        JButton add = Ui.toolButton("plus", "Add an item");
+        JButton add = Ui.toolButton("plus", "Open or new service, or add an item");
         add.addActionListener(e -> showAddMenu(add));
         JPanel head = Ui.header(title, subtitle, add, menu);
         add(head, BorderLayout.NORTH);
@@ -209,9 +213,10 @@ public class ServiceSchedulePanel extends JPanel {
         this.serviceChangedHandler = handler;
     }
 
-    /** Supplies lower thirds for the Add menu. */
-    public void setLowerThirdChoices(Supplier<List<ServiceItem>> choices) {
-        this.lowerThirdChoices = choices;
+    /** Enables Save to File / Open Service File; {@code libraryChanged} runs after a file added songs, media... */
+    public void setServiceFiles(ServiceFileService files, Runnable libraryChanged) {
+        this.serviceFiles = files;
+        this.libraryChangedHandler = libraryChanged == null ? () -> { } : libraryChanged;
     }
 
     public Service current() {
@@ -480,30 +485,247 @@ public class ServiceSchedulePanel extends JPanel {
         menu.add(item("Rename Service…", "edit", this::renameService)).setEnabled(service != null);
         menu.add(item("Save as Template…", "layers", this::saveAsTemplate)).setEnabled(service != null);
         menu.addSeparator();
-        menu.add(item("Open…  /  New Service…", "folder", openServicesHandler));
+        menu.add(item("Save to File…", "copy", this::saveToFile))
+                .setEnabled(service != null && serviceFiles != null);
+        menu.add(item("Open Service File…", "import", this::openFile)).setEnabled(serviceFiles != null);
         menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    // ------------------------------------------------------------------ service files (another laptop)
+
+    /** The folder the last service file was saved to / opened from (Documents at first). */
+    private static java.io.File lastFileFolder;
+
+    /**
+     * Saves the open service as one .livecat-service file with its songs, slides, media and PowerPoints inside,
+     * to copy (USB, Messenger, Drive...) to another laptop and open there.
+     */
+    private void saveToFile() {
+        if (service == null || serviceFiles == null) {
+            return;
+        }
+        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(lastFileFolder);
+        chooser.setDialogTitle("Save Service to File");
+        chooser.setFileFilter(fileFilter());
+        java.io.File dir = lastFileFolder != null ? lastFileFolder : chooser.getCurrentDirectory();
+        chooser.setSelectedFile(new java.io.File(dir, ServiceFileService.fileNameFor(service)));
+        if (com.jamc.worship.ui.NativeFileDialogs.showSaveDialog(chooser, this) != javax.swing.JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        java.nio.file.Path target = chooser.getSelectedFile().toPath();
+        if (!target.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith("." + ServiceFileService.EXTENSION)) {
+            target = target.resolveSibling(target.getFileName() + "." + ServiceFileService.EXTENSION);
+        }
+        if (java.nio.file.Files.exists(target) && !Dialogs.confirmDestructive(this, "Save Service to File",
+                "\"" + target.getFileName() + "\" already exists.\nReplace it?", "Replace")) {
+            return;
+        }
+        lastFileFolder = target.toAbsolutePath().getParent().toFile();
+        save(); // the database copy stays current too
+        Service snapshot = snapshot();
+        java.nio.file.Path file = target;
+        statusHandler.accept("Saving \"" + snapshot.getName() + "\" to a file…");
+        saveState.setText("Saving file…");
+        BackgroundTask.run("Save service to file", () -> serviceFiles.export(snapshot, file, this::statusLater), r -> {
+            saveState.setText(dirty ? "Unsaved changes" : "Saved");
+            statusHandler.accept("Saved to " + r.file());
+            String msg = "Saved:\n" + r.file() + "\n(" + sizeText(r.bytes()) + ")\n\n"
+                    + "Copy this file to the other laptop (USB, Messenger, Drive...), then there:\n"
+                    + "Service menu  →  Open Service File…\n"
+                    + "Songs, slides, pictures, videos and PowerPoints are inside the file.";
+            if (!r.warnings().isEmpty()) {
+                msg += "\n\nNot complete:\n• " + String.join("\n• ", r.warnings());
+            }
+            Dialogs.showInfo(this, "Service Saved to File", msg);
+        }, err -> {
+            saveState.setText(dirty ? "Unsaved changes" : "Saved");
+            Dialogs.showError(this, "The service could not be saved to a file.", err);
+        });
+    }
+
+    /** Opens a .livecat-service file: missing songs, slides and media are added to this library, then the service opens. */
+    private void openFile() {
+        if (serviceFiles == null) {
+            return;
+        }
+        javax.swing.JFileChooser chooser = new javax.swing.JFileChooser(lastFileFolder);
+        chooser.setDialogTitle("Open Service File");
+        chooser.setFileFilter(fileFilter());
+        if (com.jamc.worship.ui.NativeFileDialogs.showOpenDialog(chooser, this) != javax.swing.JFileChooser.APPROVE_OPTION) {
+            return;
+        }
+        java.nio.file.Path file = chooser.getSelectedFile().toPath();
+        lastFileFolder = file.toAbsolutePath().getParent().toFile();
+        save(); // keep the service that is open now
+        statusHandler.accept("Opening " + file.getFileName() + "…");
+        BackgroundTask.run("Open service file", () -> serviceFiles.importFile(file, this::statusLater), r -> {
+            open(r.service());
+            libraryChangedHandler.run();
+            statusHandler.accept("Opened \"" + r.service().getName() + "\"");
+            String msg = "\"" + r.service().getName() + "\" is open (" + r.service().getItems().size() + " items).\n\n"
+                    + r.added() + " added to this library, " + r.reused() + " already here.";
+            if (!r.warnings().isEmpty()) {
+                msg += "\n\nPlease check:\n• " + String.join("\n• ", r.warnings());
+            }
+            Dialogs.showInfo(this, "Service File Opened", msg);
+        }, err -> Dialogs.showError(this, "The service file could not be opened.", err));
+    }
+
+    private void statusLater(String message) {
+        SwingUtilities.invokeLater(() -> statusHandler.accept(message));
+    }
+
+    private static javax.swing.filechooser.FileNameExtensionFilter fileFilter() {
+        return new javax.swing.filechooser.FileNameExtensionFilter("LiveCat service (*." + ServiceFileService.EXTENSION + ")",
+                ServiceFileService.EXTENSION);
+    }
+
+    private static String sizeText(long bytes) {
+        if (bytes >= 1024L * 1024 * 1024) {
+            return String.format(java.util.Locale.ROOT, "%.1f GB", bytes / (1024.0 * 1024 * 1024));
+        }
+        if (bytes >= 1024L * 1024) {
+            return String.format(java.util.Locale.ROOT, "%.1f MB", bytes / (1024.0 * 1024));
+        }
+        return Math.max(1, bytes / 1024) + " KB";
     }
 
     private void showAddMenu(Component anchor) {
         JPopupMenu menu = new JPopupMenu();
+        menu.add(item("Open…  /  New Service…", "folder", openServicesHandler));
+        menu.addSeparator();
+        boolean lib = library != null;
+        menu.add(item("Lyrics…", "music", this::pickSongs)).setEnabled(lib);
+        menu.add(item("Bible Passage…", "book", this::pickBible)).setEnabled(lib);
+        menu.add(item("Slides…", "slides", this::pickDecks)).setEnabled(lib);
+        menu.add(item("Presentations…", "presentation", this::pickPresentations)).setEnabled(lib);
+        menu.add(item("Images…", "image", () -> pickMedia(MediaKind.IMAGE))).setEnabled(lib);
+        menu.add(item("Videos…", "video", () -> pickMedia(MediaKind.VIDEO))).setEnabled(lib);
+        menu.add(item("Audio…", "audio", () -> pickMedia(MediaKind.AUDIO))).setEnabled(lib);
+        menu.add(item("Lower Thirds…", "lower-third", this::pickLowerThirds)).setEnabled(lib);
+        menu.addSeparator();
         menu.add(item("Announcement…", "slides", () -> addText(ServiceItem.Type.ANNOUNCEMENT)));
         menu.add(item("Sermon Notes…", "slides", () -> addText(ServiceItem.Type.SERMON)));
         menu.add(item("Blank Screen", "monitor", () -> insertItemAtSelection(new ServiceItem(ServiceItem.Type.BLANK, "Blank", null))));
-        List<ServiceItem> lts = lowerThirdChoices.get();
-        if (!lts.isEmpty()) {
-            JMenuItem header = new JMenuItem("Lower Thirds:");
-            header.setEnabled(false);
-            menu.addSeparator();
-            menu.add(header);
-            for (ServiceItem lt : lts) {
-                menu.add(item("   " + lt.getTitle(), "lower-third", () -> insertItemAtSelection(lt.copy())));
-            }
-        }
-        menu.addSeparator();
-        JMenuItem hint = new JMenuItem("Songs, Bible, slides and media: drag them here or use Add to Service");
-        hint.setEnabled(false);
-        menu.add(hint);
         menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    // ------------------------------------------------------------------ + menu: add from the library
+
+    /** The library services the + menu picks from. */
+    public record Library(com.jamc.worship.service.SongService songs, com.jamc.worship.service.SlideDeckService decks,
+                          com.jamc.worship.service.MediaService media, com.jamc.worship.service.PresentationService presentations,
+                          com.jamc.worship.service.SceneService scenes, com.jamc.worship.service.BibleService bible,
+                          Supplier<String> bibleVersion) {
+    }
+
+    private Library library;
+
+    /** Enables Lyrics… / Bible Passage… / Slides… / media… in the + menu. */
+    public void setLibrary(Library library) {
+        this.library = library;
+    }
+
+    /** Adds the picked items in the order they were ticked, after the selected item. */
+    private void addAll(List<ServiceItem> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        if (service == null) {
+            statusHandler.accept("Open or create a service first (+  →  Open… / New Service…).");
+            return;
+        }
+        items.forEach(this::addItem);
+        statusHandler.accept(items.size() == 1 ? "Added \"" + items.getFirst().getTitle() + "\" to the service"
+                : "Added " + items.size() + " items to the service");
+    }
+
+    private void pickSongs() {
+        List<com.jamc.worship.model.Song> picked = LibraryPickerDialog.pickMany(this, new LibraryPickerDialog.Spec<>(
+                "Add Lyrics to the Service", "Search lyrics…", "music", "No lyrics in the library yet.",
+                text -> newestFirst(library.songs().search(new com.jamc.worship.model.SongQuery(text, false,
+                        com.jamc.worship.model.SongQuery.Sort.RECENTLY_ADDED)), com.jamc.worship.model.Song::getId),
+                com.jamc.worship.model.Song::getTitle,
+                s -> s.getAuthor() == null || s.getAuthor().isBlank() ? "Song" : s.getAuthor(), s -> null), "songs");
+        addAll(picked.stream().map(ServiceItem::ofSong).toList());
+    }
+
+    private void pickDecks() {
+        List<com.jamc.worship.model.SlideDeck> picked = LibraryPickerDialog.pickMany(this, new LibraryPickerDialog.Spec<>(
+                "Add Slides to the Service", "Search slides…", "slides", "No slide decks in the library yet.",
+                text -> newestFirst(library.decks().search(text), com.jamc.worship.model.SlideDeck::getId),
+                com.jamc.worship.model.SlideDeck::getName,
+                d -> d.getSlideCount() + (d.getSlideCount() == 1 ? " slide" : " slides"), d -> null), "slides");
+        addAll(picked.stream().map(d -> new ServiceItem(ServiceItem.Type.SLIDE, d.getName(), d.getId())).toList());
+    }
+
+    private void pickPresentations() {
+        List<com.jamc.worship.model.Presentation> picked = LibraryPickerDialog.pickMany(this, new LibraryPickerDialog.Spec<>(
+                "Add Presentations to the Service", "Search presentations…", "presentation",
+                "No presentations in the library yet.", text -> newestFirst(library.presentations().list(text), com.jamc.worship.model.Presentation::id),
+                com.jamc.worship.model.Presentation::name, com.jamc.worship.model.Presentation::slideCountText, p -> null),
+                "presentations");
+        addAll(picked.stream().map(p -> new ServiceItem(ServiceItem.Type.PRESENTATION, p.name(), p.id())).toList());
+    }
+
+    private void pickMedia(MediaKind kind) {
+        List<com.jamc.worship.model.MediaCategory> cats = switch (kind) {
+            case IMAGE -> List.of(com.jamc.worship.model.MediaCategory.IMAGE, com.jamc.worship.model.MediaCategory.BACKGROUND);
+            case VIDEO -> List.of(com.jamc.worship.model.MediaCategory.VIDEO, com.jamc.worship.model.MediaCategory.BACKGROUND);
+            case AUDIO -> List.of(com.jamc.worship.model.MediaCategory.AUDIO);
+        };
+        String noun = kind == MediaKind.IMAGE ? "images" : kind == MediaKind.VIDEO ? "videos" : "audio";
+        List<com.jamc.worship.model.MediaItem> picked = LibraryPickerDialog.pickMany(this, new LibraryPickerDialog.Spec<>(
+                "Add " + Character.toUpperCase(noun.charAt(0)) + noun.substring(1) + " to the Service", "Search " + noun + "…",
+                kind == MediaKind.IMAGE ? "image" : kind == MediaKind.VIDEO ? "video" : "audio",
+                "No " + noun + " in the library yet.",
+                text -> newestFirst(library.media().find(cats, text, false).stream()
+                        .filter(m -> m.getKind() == kind && MediaLibraryPanel.serviceItem(m) != null).toList(),
+                        com.jamc.worship.model.MediaItem::getId),
+                com.jamc.worship.model.MediaItem::getName,
+                m -> m.isYouTube() ? "YouTube" : m.isPixabay() ? "Pixabay"
+                        : m.getCategory() == com.jamc.worship.model.MediaCategory.BACKGROUND ? "Background" : kind.name().toLowerCase(),
+                m -> null), noun);
+        addAll(picked.stream().map(MediaLibraryPanel::serviceItem).toList());
+    }
+
+    private void pickLowerThirds() {
+        List<com.jamc.worship.model.LowerThird> picked = LibraryPickerDialog.pickMany(this, new LibraryPickerDialog.Spec<>(
+                "Add Lower Thirds to the Service", "Search lower thirds…", "lower-third", "No lower thirds yet.",
+                text -> newestFirst(library.scenes().lowerThirds().stream().filter(lt -> text == null || text.isBlank()
+                        || (lt.getName() + " " + lt.getTitle() + " " + lt.getSubtitle()).toLowerCase()
+                        .contains(text.strip().toLowerCase())).toList(), com.jamc.worship.model.LowerThird::getId),
+                lt -> LowerThirdsPanel.serviceItem(lt).getTitle(), com.jamc.worship.model.LowerThird::getName, lt -> null),
+                "lower thirds");
+        addAll(picked.stream().map(LowerThirdsPanel::serviceItem).toList());
+    }
+
+    /** The latest added / uploaded first (library ids only grow). */
+    private static <T> List<T> newestFirst(List<T> items, java.util.function.Function<T, Long> id) {
+        return items.stream().sorted(java.util.Comparator.comparing((T t) -> id.apply(t),
+                java.util.Comparator.nullsLast(java.util.Comparator.reverseOrder()))).toList();
+    }
+
+    /** Bible Passage…: a typed reference ("John 3:16-18", "Ps 23") in the version chosen on the Bible page. */
+    private void pickBible() {
+        String abbr = library.bibleVersion().get();
+        Object typed = JOptionPane.showInputDialog(this, "Bible reference (e.g. John 3:16-18, Psalm 23):"
+                + (abbr == null ? "" : "\nVersion: " + abbr + " (change it on the Bible page)"), "Add Bible Passage",
+                JOptionPane.PLAIN_MESSAGE, null, null, "");
+        if (typed == null || typed.toString().isBlank()) {
+            return;
+        }
+        String ref = typed.toString().strip();
+        BackgroundTask.run("Find Bible passage", () -> {
+            com.jamc.worship.bible.BibleVersion v = (abbr == null ? java.util.Optional.<com.jamc.worship.bible.BibleVersion>empty()
+                    : library.bible().version(abbr)).orElseGet(() -> library.bible().versions().stream().findFirst().orElse(null));
+            if (v == null) {
+                throw new com.jamc.worship.service.ValidationException("No Bible version is installed.");
+            }
+            return library.bible().resolve(v, ref).orElseThrow(() -> new com.jamc.worship.service.ValidationException(
+                    "\"" + ref + "\" was not found in " + v.abbreviation() + ". Check the book, chapter and verses."));
+        }, p -> addAll(List.of(BiblePanel.serviceItem(p))),
+                err -> Dialogs.showError(this, "The Bible passage could not be added.", err));
     }
 
     private void insertItemAtSelection(ServiceItem item) {
