@@ -7,6 +7,10 @@
 -->
 
 
+## Voice in sync with the camera: Sync Test
+- **Audio Mixer → MIC → Properties → SYNC TEST (CLAP)…** Put the camera on Program, press START and clap 3 times when it says CLAP NOW. The app measures how late (or early) the voice is in the recording and offers the right **Sync Offset**: one click to use it.
+- Use it on each laptop and camera setup: the 450 ms the microphone waited by default was measured on one setup and can make the voice late on another.
+
 ## Settings: Save Changes and Apply
 - **Every Settings card has Save Changes and Apply**, inside the card under its settings. Both start greyed out. Change something → **Save Changes** turns on. Save → **Apply** turns on. Apply → Preview and the live Program show it at once, no TAKE needed.
 - Lyrics / Bible / Other Typography, Bible Design, Lyrics Lower Third / Bars, Branding and the Remote port are **drafts** until Save Changes: only the card's own sample changes while you choose, never the live picture.

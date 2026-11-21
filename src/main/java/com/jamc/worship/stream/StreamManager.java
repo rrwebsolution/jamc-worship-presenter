@@ -75,6 +75,8 @@ public final class StreamManager {
     private LoopbackAudio loopback;
     private final Path toolsDir;
     private Session recording = Session.idle();
+    /** Set while the recording is a clap sync test: gets the file instead of it being kept as a service recording. */
+    private Consumer<Path> syncTestSaved;
     private FFmpegStreamEncoder streamer;
     private LoopbackAudio liveLoopback;
     private Session live = Session.idle();
@@ -358,13 +360,25 @@ public final class StreamManager {
 
     /** Starts recording Program to recordings/. Problems are reported through {@code onError}. */
     public void startRecording(Consumer<String> onError) {
-        whenFFmpegChecked(() -> beginRecording(onError));
+        whenFFmpegChecked(() -> beginRecording(onError, null, null));
     }
 
-    private void beginRecording(Consumer<String> onError) {
+    /**
+     * A short recording of Program to {@code file} for the clap sync test ({@link SyncTest}), made exactly like a
+     * service recording so it measures what recordings get. {@code onSaved} gets the file after {@link #stopRecording()}.
+     */
+    public void startSyncTestRecording(Path file, Consumer<String> onError, Consumer<Path> onSaved) {
+        whenFFmpegChecked(() -> beginRecording(onError, file, onSaved));
+    }
+
+    private void beginRecording(Consumer<String> onError, Path testFile, Consumer<Path> onTestSaved) {
         if (recording.active()) {
+            if (onTestSaved != null) {
+                onError.accept("A recording is running. Stop it first.");
+            }
             return;
         }
+        syncTestSaved = onTestSaved;
         FFmpeg.Capabilities caps = capabilities;
         StreamSettings s = settings();
         String encoder = caps == null ? null : caps.encoderFor(s.encoder());
@@ -372,8 +386,9 @@ public final class StreamManager {
             onError.accept(ffmpegProblem(caps));
             return;
         }
-        Path folder = recordingsDir();
-        Path file = folder.resolve("Service " + LocalDateTime.now().format(FILE_TIME) + ".mp4");
+        Path file = testFile != null ? testFile
+                : recordingsDir().resolve("Service " + LocalDateTime.now().format(FILE_TIME) + ".mp4");
+        Path folder = file.getParent();
         recording = new Session(State.STARTING, "Starting…", null, System.currentTimeMillis(), file);
         fire();
         FFmpegStreamEncoder enc = new FFmpegStreamEncoder(caps.executable(), s, encoder, FFmpegStreamEncoder.Target.RECORDING,
@@ -447,9 +462,13 @@ public final class StreamManager {
         }
         recorder = null;
         Path file = recording.file();
+        Consumer<Path> testSaved = syncTestSaved;
+        syncTestSaved = null;
         recording = error == null ? Session.idle() : new Session(State.ERROR, error, null, 0, file);
         if (error != null) {
             onError.accept("Recording stopped: " + error);
+        } else if (testSaved != null) {
+            testSaved.accept(file); // a sync test: not a service recording, no MP4 finishing
         } else if (file != null) {
             log.info("Recording saved: {}", file.getFileName());
             finishRecording(file);

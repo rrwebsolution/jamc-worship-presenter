@@ -649,7 +649,9 @@ public class AudioMixerPanel extends JPanel {
                 spec.micChannel() == null ? null : () -> deviceBox(spec.micChannel() ? stream.settings().micDevice()
                         : stream.settings().auxDevice(), spec.micChannel() ? stream.settings().auxDevice()
                         : stream.settings().micDevice(), spec.micChannel()),
-                () -> AudioFiltersDialog.show(this, nameOf(spec), spec.key()));
+                () -> AudioFiltersDialog.show(this, nameOf(spec), spec.key()),
+                MixerChannels.MIC.equals(spec.key())
+                        ? (parent, currentMs, use) -> SyncTestDialog.show(parent, stream, currentMs, use) : null);
     }
 
     private void advancedProperties() {

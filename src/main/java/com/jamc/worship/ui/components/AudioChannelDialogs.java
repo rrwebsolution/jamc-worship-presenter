@@ -43,6 +43,11 @@ final class AudioChannelDialogs {
                Consumer<Boolean> onMute, Runnable openFilters) {
     }
 
+    /** Runs the clap sync test from the current offset; {@code use} gets the offset the operator takes. */
+    interface SyncTestHook {
+        void run(Component parent, int currentMs, IntConsumer use);
+    }
+
     private static final String SOUND_NOTE = "Mono, balance, sync offset and filters change the recording and the "
             + "livestream from the next time recording or streaming starts. Volume and mute change at once.";
 
@@ -54,7 +59,7 @@ final class AudioChannelDialogs {
      */
     static void properties(Component parent, String name, String defaultName, MixerChannels.Channel c, MixerChannels prefs,
                            int volume, boolean muted, boolean enabled, IntConsumer onVolume, Consumer<Boolean> onMute,
-                           Supplier<JComboBox<String>> deviceBox, Runnable openFilters) {
+                           Supplier<JComboBox<String>> deviceBox, Runnable openFilters, SyncTestHook syncTest) {
         JDialog d = new JDialog(SwingUtilities.getWindowAncestor(parent), "Properties for " + name,
                 java.awt.Dialog.ModalityType.APPLICATION_MODAL);
         JPanel root = Ui.panel(new BorderLayout(0, 12), Palette::panelBackground);
@@ -103,6 +108,16 @@ final class AudioChannelDialogs {
         syncRow.add(sync);
         syncRow.add(Ui.small("ms  (delays the sound when it comes before the picture)"));
         row(form, g, "Sync Offset", syncRow);
+        if (syncTest != null) {
+            JButton test = Ui.button("SYNC TEST (CLAP)…", null);
+            test.setToolTipText("Clap in front of the camera: the app measures how late the voice is and sets the Sync Offset");
+            test.addActionListener(e -> syncTest.run(d, ((Number) sync.getValue()).intValue(), ms -> {
+                sync.setValue(ms);
+                c.syncMs = ms; // kept at once, also when the Properties are cancelled
+                prefs.changed();
+            }));
+            row(form, g, "", test);
+        }
         JButton filters = Ui.button("FILTERS… (" + c.filters.size() + ")", "sliders");
         filters.addActionListener(e -> {
             openFilters.run();
