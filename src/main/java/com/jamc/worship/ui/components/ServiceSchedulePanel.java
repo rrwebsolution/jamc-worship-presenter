@@ -947,13 +947,15 @@ public class ServiceSchedulePanel extends JPanel {
             JPanel text = new JPanel(new BorderLayout(0, 1));
             text.setOpaque(false);
             text.add(title, BorderLayout.NORTH);
-            text.add(type, BorderLayout.SOUTH);
+            // the tag chip sits right beside the type icon + label (under the title), not far off on the right
+            JPanel typeRow = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.LEFT, 0, 0));
+            typeRow.setOpaque(false);
+            typeRow.add(type);
+            typeRow.add(javax.swing.Box.createHorizontalStrut(6));
+            typeRow.add(tag);
+            text.add(typeRow, BorderLayout.SOUTH);
             add(number, BorderLayout.WEST);
             add(text, BorderLayout.CENTER);
-            JPanel tagHolder = new JPanel(new java.awt.GridBagLayout()); // keeps the chip vertically centered
-            tagHolder.setOpaque(false);
-            tagHolder.add(tag);
-            add(tagHolder, BorderLayout.EAST);
         }
 
         @Override

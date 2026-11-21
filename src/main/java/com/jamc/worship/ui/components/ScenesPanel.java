@@ -580,9 +580,19 @@ public class ScenesPanel extends JPanel {
 
             private void popup(MouseEvent e) {
                 int i = sourceList.locationToIndex(e.getPoint());
-                if (e.isPopupTrigger() && i >= 0) {
+                if (!e.isPopupTrigger()) {
+                    return;
+                }
+                if (i >= 0 && sourceList.getCellBounds(i, i).contains(e.getPoint())) {
                     sourceList.setSelectedIndex(i);
                     showLayoutMenu(sourceList, e.getX(), e.getY());
+                } else if (editing != null) { // empty space under the layers: paste / copy from a scene
+                    JPopupMenu menu = new JPopupMenu();
+                    JMenuItem paste = menuItem(pasteLabel(), "copy", ScenesPanel.this::pasteSources);
+                    paste.setEnabled(!copiedSources.isEmpty());
+                    menu.add(paste);
+                    menu.add(menuItem("Copy from Another Scene…", "copy", ScenesPanel.this::copyFromScene));
+                    menu.show(sourceList, e.getX(), e.getY());
                 }
             }
 
@@ -608,6 +618,25 @@ public class ScenesPanel extends JPanel {
             if (!e.getValueIsAdjusting()) {
                 loadProps();
                 preview.repaint(); // handles of the selected layer
+            }
+        });
+        // Ctrl+C / Ctrl+V on the layer list: copy a layer, paste it into this or another scene
+        sourceList.getInputMap(JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_C, java.awt.event.InputEvent.CTRL_DOWN_MASK), "scene.copyLayer");
+        sourceList.getInputMap(JComponent.WHEN_FOCUSED).put(javax.swing.KeyStroke.getKeyStroke(
+                java.awt.event.KeyEvent.VK_V, java.awt.event.InputEvent.CTRL_DOWN_MASK), "scene.pasteLayer");
+        sourceList.getActionMap().put("scene.copyLayer", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                if (sourceList.getSelectedValue() != null) {
+                    copySource(sourceList.getSelectedValue());
+                }
+            }
+        });
+        sourceList.getActionMap().put("scene.pasteLayer", new javax.swing.AbstractAction() {
+            @Override
+            public void actionPerformed(java.awt.event.ActionEvent e) {
+                pasteSources();
             }
         });
         JScrollPane sp = new JScrollPane(sourceList);
@@ -1084,8 +1113,230 @@ public class ScenesPanel extends JPanel {
                 ? "A video sent over the network with NDI (another computer, a phone app, a PTZ camera, OBS)"
                 : "Needs the free NDI Runtime (NDI Tools from ndi.video)");
         menu.add(ndi);
+        section(menu, "COPY");
+        JMenuItem fromScene = menuItem("From Another Scene…", "copy", this::copyFromScene);
+        fromScene.setToolTipText("Copy layers you already made in another scene (camera, lyrics box, lower third…) "
+                + "into this one, in the same place and size. Tick only the ones you want, or all of them.");
+        menu.add(fromScene);
+        JMenuItem paste = menuItem(pasteLabel(), "copy", this::pasteSources);
+        paste.setEnabled(!copiedSources.isEmpty());
+        paste.setToolTipText(copiedSources.isEmpty() ? "Right-click a layer → Copy first (in any scene)"
+                : "The copied layer(s) into this scene, in the same place and size");
+        menu.add(paste);
         narrowTooltips(menu);
         menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    // ------------------------------------------------------------------ copy layers between scenes
+
+    /** Layers copied with right-click → Copy (in any scene), ready to paste into another scene. */
+    private static List<Source> copiedSources = List.of();
+    private static String copiedFrom = "";
+    /** Right-click → Copy Position & Size: {x, y, w, h}, or null. */
+    private static double[] copiedBox;
+
+    private static String pasteLabel() {
+        return copiedSources.isEmpty() ? "Paste Layer"
+                : copiedSources.size() == 1 ? "Paste \"" + copiedSources.get(0).getName() + "\""
+                : "Paste " + copiedSources.size() + " layers";
+    }
+
+    /** The layer (a group: with its layers) on the copy clipboard of the scene editor. */
+    private void copySource(Source s) {
+        List<Source> all = new ArrayList<>();
+        for (int i = 0; i < sourceModel.size(); i++) {
+            all.add(sourceModel.get(i));
+        }
+        copiedSources = withGroupMembers(List.of(s), all).stream().map(Source::copy).toList();
+        copiedFrom = editing == null ? "" : editing.getName();
+        statusHandler.accept("Copied \"" + s.getName() + "\". Open another scene → right-click → Paste "
+                + "(or ADD SOURCE → Paste, or Ctrl+V).");
+    }
+
+    private void pasteSources() {
+        if (editing == null || copiedSources.isEmpty()) {
+            return;
+        }
+        addCopies(copiedSources, copiedFrom);
+    }
+
+    /** The picked layers, plus every layer of a picked group (kept in the scene's order). */
+    private static List<Source> withGroupMembers(List<Source> picked, List<Source> scene) {
+        java.util.Set<String> groups = new java.util.HashSet<>();
+        for (Source s : picked) {
+            if (s.getType() == SourceType.GROUP && s.getConfig().uid != null) {
+                groups.add(s.getConfig().uid);
+            }
+        }
+        List<Source> out = new ArrayList<>();
+        for (Source s : scene) {
+            if (picked.contains(s) || (s.getConfig().groupId != null && groups.contains(s.getConfig().groupId))) {
+                out.add(s);
+            }
+        }
+        for (Source s : picked) {
+            if (!out.contains(s)) {
+                out.add(s); // not in that list (the clipboard): keep it anyway
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Adds copies of these layers on top of this scene, in the same order, place and size. A layer of a group
+     * copied without its group becomes a layer of its own; a uid already used in this scene gets a new one (its
+     * own player), otherwise the uid is kept so the same video plays on when switching scenes (as Duplicate scene).
+     */
+    private void addCopies(List<Source> originals, String fromName) {
+        java.util.Set<String> usedUids = new java.util.HashSet<>();
+        java.util.Set<String> usedNames = new java.util.HashSet<>();
+        for (int i = 0; i < sourceModel.size(); i++) {
+            Source s = sourceModel.get(i);
+            if (s.getConfig().uid != null) {
+                usedUids.add(s.getConfig().uid);
+            }
+            usedNames.add(s.getName());
+        }
+        java.util.Set<String> copiedGroups = new java.util.HashSet<>();
+        for (Source s : originals) {
+            if (s.getType() == SourceType.GROUP && s.getConfig().uid != null) {
+                copiedGroups.add(s.getConfig().uid);
+            }
+        }
+        java.util.Map<String, String> newUid = new java.util.HashMap<>();
+        List<Source> copies = new ArrayList<>();
+        int skipped = 0;
+        for (Source o : originals) {
+            if (o.getType() == SourceType.SCENE && java.util.Objects.equals(o.getConfig().sceneId, editing.getId())) {
+                skipped++; // a scene cannot show inside itself
+                continue;
+            }
+            Source c = o.copy();
+            c.setId(null);
+            String uid = c.getConfig().uid;
+            if (uid != null && usedUids.contains(uid)) {
+                String fresh = java.util.UUID.randomUUID().toString();
+                newUid.put(uid, fresh);
+                c.getConfig().uid = fresh;
+            }
+            if (usedNames.contains(c.getName())) {
+                c.setName(c.getName() + " (copy)");
+            }
+            copies.add(c);
+        }
+        for (Source c : copies) {
+            String g = c.getConfig().groupId;
+            if (g != null) {
+                c.getConfig().groupId = copiedGroups.contains(g) ? newUid.getOrDefault(g, g) : null;
+            }
+        }
+        if (copies.isEmpty()) {
+            sceneEdited(); // "Replace" may already have cleared the layers
+            statusHandler.accept("Nothing to copy (a scene cannot be shown inside itself).");
+            return;
+        }
+        giveMediaUids(copies);
+        for (int i = 0; i < copies.size(); i++) {
+            sourceModel.add(i, copies.get(i));
+        }
+        sourceList.setSelectedIndex(0);
+        sceneEdited();
+        statusHandler.accept(copies.size() + (copies.size() == 1 ? " layer" : " layers") + " copied"
+                + (fromName == null || fromName.isBlank() ? "" : " from \"" + fromName + "\"")
+                + " in the same place and size" + (skipped > 0 ? " (" + skipped + " skipped: this scene itself)" : "")
+                + ". SAVE SCENE to keep it; Ctrl+Z undoes it.");
+    }
+
+    /**
+     * ADD SOURCE → From Another Scene…: pick a saved scene, tick its layers (all ticked at first) and copy them in,
+     * in the same place and size. "Replace" makes this scene the same as that one.
+     */
+    private void copyFromScene() {
+        if (editing == null) {
+            return;
+        }
+        List<Scene> others = new ArrayList<>();
+        for (int i = 0; i < sceneModel.size(); i++) {
+            Scene sc = sceneModel.get(i);
+            if (sc.getId() != null && !java.util.Objects.equals(sc.getId(), editing.getId()) && !sc.getSources().isEmpty()) {
+                others.add(sc);
+            }
+        }
+        if (others.isEmpty()) {
+            Dialogs.showInfo(this, "Copy from Another Scene", "There is no other saved scene with layers yet.");
+            return;
+        }
+        javax.swing.JComboBox<Scene> scenePick = new javax.swing.JComboBox<>(others.toArray(new Scene[0]));
+        List<JCheckBox> boxes = new ArrayList<>();
+        JPanel list = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 2));
+        JScrollPane scroll = new JScrollPane(list);
+        scroll.setPreferredSize(new Dimension(360, 240));
+        Runnable fill = () -> {
+            list.removeAll();
+            boxes.clear();
+            Scene sc = (Scene) scenePick.getSelectedItem();
+            if (sc != null) {
+                for (Source s : sc.getSources()) {
+                    String group = s.getConfig().groupId != null ? "   ↳ " : "";
+                    JCheckBox b = new JCheckBox(group + s.getName() + "  (" + s.getType() + ")", true);
+                    b.setOpaque(false);
+                    boxes.add(b);
+                    list.add(b);
+                }
+            }
+            list.revalidate();
+            list.repaint();
+        };
+        scenePick.addActionListener(e -> fill.run());
+        fill.run();
+        JButton all = Ui.button("All", null);
+        all.addActionListener(e -> boxes.forEach(b -> b.setSelected(true)));
+        JButton none = Ui.button("None", null);
+        none.addActionListener(e -> boxes.forEach(b -> b.setSelected(false)));
+        JCheckBox replace = new JCheckBox("Replace this scene's layers (make it look exactly like that scene)");
+        replace.setOpaque(false);
+
+        JPanel head = Ui.transparent(new BorderLayout(6, 0));
+        head.add(Ui.small("Copy from"), BorderLayout.WEST);
+        head.add(scenePick, BorderLayout.CENTER);
+        JPanel ticks = Ui.transparent(new FlowLayout(FlowLayout.LEFT, 4, 0));
+        ticks.add(Ui.label("Layers to copy:", Palette::text, "semibold"));
+        ticks.add(all);
+        ticks.add(none);
+        JPanel north = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 6));
+        north.add(head);
+        north.add(ticks);
+        JPanel south = Ui.transparent(new java.awt.GridLayout(0, 1, 0, 4));
+        south.add(replace);
+        south.add(Ui.label("<html>Copies keep their place, size and settings. Change them here afterwards: "
+                + "the other scene is not touched.</html>", Palette::mutedText, "small"));
+        JPanel ask = Ui.transparent(new BorderLayout(0, 8));
+        ask.add(north, BorderLayout.NORTH);
+        ask.add(scroll, BorderLayout.CENTER);
+        ask.add(south, BorderLayout.SOUTH);
+        if (javax.swing.JOptionPane.showConfirmDialog(this, ask, "Copy from Another Scene",
+                javax.swing.JOptionPane.OK_CANCEL_OPTION, javax.swing.JOptionPane.PLAIN_MESSAGE) != javax.swing.JOptionPane.OK_OPTION) {
+            return;
+        }
+        Scene from = (Scene) scenePick.getSelectedItem();
+        if (from == null) {
+            return;
+        }
+        List<Source> picked = new ArrayList<>();
+        for (int i = 0; i < boxes.size() && i < from.getSources().size(); i++) {
+            if (boxes.get(i).isSelected()) {
+                picked.add(from.getSources().get(i));
+            }
+        }
+        if (picked.isEmpty()) {
+            Dialogs.showInfo(this, "Copy from Another Scene", "Tick at least one layer.");
+            return;
+        }
+        if (replace.isSelected()) {
+            sourceModel.clear();
+            groupRects.clear();
+        }
+        addCopies(withGroupMembers(picked, from.getSources()), from.getName());
     }
 
     /** Tooltip width in the Add Source menu: long explanations wrap onto more lines instead of one wide line. */
@@ -2574,6 +2825,22 @@ public class ScenesPanel extends JPanel {
             sourceList.setSelectedValue(copy, true);
             sceneEdited();
         }));
+        menu.addSeparator();
+        JMenuItem copyItem = menuItem("Copy (to paste in another scene)", "copy", () -> copySource(s));
+        copyItem.setToolTipText("Ctrl+C. Then open another scene and Paste: same place, size and settings.");
+        menu.add(copyItem);
+        JMenuItem pasteItem = menuItem(pasteLabel(), "copy", this::pasteSources);
+        pasteItem.setEnabled(!copiedSources.isEmpty());
+        menu.add(pasteItem);
+        menu.add(menuItem("Copy Position & Size", "grid", () -> {
+            copiedBox = new double[]{cfg.x, cfg.y, cfg.w, cfg.h};
+            statusHandler.accept("Position & size of \"" + s.getName() + "\" copied: right-click another layer "
+                    + "(this or another scene) → Paste Position & Size.");
+        }));
+        JMenuItem pasteBox = menuItem("Paste Position & Size", "grid", () -> setBox(copiedBox[0], copiedBox[1], copiedBox[2], copiedBox[3]));
+        pasteBox.setEnabled(copiedBox != null && !locked);
+        menu.add(pasteBox);
+        narrowTooltips(menu);
         menu.addSeparator();
         menu.add(menuItem("Remove", "trash", this::removeSource));
         menu.show(c, x, y);
