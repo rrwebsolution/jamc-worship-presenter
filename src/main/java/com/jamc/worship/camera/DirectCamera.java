@@ -49,6 +49,9 @@ final class DirectCamera implements CameraManager.Feed {
     private volatile int height;
     private volatile long lastFrameNanos;
     private volatile long maxGapNanos;
+    /** Pictures skipped because newer ones were already waiting (logged at most once a minute). */
+    private long stale;
+    private long lastStaleLog;
 
     /** Uses the Direct engine from now on (cameras opened later). */
     static void setEnabled(boolean on) {
@@ -126,7 +129,7 @@ final class DirectCamera implements CameraManager.Feed {
         }
         List<String> c = new ArrayList<>(List.of(exe, "-hide_banner", "-loglevel", "info", "-nostats",
                 "-fflags", "nobuffer", "-flags", "low_delay", "-probesize", "32", "-analyzeduration", "0",
-                "-f", "dshow", "-rtbufsize", "64M"));
+                "-f", "dshow", "-rtbufsize", String.valueOf(realTimeBuffer(format.size(), compressed.contains(name)))));
         if (format.size() != null) {
             c.addAll(List.of("-video_size", format.size()));
         }
@@ -136,8 +139,55 @@ final class DirectCamera implements CameraManager.Feed {
         if ("YUY2".equals(CameraManager.chroma(name, format))) {
             c.addAll(List.of("-pixel_format", "yuyv422")); // Iriun: its other format came out with red and blue swapped
         }
-        c.addAll(List.of("-i", "video=" + name, "-an", "-f", "rawvideo", "-pix_fmt", "bgra", "pipe:1"));
+        // vfr: never invent copies. After a hiccup the default (cfr) sent ~100 copies of the last picture to "fill"
+        // the gap, and the app had to show them all before the live picture: the camera was then seconds late
+        c.addAll(List.of("-i", "video=" + name, "-an", "-vf", UP_TO_1080, "-fps_mode", "vfr", "-f", "rawvideo",
+                "-pix_fmt", "bgra", "pipe:1"));
         return c;
+    }
+
+    /**
+     * A camera smaller than 1080p is enlarged to 1080p by FFmpeg, in its own process, before the app sees it.
+     * Recordings and the livestream are 1080p: enlarging a 720p camera there took 23 ms a picture on the Swing
+     * thread (1080p to 1080p: 0.6 ms), which with the Preview / Program monitors filled the Swing thread and left
+     * the recording only ~10 new pictures a second ("pikit") although the camera sent 21-30. FFmpeg's
+     * fast_bilinear costs about a quarter of one core. Bigger cameras are left as they are.
+     */
+    static final String UP_TO_1080 = "scale=w=if(lt(ih\\,1080)\\,trunc(iw*1080/ih/2)*2\\,iw)"
+            + ":h=if(lt(ih\\,1080)\\,1080\\,ih):flags=fast_bilinear";
+
+    /** Cameras seen sending MJPEG/H.264 (small pictures): their waiting room is sized for those from the next open. */
+    private static final java.util.Set<String> compressed = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * DirectShow's waiting room for pictures FFmpeg has not taken yet, in bytes: one picture and a little.
+     * It was 64 MB: after one hiccup (a busy moment) it filled up and STAYED full, so every picture after it was
+     * old while the voice stayed on time. Measured on a 720p camera after a 3 s pause: 64 MB left the picture
+     * 1.17 s late for good, 8 MB 0.1 s extra, 2 pictures sometimes 0.07 s extra, 1.1 pictures nothing extra
+     * (3-27 ms from FFmpeg to the reader, the same as before the hiccup, in 4 of 5 runs; one picture in the fifth)
+     * and never "buffer too full" in 30 s. A 64-minute Sunday recording on Facebook drifted exactly this way.
+     */
+    static long realTimeBuffer(String size, boolean compressedPictures) {
+        long pixels = 1920L * 1080;
+        if (size != null) {
+            String[] wh = size.split("x");
+            try {
+                pixels = Long.parseLong(wh[0].trim()) * Long.parseLong(wh[1].trim());
+            } catch (RuntimeException ignored) {
+                // keep the 1080p guess
+            }
+        }
+        if (compressedPictures) {
+            return Math.max(256L << 10, pixels / 2); // an MJPEG picture is about a tenth of a raw one: ~3-5 pictures
+        }
+        return Math.max(1L << 20, Math.min(64L << 20, pixels * 2 * 11 / 10)); // 1.1 raw YUY2 pictures
+    }
+
+    private static final Pattern INPUT_CODEC = Pattern.compile("Stream #0:0.*Video: (mjpeg|h264|hevc)\\b");
+
+    /** True when FFmpeg's description of the camera's input stream shows compressed pictures. */
+    static boolean compressedInput(String line) {
+        return INPUT_CODEC.matcher(line).find();
     }
 
     /**
@@ -151,7 +201,8 @@ final class DirectCamera implements CameraManager.Feed {
         if (format.size() != null) {
             c.addAll(List.of("-video_size", format.size()));
         }
-        c.addAll(List.of("-i", name + ":none", "-an", "-f", "rawvideo", "-pix_fmt", "bgra", "pipe:1"));
+        c.addAll(List.of("-i", name + ":none", "-an", "-vf", UP_TO_1080, "-fps_mode", "vfr", "-f", "rawvideo",
+                "-pix_fmt", "bgra", "pipe:1"));
         return c;
     }
 
@@ -172,6 +223,9 @@ final class DirectCamera implements CameraManager.Feed {
             while ((line = r.readLine()) != null) {
                 if (line.startsWith("Output #0")) {
                     output = true;
+                }
+                if (!output && compressedInput(line) && compressed.add(name)) {
+                    log.info("Camera {} sends compressed pictures: smaller waiting room from its next open", name);
                 }
                 if (output && width == 0) {
                     int[] size = outputSize(line);
@@ -234,7 +288,19 @@ final class DirectCamera implements CameraManager.Feed {
                         }
                         got += n;
                     }
+                    // pictures already waiting behind this one mean we fell behind (a busy moment): show only the
+                    // newest, or the camera stays late behind the voice for the rest of the service
+                    if (in.available() >= bytes.length) {
+                        stale++;
+                        continue;
+                    }
                     publish(bytes, w, h);
+                    long now = System.nanoTime();
+                    if (stale > 0 && now - lastStaleLog > 60_000_000_000L) {
+                        log.info("Camera {} (direct): caught up, skipped {} old pictures", name, stale);
+                        stale = 0;
+                        lastStaleLog = now;
+                    }
                 }
             }
         } catch (IOException e) {

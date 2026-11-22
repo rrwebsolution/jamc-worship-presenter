@@ -64,6 +64,8 @@ public final class MixerChannels {
         public Options options = new Options();
         /** True once the microphone got its default sync offset (so an offset set back to 0 stays 0). */
         public boolean micSyncDefault;
+        /** True once the AUX channel got its default sync offset. */
+        public boolean auxSyncDefault;
     }
 
     private static volatile MixerChannels instance = new MixerChannels(null);
@@ -97,15 +99,31 @@ public final class MixerChannels {
      */
     static final int DEFAULT_MIC_SYNC_MS = 450;
 
+    /**
+     * The AUX channel is usually the camera's own microphone (the Iriun phone): its sound still reaches the app
+     * before its picture, because the phone needs longer to send video. Measured 2026-11-23 from 11 claps in a
+     * recording with the Iriun phone mic on AUX: the hands met a median 83 ms after the clap was heard.
+     */
+    static final int DEFAULT_AUX_SYNC_MS = 80;
+
     private void giveMicDefaultSync() {
-        if (state.micSyncDefault) {
+        if (state.micSyncDefault && state.auxSyncDefault) {
             return;
         }
-        Channel mic = state.channels.computeIfAbsent(MIC, k -> new Channel());
-        if (mic.syncMs == 0) {
-            mic.syncMs = DEFAULT_MIC_SYNC_MS;
+        if (!state.micSyncDefault) {
+            Channel mic = state.channels.computeIfAbsent(MIC, k -> new Channel());
+            if (mic.syncMs == 0) {
+                mic.syncMs = DEFAULT_MIC_SYNC_MS;
+            }
+            state.micSyncDefault = true;
         }
-        state.micSyncDefault = true;
+        if (!state.auxSyncDefault) {
+            Channel aux = state.channels.computeIfAbsent(AUX, k -> new Channel());
+            if (aux.syncMs == 0) {
+                aux.syncMs = DEFAULT_AUX_SYNC_MS;
+            }
+            state.auxSyncDefault = true;
+        }
         try {
             config.set(KEY, JSON.writeValueAsString(state));
             config.save();

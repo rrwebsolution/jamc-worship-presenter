@@ -22,6 +22,12 @@ public final class AvSync {
      * the VLC camera engine.
      */
     static final long MIC_EXTRA_MS = 120;
+    /**
+     * The camera's own delay before FFmpeg even sees a picture (exposure + USB/driver: at least one picture, 33 ms
+     * at 30 fps), which the app's clock cannot see. FFmpeg to the app measured 5-25 ms, and that part is in the lag
+     * above. Without this the voice came a little before the lips; the CLAP sync test measures the rest exactly.
+     */
+    static final long DIRECT_CAMERA_MS = 40;
 
     // EDT only (ProgramFrameTap paints there)
     private static boolean collecting;
@@ -81,7 +87,7 @@ public final class AvSync {
 
     /** Delay for a microphone read straight from Windows. */
     static long micDelayMs() {
-        // the Direct camera engine (FFmpeg) has no VLC caching: the picture is about as quick as the microphone
-        return (com.jamc.worship.camera.CameraManager.directEngine() ? 0 : MIC_EXTRA_MS) + lagMs;
+        // the Direct camera engine (FFmpeg) has no VLC caching, only its own ~1 picture of delay
+        return (com.jamc.worship.camera.CameraManager.directEngine() ? DIRECT_CAMERA_MS : MIC_EXTRA_MS) + lagMs;
     }
 }

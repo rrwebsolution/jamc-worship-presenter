@@ -29,7 +29,7 @@ import java.nio.file.Path;
 import java.util.function.IntConsumer;
 
 /**
- * SYNC TEST (CLAP) for the MIC channel: records Program for a few seconds while someone claps in front of the camera,
+ * SYNC TEST (CLAP) for the MIC or AUX channel: records Program for a few seconds while someone claps in front of the camera,
  * measures how late the voice is ({@link SyncTest}) and offers the Sync Offset that lines the voice up with the picture.
  */
 final class SyncTestDialog {
@@ -41,6 +41,8 @@ final class SyncTestDialog {
     private static final double READY_S = 2.0;
 
     private final StreamManager stream;
+    /** True: the AUX channel (e.g. the Iriun phone microphone) is tested instead of the MIC. */
+    private final boolean aux;
     private final int currentMs;
     private final IntConsumer apply;
     private final JDialog d;
@@ -52,8 +54,9 @@ final class SyncTestDialog {
     private boolean testing;
     private int offered = -1;
 
-    private SyncTestDialog(Component parent, StreamManager stream, int currentMs, IntConsumer apply) {
+    private SyncTestDialog(Component parent, StreamManager stream, boolean aux, int currentMs, IntConsumer apply) {
         this.stream = stream;
+        this.aux = aux;
         this.currentMs = currentMs;
         this.apply = apply;
         d = new JDialog(SwingUtilities.getWindowAncestor(parent), "Sync Test", java.awt.Dialog.ModalityType.APPLICATION_MODAL);
@@ -61,13 +64,18 @@ final class SyncTestDialog {
 
     /** {@code apply} gets the new Sync Offset in ms when the operator takes it. */
     static void show(Component parent, StreamManager stream, int currentMs, IntConsumer apply) {
-        new SyncTestDialog(parent, stream, currentMs, apply).open(parent);
+        show(parent, stream, false, currentMs, apply);
+    }
+
+    /** The same test for the MIC ({@code aux} false) or the AUX channel. */
+    static void show(Component parent, StreamManager stream, boolean aux, int currentMs, IntConsumer apply) {
+        new SyncTestDialog(parent, stream, aux, currentMs, apply).open(parent);
     }
 
     private void open(Component parent) {
         JPanel root = Ui.panel(new BorderLayout(0, 12), Palette::panelBackground);
         root.setBorder(BorderFactory.createEmptyBorder(14, 16, 14, 16));
-        root.add(Ui.label("SYNC TEST · MICROPHONE", Palette::text, "h3"), BorderLayout.NORTH);
+        root.add(Ui.label(aux ? "SYNC TEST · AUX MICROPHONE" : "SYNC TEST · MICROPHONE", Palette::text, "h3"), BorderLayout.NORTH);
 
         JPanel center = Ui.transparent(new BorderLayout(0, 12));
         center.add(Ui.label("<html><div style='width:380px'>"
@@ -77,7 +85,7 @@ final class SyncTestDialog {
                 + "loud and close to the microphone.<br>"
                 + "3. After " + SyncTest.RECORD_SECONDS + " seconds the app tells you how late the voice is and the "
                 + "Sync Offset to use.<br><br>"
-                + "Now the MICROPHONE waits <b>" + currentMs + " ms</b>.</div></html>", Palette::secondaryText, null),
+                + "Now the " + (aux ? "AUX MICROPHONE" : "MICROPHONE") + " waits <b>" + currentMs + " ms</b>.</div></html>", Palette::secondaryText, null),
                 BorderLayout.NORTH);
         JPanel result = Ui.transparent(new BorderLayout(0, 4));
         result.add(status, BorderLayout.NORTH);
@@ -135,10 +143,17 @@ final class SyncTestDialog {
     /** What must change before the test can work, or null. */
     private String problem() {
         StreamSettings s = stream.settings();
-        if (s.micDevice() == null) {
+        if (aux) {
+            if (s.auxDevice() == null) {
+                return "Choose the microphone in the AUX channel first.";
+            }
+            if (s.auxMuted() || s.masterMuted()) {
+                return "The AUX (or MASTER) is muted. Unmute it so the claps are heard.";
+            }
+        } else if (s.micDevice() == null) {
             return "Choose the microphone in the MIC channel first.";
         }
-        if (s.micMuted() || s.masterMuted()) {
+        if (!aux && (s.micMuted() || s.masterMuted())) {
             return "The MIC (or MASTER) is muted. Unmute it so the claps are heard.";
         }
         if (stream.recording().active()) {
@@ -169,9 +184,10 @@ final class SyncTestDialog {
         start.setEnabled(false);
         use.setVisible(false);
         StreamSettings s = stream.settings();
-        boolean cameraSound = s.auxDevice() != null && !s.auxMuted();
-        show("Get ready…", cameraSound
-                ? "Tip: the CAMERA sound channel is on. If the test fails, mute it and test again (only the MIC is measured)."
+        boolean otherSound = aux ? s.micDevice() != null && !s.micMuted() : s.auxDevice() != null && !s.auxMuted();
+        show("Get ready…", otherSound
+                ? "Tip: the " + (aux ? "MIC" : "CAMERA / AUX") + " sound channel is on too. If the test fails, mute it "
+                        + "and test again (only the " + (aux ? "AUX" : "MIC") + " is measured)."
                 : " ");
         stream.startSyncTestRecording(file, error -> SwingUtilities.invokeLater(() -> {
             testing = false;
