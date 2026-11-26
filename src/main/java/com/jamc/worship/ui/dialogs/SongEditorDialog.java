@@ -690,7 +690,7 @@ public class SongEditorDialog extends JDialog {
         public Component getListCellRendererComponent(JList<? extends Slide> list, Slide s, int index,
                                                       boolean selected, boolean focused) {
             slide = s;
-            label.setText((index + 1) + "   " + s.getLabel());
+            label.setText((index + 1) + "   " + s.cardLabel());
             label.setForeground(Palette.secondaryText());
             return this;
         }

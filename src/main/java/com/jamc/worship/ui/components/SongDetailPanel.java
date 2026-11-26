@@ -133,7 +133,7 @@ public class SongDetailPanel extends JPanel {
     /** Shows one slide in the large preview. */
     public void showSlide(Slide slide, SlideStyle style) {
         canvas.setContent(slide, style);
-        canvas.setBadge(slide == null || slide.getLabel() == null ? "SELECTED SLIDE" : slide.getLabel().toUpperCase(),
+        canvas.setBadge(slide == null || slide.displayLabel() == null ? "SELECTED SLIDE" : slide.displayLabel().toUpperCase(),
                 Palette::mutedText);
     }
 

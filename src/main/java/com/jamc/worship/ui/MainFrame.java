@@ -2634,7 +2634,7 @@ public class MainFrame extends JFrame {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("kind", c == null ? (scene == null ? "EMPTY" : "SCENE") : c.isVideo() ? "VIDEO" : "CONTENT");
             m.put("title", c == null ? null : c.title());
-            m.put("label", c == null || c.slide() == null ? null : c.slide().getLabel());
+            m.put("label", c == null || c.slide() == null ? null : c.slide().displayLabel());
             m.put("scene", scene == null ? null : scene.getName());
             m.put("cameras", scene == null ? List.of() : scene.getSources().stream()
                     .filter(src -> src.isVisible() && src.getType() == com.jamc.worship.model.SourceType.CAMERA)
@@ -2651,7 +2651,7 @@ public class MainFrame extends JFrame {
             for (int i = 0; i < slides.size(); i++) {
                 Slide slide = slides.get(i);
                 Map<String, Object> card = new LinkedHashMap<>();
-                card.put("label", slide.getLabel());
+                card.put("label", slide.cardLabel());
                 card.put("text", slide.getText());
                 cards.add(card);
                 if (slide == previewSlide) {
@@ -4536,7 +4536,7 @@ public class MainFrame extends JFrame {
             boolean contentWaiting = previewVideoPath != null
                     || (previewSlide != null && !(previewSlide == takenSlide && program.content() == takenContent));
             if (contentWaiting) {
-                String label = previewSlide == null || previewSlide.getLabel() == null ? "" : " – " + previewSlide.getLabel();
+                String label = previewSlide == null || previewSlide.displayLabel() == null ? "" : " – " + previewSlide.displayLabel();
                 note = "NEXT: " + (previewTitle == null ? "slide" : previewTitle) + label + " · Content change";
             }
         }

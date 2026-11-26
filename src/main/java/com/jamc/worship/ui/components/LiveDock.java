@@ -827,7 +827,7 @@ public class LiveDock extends JPanel {
                 if (p.content() != null) {
                     g.setFont(com.jamc.worship.ui.FontCache.derive(getFont(), Font.PLAIN, 10f));
                     FontMetrics sm = g.getFontMetrics();
-                    String under = "Returns to: " + p.content().slide().getLabel();
+                    String under = "Returns to: " + p.content().slide().displayLabel();
                     g.setColor(new Color(255, 255, 255, 190));
                     g.drawString(under, r.x + (r.width - sm.stringWidth(under)) / 2, r.y + r.height / 2 + sm.getHeight() + 4);
                 }
@@ -862,7 +862,7 @@ public class LiveDock extends JPanel {
             }
             g.setFont(com.jamc.worship.ui.FontCache.derive(c.getFont(), Font.PLAIN, 10f));
             FontMetrics tfm = g.getFontMetrics();
-            String title = fit(p.content().title() + " · " + p.content().slide().getLabel(), tfm, r.width / 2);
+            String title = fit(p.content().title() + " · " + p.content().slide().displayLabel(), tfm, r.width / 2);
             g.setColor(new Color(255, 255, 255, 170));
             g.drawString(title, r.x + r.width - tfm.stringWidth(title) - 8, r.y + 6 + tfm.getAscent() + 2);
         }

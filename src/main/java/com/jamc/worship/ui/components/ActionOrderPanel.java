@@ -854,15 +854,18 @@ public class ActionOrderPanel extends JPanel {
             Font small = com.jamc.worship.ui.FontCache.derive(getFont(), Font.BOLD, 10.5f);
             g.setFont(small);
             FontMetrics sm = g.getFontMetrics();
-            String label = fit(sectionLabel(index), sm, right - lx - 16);
-            int pw = sm.stringWidth(label) + 16;
             int py = y + 10;
-            g.setColor(Palette.withAlpha(Palette.accent(), 55));
-            g.fillRoundRect(lx, py, pw, 20, 20, 20);
-            g.setColor(Palette.withAlpha(Palette.accent(), 150));
-            g.drawRoundRect(lx, py, pw - 1, 19, 20, 20);
-            g.setColor(Palette.text());
-            g.drawString(label, lx + 8, py + 14);
+            // a section's later cards carry no pill: "VERSE 1" shows once, on its first card
+            if (!slide.continuesSection()) {
+                String label = fit(sectionLabel(index), sm, right - lx - 16);
+                int pw = sm.stringWidth(label) + 16;
+                g.setColor(Palette.withAlpha(Palette.accent(), 55));
+                g.fillRoundRect(lx, py, pw, 20, 20, 20);
+                g.setColor(Palette.withAlpha(Palette.accent(), 150));
+                g.drawRoundRect(lx, py, pw - 1, 19, 20, 20);
+                g.setColor(Palette.text());
+                g.drawString(label, lx + 8, py + 14);
+            }
 
             int by = py + 26;
             Font text = textFont();
@@ -954,15 +957,17 @@ public class ActionOrderPanel extends JPanel {
         }
     }
 
-    /** "VERSE 1", "CHORUS · 2/2", "JOHN 3:16", or the content title. */
+    /** "VERSE 1", "CHORUS", "JOHN 3:16 · 2/2", or the content title. Song cards never show a "1/2" part. */
     private String sectionLabel(int index) {
         List<Slide> slides = strip.getSlides();
         Group gr = groupOf(index);
-        String label = gr != null ? gr.label : index < slides.size() ? slides.get(index).getLabel() : null;
+        Slide slide = index < slides.size() ? slides.get(index) : null;
+        String label = gr != null ? gr.label : slide != null ? slide.displayLabel() : null;
         if (label == null || label.isBlank()) {
             label = "Slide";
         }
-        String part = gr != null && gr.count > 1 ? " · " + (index - gr.start + 1) + "/" + gr.count : "";
+        boolean songCard = slide != null && (slide.getSectionKey() != null || slide.getSongId() != null);
+        String part = !songCard && gr != null && gr.count > 1 ? " · " + (index - gr.start + 1) + "/" + gr.count : "";
         return label.toUpperCase(Locale.ROOT) + part;
     }
 

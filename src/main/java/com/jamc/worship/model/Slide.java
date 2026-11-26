@@ -60,6 +60,39 @@ public class Slide {
     public void setId(Long id) { this.id = id; }
     public String getLabel() { return label; }
     public void setLabel(String label) { this.label = label; }
+
+    private static final java.util.regex.Pattern PART = java.util.regex.Pattern.compile("\\s*\\(\\d+/\\d+\\)\\s*$");
+
+    /**
+     * The label to show people: a song card that is one part of a longer section shows just its section,
+     * "Verse 1" (not "Verse 1 (1/2)"), which confused operators. The stored label keeps the part, which groups the
+     * cards. Other slides (Bible, decks) are shown as they are.
+     */
+    public String displayLabel() {
+        return songCardLabel(label, sectionKey != null || songId != null);
+    }
+
+    /**
+     * True for the 2nd, 3rd… card of one song section ("Verse 1 (2/2)"): card lists show the section name only on
+     * its first card, so "VERSE 1" is not repeated on every card under it.
+     */
+    public boolean continuesSection() {
+        if (label == null || (sectionKey == null && songId == null)) {
+            return false;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\\((\\d+)/\\d+\\)\\s*$").matcher(label);
+        return m.find() && Integer.parseInt(m.group(1)) > 1;
+    }
+
+    /** The label for a card in a list: blank on a section's later cards, else {@link #displayLabel()}. */
+    public String cardLabel() {
+        return continuesSection() ? "" : displayLabel();
+    }
+
+    /** {@code label} without a trailing "(1/2)" part when it belongs to a song card. */
+    public static String songCardLabel(String label, boolean songCard) {
+        return label == null || !songCard ? label : PART.matcher(label).replaceFirst("");
+    }
     public String getText() { return text; }
     public void setText(String text) { this.text = text == null ? "" : text; }
     public String getCaption() { return caption; }

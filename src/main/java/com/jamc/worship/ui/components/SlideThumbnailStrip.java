@@ -908,7 +908,7 @@ public class SlideThumbnailStrip extends JPanel {
 
         LyricsCard(Slide slide) {
             this.slide = slide;
-            setToolTipText(slide.getLabel());
+            setToolTipText(slide.displayLabel());
         }
 
         @Override
@@ -982,7 +982,7 @@ public class SlideThumbnailStrip extends JPanel {
             // section label (secondary) and state badge on one top row
             g2.setFont(sectionFont());
             var sfm = g2.getFontMetrics();
-            String section = slide.getLabel() == null ? "" : slide.getLabel().toUpperCase(java.util.Locale.ROOT);
+            String section = slide.cardLabel() == null ? "" : slide.cardLabel().toUpperCase(java.util.Locale.ROOT);
             int top = PAD + sfm.getAscent();
             String badge = live ? "● LIVE" : preview ? "▶ PREVIEW" : null;
             int badgeW = 0;
@@ -1040,7 +1040,7 @@ public class SlideThumbnailStrip extends JPanel {
             g2.setColor(Palette.mutedText());
             g2.drawString(number, 0, baseline);
             int x = fm.stringWidth(number) + 8;
-            String label = slide.getLabel() == null || slide.getLabel().isBlank() ? "Slide" : slide.getLabel();
+            String label = slide.continuesSection() ? "" : slide.displayLabel() == null || slide.displayLabel().isBlank() ? "Slide" : slide.displayLabel();
             while (label.length() > 1 && x + fm.stringWidth(label) > getWidth()) {
                 label = label.substring(0, label.length() - 2) + "…";
             }
