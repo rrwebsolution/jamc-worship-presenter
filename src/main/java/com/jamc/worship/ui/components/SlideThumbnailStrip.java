@@ -975,8 +975,14 @@ public class SlideThumbnailStrip extends JPanel {
             var nfm = g2.getFontMetrics();
             g2.setColor(live ? Palette.danger() : preview ? Palette.accent() : Palette.secondaryText());
             g2.drawString(number, (GUTTER - nfm.stringWidth(number)) / 2 + 2, (h - nfm.getHeight()) / 2 + nfm.getAscent());
-            g2.setColor(Palette.border());
-            g2.drawLine(GUTTER, PAD - 2, GUTTER, h - PAD + 2);
+            if (slide.getSectionKey() != null || slide.getSongId() != null) {
+                // a song card: the line is in its section's color, so a verse's later cards read as part of it
+                g2.setColor(Palette.withAlpha(com.jamc.worship.ui.theme.SectionColors.of(slide), 200));
+                g2.fillRoundRect(GUTTER - 1, PAD - 2, 3, h - 2 * PAD + 4, 3, 3);
+            } else {
+                g2.setColor(Palette.border());
+                g2.drawLine(GUTTER, PAD - 2, GUTTER, h - PAD + 2);
+            }
             int left = GUTTER + PAD;
 
             // section label (secondary) and state badge on one top row
@@ -985,6 +991,11 @@ public class SlideThumbnailStrip extends JPanel {
             String section = slide.cardLabel() == null ? "" : slide.cardLabel().toUpperCase(java.util.Locale.ROOT);
             int top = PAD + sfm.getAscent();
             String badge = live ? "● LIVE" : preview ? "▶ PREVIEW" : null;
+            // a narrow card keeps the whole section name: the state badge shrinks to its sign instead
+            if (badge != null && !section.isEmpty()
+                    && sfm.stringWidth(section) + 12 + sfm.stringWidth(badge) + 12 + 6 > w - left - PAD) {
+                badge = live ? "●" : "▶";
+            }
             int badgeW = 0;
             if (badge != null) {
                 badgeW = sfm.stringWidth(badge) + 12;
@@ -993,8 +1004,18 @@ public class SlideThumbnailStrip extends JPanel {
                 g2.setColor(java.awt.Color.WHITE);
                 g2.drawString(badge, w - PAD - badgeW + 6, top);
             }
-            g2.setColor(Palette.mutedText());
-            g2.drawString(fitText(section, sfm, w - left - PAD - badgeW - 6), left, top);
+            // the section as a colored badge (verse blue, chorus red, bridge green…); a section's later cards have none
+            if (!section.isEmpty()) {
+                java.awt.Color tint = com.jamc.worship.ui.theme.SectionColors.of(slide);
+                String text = fitText(section, sfm, w - left - PAD - badgeW - 6 - 12);
+                int pw = sfm.stringWidth(text) + 12;
+                g2.setColor(Palette.withAlpha(tint, 55));
+                g2.fillRoundRect(left - 2, PAD - 3, pw, sfm.getHeight() + 4, 10, 10);
+                g2.setColor(Palette.withAlpha(tint, 150));
+                g2.drawRoundRect(left - 2, PAD - 3, pw - 1, sfm.getHeight() + 3, 10, 10);
+                g2.setColor(Palette.text());
+                g2.drawString(text, left + 4, top);
+            }
 
             // the lyrics: the main content
             g2.setFont(lyricsFont());

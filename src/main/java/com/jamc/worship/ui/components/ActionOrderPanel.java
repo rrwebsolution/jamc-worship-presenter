@@ -843,9 +843,10 @@ public class ActionOrderPanel extends JPanel {
             String num = String.format("%02d", index + 1);
             g.setColor(live ? Palette.danger() : st == State.DONE ? Palette.secondaryText() : Palette.text());
             g.drawString(num, x + 30, y + h / 2 + nm.getAscent() / 2 - 2);
-            // accent bar: blue, red when LIVE
+            // bar in the section's color (a verse's later cards too, so they read as part of it), red when LIVE
             int barX = x + GUTTER;
-            g.setColor(live ? Palette.danger() : Palette.withAlpha(Palette.accent(), preview ? 255 : 170));
+            g.setColor(live ? Palette.danger()
+                    : Palette.withAlpha(com.jamc.worship.ui.theme.SectionColors.of(slide), preview ? 255 : 170));
             g.fillRoundRect(barX, y + 8, 4, h - 16, 4, 4);
 
             // middle: section pill, then the words or a page picture
@@ -859,9 +860,10 @@ public class ActionOrderPanel extends JPanel {
             if (!slide.continuesSection()) {
                 String label = fit(sectionLabel(index), sm, right - lx - 16);
                 int pw = sm.stringWidth(label) + 16;
-                g.setColor(Palette.withAlpha(Palette.accent(), 55));
+                Color badge = com.jamc.worship.ui.theme.SectionColors.of(slide); // verse blue, chorus red, bridge green…
+                g.setColor(Palette.withAlpha(badge, 55));
                 g.fillRoundRect(lx, py, pw, 20, 20, 20);
-                g.setColor(Palette.withAlpha(Palette.accent(), 150));
+                g.setColor(Palette.withAlpha(badge, 150));
                 g.drawRoundRect(lx, py, pw - 1, 19, 20, 20);
                 g.setColor(Palette.text());
                 g.drawString(label, lx + 8, py + 14);

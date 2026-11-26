@@ -6,7 +6,8 @@
   Format: "## Heading", "- item", **bold**, `code`.
 -->
 
-## Lyrics cards: no more "1/2"
-- A verse or chorus that is split over several cards no longer shows **"1/2", "2/2"**. The cards show **VERSE 1** or **CHORUS** only.
-- **The section name shows once**, on its first card. The next cards of the same verse or chorus have no label, so it is clear they belong to it. A chorus sung again gets its name again.
-- Same in the Lyrics & Slides cards, the slide strip, the Song Editor list and the Remote app. Preview / Program still name the section of the slide on screen.
+## Lyrics cards: a color for each section
+- Every kind of section has its own color: **Verse blue, Pre-Chorus purple, Chorus orange, Bridge green, Intro teal, Outro / Ending yellow, Tag and others pink**.
+- The color is on the **section badge** and on the **line at the left of each card**, so the next cards of a verse or chorus (the ones without a label) still show which section they belong to.
+- Same in the **Lyrics & Slides** cards and the **slide cards** below the monitors. A LIVE card's line is still red.
+- On a narrow card the **LIVE / PREVIEW** badge shrinks to ● / ▶ so the section name is shown in full.
