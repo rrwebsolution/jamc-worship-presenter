@@ -236,9 +236,6 @@ public class MainFrame extends JFrame {
     private final ServicesPanel servicesPanel;
     private final ScenesPanel scenesPanel;
     private final SettingsPanel settingsPanel;
-    private final TransportControls audioControls = new TransportControls(true);
-    private final JLabel audioTitle = Ui.small("No audio loaded");
-    private final JPanel audioBar = Ui.transparent(new BorderLayout(0, 2));
 
     private final CardLayout pageCards = new CardLayout();
     private final JPanel pages = Ui.transparent(pageCards);
@@ -828,7 +825,6 @@ public class MainFrame extends JFrame {
         JPanel detailPanel = region(centerHolder);
         JPanel scheduleColumn = Ui.panel(new BorderLayout(), Palette::panelBackground);
         scheduleColumn.add(schedule, BorderLayout.CENTER);
-        scheduleColumn.add(buildAudioBar(), BorderLayout.SOUTH);
         libraryHolder.setMinimumSize(new Dimension(240, 0));
         detailPanel.setMinimumSize(new Dimension(320, 0));
         scheduleColumn.setMinimumSize(new Dimension(210, 0));
@@ -4146,19 +4142,8 @@ public class MainFrame extends JFrame {
         var last = mediaStates.get(key, new com.jamc.worship.media.MediaStates.State(false, 100, false));
         com.jamc.worship.media.MediaStates.apply(audio, new com.jamc.worship.media.MediaStates.State(false, 100, last.loop()));
         audio.play(context.mediaService().resolve(item).toString(), item.getName());
-        audioControls.bind(mediaStates.remember(audio, key));
-        audioTitle.setText("♪ " + item.getName());
-        audioBar.setVisible(true);
+        // its controls are in MEDIA PREVIEW (the audio bar under the Service was removed on request)
         statusBar.showMessage("Playing \"" + item.getName() + "\". Audio keeps playing while slides change.");
-    }
-
-    private JComponent buildAudioBar() {
-        audioBar.setBorder(BorderFactory.createCompoundBorder(Ui.line(true, false, false, false),
-                BorderFactory.createEmptyBorder(6, 10, 6, 10)));
-        audioBar.add(audioTitle, BorderLayout.NORTH);
-        audioBar.add(audioControls, BorderLayout.CENTER);
-        audioBar.setVisible(false);
-        return audioBar;
     }
 
     private void addCurrentSongToService() {
